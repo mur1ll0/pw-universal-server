@@ -2569,6 +2569,49 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// B348 — `PUBLIC_QUEST_INFO` (284) `{task_id, child_task_id, score, cls_place, all_place}` = 2 + 20.
+    pub fn public_quest_info(missao: i32, etapa: i32, pontos: i32, na_classe: i32, geral: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(284);
+        stream.write_i32_le(missao);
+        stream.write_i32_le(etapa);
+        stream.write_i32_le(pontos);
+        stream.write_i32_le(na_classe);
+        stream.write_i32_le(geral);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// B348 — `PUBLIC_QUEST_RANKS` (285) `{int _task_id; int player_count; size_t ranks_size[13]; {roleid, race, score,
+    /// rand, place}[]}` (`common/protocol.h:3186-3200`): as 13 contagens (12 classes e a geral) e as entradas na mesma ordem.
+    pub fn public_quest_ranks(missao: i32, jogadores: i32, contagens: &[u32; 13], entradas: &[[i32; 5]]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(285);
+        stream.write_i32_le(missao);
+        stream.write_i32_le(jogadores);
+        for c in contagens {
+            stream.write_u32_le(*c);
+        }
+        let mut dados = stream.into_bytes().to_vec();
+        for e in entradas {
+            for v in e {
+                dados.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        Self { data: dados }
+    }
+
+    /// B348 — `COMMON_DATA_NOTIFY` (266) `{int key; int value}[]` (`common/protocol.h:2984-2994`).
+    pub fn common_data_notify(pares: &[(i32, i32)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(266);
+        let mut dados = stream.into_bytes().to_vec();
+        for (k, v) in pares {
+            dados.extend_from_slice(&k.to_le_bytes());
+            dados.extend_from_slice(&v.to_le_bytes());
+        }
+        Self { data: dados }
+    }
+
     pub fn npc_died(nid: i32, killer_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20

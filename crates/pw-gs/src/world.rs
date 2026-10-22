@@ -106,6 +106,8 @@ pub enum EventoDoMundo {
     MissaoDaPolitica { roleid: RoleId, missao: u32 },
     /// B344 — o que o duelo manda ao cliente (`player_duel`, [`crate::duelo::Aviso`]).
     Duelo(crate::duelo::Aviso),
+    /// B348 — o que a PQ manda ao cliente (`PUBLIC_QUEST_INFO`/`RANKS`, `COMMON_DATA_NOTIFY`).
+    Pq(crate::pq::AvisoDaPq),
     /// Chegou a hora do próximo golpe normal do jogador (`session_normal_attack::RepeatSession`).
     GolpeDoJogador { roleid: RoleId },
     /// Um item ou monte de moedas no chão acabou a vida (`gmatter_item_base_imp`,
@@ -366,6 +368,11 @@ pub struct WorldInstance {
     pub prazos_de_invocados: HashMap<i64, u32>,
     /// B344 — o `player_duel` de cada jogador que está convidando, duelando ou na trégua do fim.
     pub duelos: HashMap<i64, crate::duelo::Duelo>,
+    /// B348 — as PQ. Só o mapa 1 as roda ("o mundo grande": o original usa o mundo de índice 0,
+    /// `PublicQuestInterface::QuestGetGlobalValue`, `gs/task/taskman.cpp:1022-1026`).
+    pub pq: crate::pq::GerenciadorDePq,
+    relogio_da_pq_ms: u32,
+    pq_iniciada: bool,
     /// O líder de cada área de grupo ou de chefe (`group_spawner::_leader_id`), pela área do
     /// `npcgen.data`, e os subordinados de cada líder (B136).
     lideres_das_areas: HashMap<i32, i64>,
@@ -507,6 +514,9 @@ impl WorldInstance {
             rotas_do_global: HashMap::new(),
             prazos_de_invocados: HashMap::new(),
             duelos: HashMap::new(),
+            pq: Default::default(),
+            relogio_da_pq_ms: 0,
+            pq_iniciada: false,
             lideres_das_areas: HashMap::new(),
             subordinados: HashMap::new(),
             movimento: pw_data_loader::MapaDeMovimento::vazio(),
@@ -1058,6 +1068,20 @@ impl WorldInstance {
         self.remover_plantas_de(role_id as i64);
         let id = role_id as i64;
         self.grid.remove_entity(id);
+        // B348 — `PlayerLeaveWorld` → `QuestLeaveWorld` (`TaskProcess.cpp:3370-3396`): fica na PQ, inativo.
+        if let Some(p) = self.players.get(&id) {
+            let ativa = &p.missoes.ativa;
+            let pqs: Vec<u32> = (0..ativa.quantidade as usize)
+                .map(|i| ativa.e[i])
+                .filter(|e| e.valida && self.data_manager.tasks.get_task(e.id as u32).is_some_and(|t| t.pq))
+                .map(|e| e.id as u32)
+                .collect();
+            for m in pqs {
+                if let Some(pq) = self.pq.pqs.get_mut(&m) {
+                    pq.ausentar(id);
+                }
+            }
+        }
         // Sair do mundo é sair do grupo. Sem isto o grupo guardaria um membro que não
         // existe mais, e a lista de membros mostraria um fantasma.
         self.sair_do_grupo(role_id);
@@ -1305,6 +1329,57 @@ impl WorldInstance {
 
     /// A mina some do mapa e espera o tempo de renascer (`BeMined` → `Reclaim`,
     /// `matter.cpp:215-229`, `npcgenerator.cpp:4960-5000`).
+    /// B348 — `PublicQuestRunTick` (`gs/task/taskman.cpp:31-39`): a cada 5 s. A primeira vez inicia as PQ
+    /// (`InitPublicQuestSystem`); depois, o batimento delas e o das etapas.
+    fn batimento_das_pq(&mut self, delta_ms: u32) {
+        if self.world_id != 1 {
+            return;
+        }
+        self.relogio_da_pq_ms += delta_ms;
+        if self.relogio_da_pq_ms < 5000 {
+            return;
+        }
+        self.relogio_da_pq_ms -= 5000;
+        let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
+        let dados = Arc::clone(&self.data_manager);
+        let globais = Arc::clone(&self.variaveis_globais);
+        let saida = {
+            let Ok(mut g) = globais.lock() else { return };
+            if !self.pq_iniciada {
+                self.pq_iniciada = true;
+                let (pq, controles) = crate::pq::GerenciadorDePq::iniciar(&dados.tasks, agora, &mut g);
+                if !pq.pqs.is_empty() {
+                    info!("mundo #{}: {} PQ iniciadas", self.world_id, pq.pqs.len());
+                }
+                self.pq = pq;
+                crate::pq::SaidaDasPq { avisos: Vec::new(), controladores: controles }
+            } else {
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                self.pq.batimento(&dados.tasks, agora, &mut g, |max| rng.gen_range(0..=max))
+            }
+        };
+        // `SetMonsterController(id, bTrigger)`: `TriggerSpawn`/`ClearSpawn` (`taskman.cpp:1028-1044`).
+        for (id, ligar) in saida.controladores {
+            if id > 0 {
+                self.acionar_controlador(id, ligar);
+            }
+        }
+        for a in saida.avisos {
+            self.emitir(EventoDoMundo::Pq(a));
+        }
+    }
+
+    /// B348 — o jogador tem uma etapa de PQ ativa (o `TASK_MASK_KILL_PQ_MONSTER`): só então o abate conta.
+    pub fn tem_etapa_de_pq(&self, roleid: i64) -> bool {
+        let Some(p) = self.players.get(&roleid) else { return false };
+        let ativa = &p.missoes.ativa;
+        (0..ativa.quantidade as usize).any(|i| {
+            let e = &ativa.e[i];
+            e.valida && self.data_manager.tasks.get_task(e.id as u32).is_some_and(|t| t.pq_sub)
+        })
+    }
+
     /// B344 — os dois estão lutando um contra o outro (`IsDuelStarted` com o `_duel_target`).
     pub fn em_duelo_entre(&self, a: i64, b: i64) -> bool {
         self.duelos.get(&a).and_then(|d| d.oponente()) == Some(b)
@@ -2844,6 +2919,7 @@ impl WorldInstance {
         let mut invencibilidade_mudou: Vec<i64> = Vec::new();
 
         self.descontar_prazos_de_invocados(delta_ms);
+        self.batimento_das_pq(delta_ms);
         // O invocado com `remain_time` some quando o tempo acaba, vivo ou não
         // (`prop.remain_time`, `gs/player.cpp:13079`).
         let mut expiraram = Vec::new();

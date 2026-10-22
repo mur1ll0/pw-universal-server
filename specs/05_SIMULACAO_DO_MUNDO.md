@@ -1465,6 +1465,25 @@ Portados em 2026-10-21 (`testado` por unidade, falta ver em jogo):
   quem vê cada um). `falta`: divórcio (`m_bDivorce`), o cônjuge no estado visível de quem chega depois,
   reserva/convite de cerimônia (serviços 62/63) e o par na lista de amigos do servidor de entrega.
 
-`falta` (recusado ou ignorado, nunca inventado): PQ, torre, variáveis globais
-(lidas como 0), força (`m_iForce`), sistema de facção. (Invocação de monstros de prêmio, falha
+- **PQ — missão pública (B348)** — `crate::pq` (porte de `public_quest`, `gs/public_quest.cpp`, e do lado do motor,
+  `TaskServer.cpp:1242-1420`). Só no mapa 1 ("o mundo grande": o original usa o mundo de índice 0); a cada
+  **5 s** (`PublicQuestRunTick`): as 25 PQ do `realm_155` começam na primeira etapa (zerando as variáveis
+  globais dela, `m_pszPQExp` → `atoi`); a etapa acaba quando a condição global de fim vale
+  (`CheckGlobalPQKeyValue`: duas comparações `>`/`==`/`<` com "e"/"ou", lado global ou número); então quem tem a
+  contribuição mínima ganha a fixa + `Rand(0, sorteada)`, o controlador do prêmio é mexido (`TriggerSpawn`/
+  `ClearSpawn`) e a PQ vai à próxima etapa (com o controlador dela), ou termina e recomeça do zero com estampa
+  nova. As globais que mudam vão a cada 5 s, e a colocação (por classe e geral, as 20 primeiras) a cada 60 s
+  e na troca de etapa (`PUBLIC_QUEST_RANKS` 285, `PUBLIC_QUEST_INFO` 284, `COMMON_DATA_NOTIFY` 266; só 1.5.5).
+  No motor: aceitar a PQ guarda a estampa da rodada e entra nela; a etapa (`enumTMGlobalValOK`) conclui pela
+  condição global; etapa de outra rodada, ou que já não é a atual nem a anterior, falha; o abate dos monstros da
+  etapa dá contribuição (`OnTaskKillPQMonster`: `inteira/membros` se dono + `compartilhada × fração da
+  equipe / membros` + `pessoal × fração pessoal`, fator `1/max(dano total, vida)`); o prêmio exige a mínima,
+  dá o item da faixa de colocação e a contribuição definida; voltar ao jogo (aviso 11) recebe tudo de novo ou
+  falha a PQ de outra rodada; sair do jogo deixa inativo. **Variáveis globais** agora valem nas missões: a
+  condição de início (`CheckGlobalKeyValue`, erro 31) e a conclusão por variável global. **Não é igual:**
+  empate de colocação pelo id; o raio de equipe da contribuição não é conferido; `IsContributionFinish` não
+  está portado.
+
+`falta` (recusado ou ignorado, nunca inventado): torre
+(o multiplicador por variável global do prêmio ainda lê 0), força (`m_iForce`), sistema de facção. (Invocação de monstros de prêmio, falha
 por morte — B157 — e o que é de equipe — B164 — saíram desta lista.)

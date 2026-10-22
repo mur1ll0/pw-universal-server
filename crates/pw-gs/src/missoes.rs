@@ -106,6 +106,8 @@ pub mod metodo {
     pub const ALCANCAR_NIVEL: u32 = 15;
     pub const SIMPLES_DO_CLIENTE: u32 = 16;
     pub const SIMPLES_DO_CLIENTE_NAVEGACAO: u32 = 17;
+    /// B348 — `enumTMGlobalValOK` (`TaskTempl.h:183`): conclui quando a condição global de fim vale.
+    pub const VARIAVEL_GLOBAL: u32 = 10;
 }
 
 /// `enumTFT*` (`TaskTempl.h:197-199`).
@@ -144,6 +146,8 @@ pub mod erro {
     pub const GM: u32 = 30;
     pub const JA_TEM_PQ: u32 = 33;
     pub const NAO_E_CASAL: u32 = 36;
+    /// B348 — `TASK_PREREQU_FAIL_GLOBAL_KEYVAL` (`TaskInterface.h:42`).
+    pub const VARIAVEL_GLOBAL: u32 = 31;
     pub const CONTA_NO_LIMITE: u32 = 34;
     pub const SLOTS_DE_BOLSA: u32 = 38;
     pub const PERSONAGEM_NO_LIMITE: u32 = 63;
@@ -692,6 +696,28 @@ pub trait Jogador {
     /// `ReceiveTaskExp` — um de cada vez, como `DeliverExperience`/`DeliverSP`.
     fn dar_exp(&mut self, exp: u32, sp: u32);
     fn dar_reputacao(&mut self, r: i32);
+    /// B348 — `GetGlobalValue(key)`: a variável global do mapa (`world::GetCommonValue`).
+    fn global(&self, _k: i32) -> i32 {
+        0
+    }
+    /// B348 — a PQ (`PublicQuestInterface`, `gs/task/taskman.cpp:960-1040`): estampa e etapa atuais da PQ `missao`.
+    fn pq_estampa(&self, _missao: u32) -> u32 {
+        0
+    }
+    fn pq_etapa(&self, _missao: u32) -> u32 {
+        0
+    }
+    /// `QuestAddPlayer` / `QuestEnterWorldInit`.
+    fn pq_entrar(&mut self, _missao: u32) {}
+    fn pq_voltar(&mut self, _missao: u32) {}
+    /// `GetCurContrib`, `GetCurClsPlace`/`GetCurAllPlace`, `QuestUpdatePlayerContrib`.
+    fn pq_pontos(&self, _missao: u32) -> i32 {
+        0
+    }
+    fn pq_colocacao(&self, _missao: u32, _por_classe: bool) -> i32 {
+        -1
+    }
+    fn pq_somar(&mut self, _missao: u32, _n: i32) {}
     /// B347 — `GetSpouseID()`: o cônjuge, 0 sem casamento.
     fn conjuge(&self) -> u32 {
         0
@@ -1166,6 +1192,12 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if t.conjuge && self.j.conjuge() == 0 {
             return erro::INDETERMINADO;
         }
+        // B348 — `CheckGlobalKeyValue(pTask)` (`TaskProcess.cpp:358`): a condição global de início.
+        if let Some(c) = &t.global_inicio {
+            if !crate::pq::condicao_vale_com(c, |k| self.j.global(k)) {
+                return erro::VARIAVEL_GLOBAL;
+            }
+        }
         // `CheckMarriage` (`TaskTempl.inl:341-366`).
         if t.casamento {
             let r = self.checar_casamento();
@@ -1304,7 +1336,8 @@ impl<'a, J: Jogador> Motor<'a, J> {
             en.proximo = SEM;
             en.filho = SEM;
             en.estado = estado::SUCESSO;
-            en.tempo = agora;
+            // B348 — a PQ guarda a estampa dela (`TaskProcess.cpp:476-481`).
+            en.tempo = if t.pq { self.j.pq_estampa(t.id) } else { agora };
             en.capitao = if capitao != 0 && self.tarefas.get_task(capitao).is_some_and(|c| c.parent.is_none()) { capitao as u16 } else { 0 };
             en.buf = [0; 11];
         }
@@ -1445,6 +1478,10 @@ impl<'a, J: Jogador> Motor<'a, J> {
             self.listas.registrar_hora(t.id, agora);
         }
         self.j.avisar(S2CGamedataSend::task_notify_new(t.id as u16, agora, capitao, &tags.bytes()).data);
+        // B348 — `QuestAddPlayer` (`TaskProcess.cpp:1835-1838`).
+        if t.pq {
+            self.j.pq_entrar(t.id);
+        }
         // `if (m_bTransTo) pTask->TransportTo(...)` (`TaskProcess.cpp:1843-1844`).
         if let Some((mundo, pos)) = t.teleporte_ao_receber {
             self.j.teleportar(mundo, pos);
@@ -1711,6 +1748,12 @@ impl<'a, J: Jogador> Motor<'a, J> {
     /// `ATaskTempl::DeliverByAwardData` (`TaskProcess.cpp:1226-1561`), sem os sistemas que o
     /// servidor não tem (ver a nota do módulo).
     fn premiar_com(&mut self, t: &'a TaskTemplate, en: Entrada, p: &TaskReward, escolha: i32) -> u32 {
+        // B348 — `if (m_pParent && m_ulLowestcontrib)`: abaixo da contribuição mínima da PQ, nada (`TaskProcess.cpp:1236-1242`).
+        if let (Some(pai), true) = (t.parent, p.contribuicao_minima != 0) {
+            if self.j.pq_pontos(pai) < p.contribuicao_minima {
+                return 1;
+            }
+        }
         let mut multi = self.multiplicador(t, &en);
         if multi == 0 {
             return 1;
@@ -1806,6 +1849,21 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 }
             } else {
                 ret = 2;
+            }
+        }
+        // B348 — a PQ no prêmio (`TaskProcess.cpp:1438-1482`): contribuição definida a uma PQ (na etapa pedida ou em
+        // qualquer uma) e o item da faixa de colocação de quem tem a mínima.
+        let (pq, etapa, n) = p.contribuicao_definida;
+        if pq != 0 && n != 0 && (etapa == 0 || etapa == self.j.pq_etapa(pq)) {
+            self.j.pq_somar(pq, n);
+        }
+        if let (Some(r), Some(pai)) = (&p.premio_da_pq, t.parent) {
+            if self.j.pq_pontos(pai) >= p.contribuicao_minima {
+                let lugar = self.j.pq_colocacao(pai, r.por_classe);
+                if let Some(f) = r.faixas.iter().find(|f| lugar >= f.de as i32 && lugar <= f.ate as i32) {
+                    let item = ItemDeMissao { id: f.item, comum: f.comum, quantidade: f.quantidade, probabilidade: 1.0, validade: f.periodo };
+                    self.dar_item_de_premio(t, &item, multi);
+                }
             }
         }
         if p.nova_missao != 0 {
@@ -2451,6 +2509,21 @@ impl<'a, J: Jogador> Motor<'a, J> {
         }
         let en = self.listas.ativa.e[idx];
         let agora = self.j.agora();
+        // B348 — etapa de PQ (`TaskServer.cpp:882-905`): estampa da PQ diferente (outra rodada) ou etapa que já não é a
+        // atual nem a anterior a ela falham.
+        if t.pq_sub {
+            let (Some(pai), true) = (t.parent, en.pai != SEM) else { return false };
+            if proximo_irmao(self.tarefas, t).is_some() {
+                let estampa_do_pai = self.listas.ativa.e[en.pai as usize].tempo;
+                let atual = self.j.pq_etapa(pai);
+                let proximo = proximo_irmao(self.tarefas, t).map(|n| n.id).unwrap_or(0);
+                if estampa_do_pai != self.j.pq_estampa(pai) || (proximo != atual && t.id != atual) {
+                    self.listas.ativa.e[idx].estado &= !estado::SUCESSO;
+                    self.ao_finalizar(t, idx);
+                    return true;
+                }
+            }
+        }
         if en.finalizada() && !en.sucesso() {
             return self.entregar_premio(idx, -1);
         }
@@ -2504,12 +2577,64 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 self.listas.ativa.e[idx].estado |= estado::FINALIZADA;
                 self.entregar_premio(idx, -1)
             }
+            // B348 — `enumTMGlobalValOK` (`TaskServer.cpp:1011-1018`): `CheckGlobalKeyValue(pTask, true)`; sem condição, passa.
+            metodo::VARIAVEL_GLOBAL => {
+                if t.global_fim.as_ref().map_or(true, |c| crate::pq::condicao_vale_com(c, |k| self.j.global(k))) {
+                    self.listas.ativa.e[idx].estado |= estado::FINALIZADA;
+                    return self.entregar_premio(idx, -1);
+                }
+                false
+            }
             _ => {
                 if en.finalizada() {
                     return self.entregar_premio(idx, -1);
                 }
                 false
             }
+        }
+    }
+
+    /// B348 — `OnTaskKillPQMonster` (`TaskServer.cpp:1363-1415`): na etapa de PQ ativa (com a estampa da rodada), a
+    /// contribuição do monstro: `inteira / membros` se dono, `+ (int)(compartilhada × equipe / membros + 0,5)`,
+    /// `+ (int)(pessoal × fração pessoal + 0,5)`.
+    pub fn abate_de_pq(&mut self, monstro: u32, c: &crate::pq::ContribuicaoDoAbate) {
+        for i in 0..self.listas.ativa.quantidade as usize {
+            let en = self.listas.ativa.e[i];
+            let Some(t) = self.t(en.id as u32).filter(|_| en.valida) else { continue };
+            if !t.pq_sub {
+                continue;
+            }
+            let Some(pai) = t.parent else { return };
+            if en.pai != SEM && self.listas.ativa.e[en.pai as usize].tempo != self.j.pq_estampa(pai) {
+                return;
+            }
+            if let Some(m) = t.contribuicao_por_monstro.iter().find(|m| m.monstro == monstro) {
+                let membros = c.membros.max(1);
+                let mut total = 0i32;
+                if c.dono {
+                    total += m.inteira / membros;
+                }
+                total += (m.compartilhada as f32 * c.equipe / membros as f32 + 0.5) as i32;
+                total += (m.pessoal as f32 * c.pessoal + 0.5) as i32;
+                self.j.pq_somar(pai, total);
+            }
+            return;
+        }
+    }
+
+    /// B348 — `PQEnterWorldInit` (`TaskProcess.cpp:3398-3420`): a PQ da mesma rodada recebe tudo de novo; de outra
+    /// rodada, falha.
+    pub fn pq_voltar(&mut self, id: u32) {
+        for i in 0..self.listas.ativa.quantidade as usize {
+            let en = self.listas.ativa.e[i];
+            let Some(t) = self.t(en.id as u32).filter(|t| en.valida && t.pq && t.id == id) else { continue };
+            if en.tempo == self.j.pq_estampa(t.id) {
+                self.j.pq_voltar(t.id);
+            } else {
+                self.listas.ativa.e[i].estado &= !estado::SUCESSO;
+                self.ao_finalizar(t, i);
+            }
+            return;
         }
     }
 
@@ -2619,10 +2744,18 @@ mod tests {
         teleporte: Option<(u32, [f32; 3])>,
         avisos_de_equipe: Vec<(u32, u32, u8)>,
         conjuge: u32,
+        globais: HashMap<i32, i32>,
+        pq: (u32, u32, i32, i32),
     }
 
     impl Jogador for JogadorDeTeste {
         fn conjuge(&self) -> u32 { self.conjuge }
+        fn global(&self, k: i32) -> i32 { self.globais.get(&k).copied().unwrap_or(0) }
+        fn pq_estampa(&self, _: u32) -> u32 { self.pq.0 }
+        fn pq_etapa(&self, _: u32) -> u32 { self.pq.1 }
+        fn pq_pontos(&self, _: u32) -> i32 { self.pq.2 }
+        fn pq_colocacao(&self, _: u32, _: bool) -> i32 { self.pq.3 }
+        fn pq_somar(&mut self, _: u32, n: i32) { self.pq.2 += n; }
         fn agora(&self) -> u32 { 1_000_000 }
         fn nivel(&self) -> u32 { self.nivel }
         fn classe(&self) -> u32 { self.classe }
@@ -2652,6 +2785,44 @@ mod tests {
 
     fn modelo(id: u32) -> TaskTemplate {
         TaskTemplate::vazia(id)
+    }
+
+    /// B348 — a PQ no motor: a missão guarda a estampa da rodada; a etapa por variável global conclui quando a condição
+    /// vale; o abate soma contribuição; o prêmio exige a mínima e dá o item da faixa de colocação.
+    #[test]
+    fn pq_no_motor() {
+        use pw_data_loader::tasks::{ComparacaoGlobal, CondicaoGlobal, ContribuicaoDeMonstro, PremioDaPq, PremioPorColocacao};
+        let mut topo = modelo(70);
+        topo.pq = true;
+        topo.sub_tasks = vec![71, 72];
+        topo.metodo = metodo::NENHUM;
+        let mut e1 = modelo(71);
+        e1.parent = Some(70);
+        e1.pq_sub = true;
+        e1.metodo = metodo::VARIAVEL_GLOBAL;
+        e1.tipo_de_conclusao = conclusao::DIRETA;
+        e1.global_fim = Some(CondicaoGlobal { e: false, a: ComparacaoGlobal { tipo_esquerda: 0, esquerda: 500, operador: 0, tipo_direita: 1, direita: 2 }, b: ComparacaoGlobal::default() });
+        e1.contribuicao_por_monstro = vec![ContribuicaoDeMonstro { monstro: 9, inteira: 10, compartilhada: 100, pessoal: 0 }];
+        e1.rewards.contribuicao_minima = 50;
+        e1.rewards.premio_da_pq = Some(PremioDaPq { por_classe: false, faixas: vec![PremioPorColocacao { de: 1, ate: 3, comum: true, item: 4444, quantidade: 2, periodo: 0 }] });
+        let mut e2 = modelo(72);
+        e2.parent = Some(70);
+        e2.pq_sub = true;
+        let d = dados(vec![topo, e1, e2]);
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { nivel: 1, pq: (777, 71, 0, -1), ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(70, 0, true), 0);
+        assert_eq!(l.ativa.e[0].tempo, 777, "a estampa da rodada");
+        // Abate do monstro 9, dono, equipe de 1 com 0,5: 10 + (int)(100 × 0,5 + 0,5) = 60.
+        let c = crate::pq::ContribuicaoDoAbate { jogador: 1, dono: true, equipe: 0.5, membros: 1, pessoal: 0.5 };
+        Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.abate_de_pq(9, &c);
+        assert_eq!(j.pq.2, 60);
+        // A condição (500 > 2) ainda não vale.
+        assert!(!Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.conferir_conclusao(71));
+        j.globais.insert(500, 3);
+        j.pq.3 = 2;
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.conferir_conclusao(71));
+        assert_eq!(j.itens.get(&(4444, true)), Some(&2), "2º lugar, com a mínima: o item da faixa 1–3");
     }
 
     /// B347 — `CheckMarriage`/`CheckSpouse`/`m_bCoupleOnly` e o fluxo do casamento no motor: só em equipe de dois, sem

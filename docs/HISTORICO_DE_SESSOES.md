@@ -16936,3 +16936,17 @@ comparação lado a lado.
     - Provas: `missao_de_casamento` (motor), `missoes` **21/21**, conferidor S2C **5/5**.
     - Ver em jogo (1.5.5, dois clientes): em grupo de dois, fazer a missão de casamento e o capitão entregar no NPC — os
       dois recebem o prêmio e aparecem casados (nome do cônjuge na ficha).
+
+348. **Sessão 2026-10-22: PQ (missão pública).**
+
+    - Leitor (`tasks.rs`, pelos `specs/tasks_155/*.tsv`): `pq_chaves` (`m_pszPQExp`), `contribuicao_por_monstro`,
+      controlador da etapa e do prêmio, `nao_muda_colocacao`, condições globais de início e fim; no prêmio a contribuição
+      fixa/sorteada/mínima/definida e o prêmio por colocação. Exemplo `missoes_pq` (25 PQ, 118 etapas no `realm_155`).
+    - `crate::pq`: `Pq` (o `public_quest`) e `GerenciadorDePq` (início e batimento de 5 s no mapa 1), avisos 284/285/266.
+    - Motor: estampa e entrada na PQ ao aceitar, etapa por variável global (`metodo::VARIAVEL_GLOBAL`), condição global de
+      início (erro 31), etapa de outra rodada falha, `abate_de_pq`, mínima e colocação no prêmio, `pq_voltar` (aviso 11).
+      `Contexto` com as PQ e as globais do mapa; o abate calcula a contribuição de quem tem etapa de PQ.
+    - Provas: `pq::testes` **3/3**, `pq_no_motor`, `pq_do_realm` **1/1** (25 PQ; a Trincheira Apodrecida anda com a global
+      100202 > 199), `pw-gs --lib` **140/140**, `missoes_do_realm` **3/3**, missões do `subcomandos_no_mundo` **7/7**.
+    - Ver em jogo (1.5.5): aceitar a PQ "Cap 1 - Trincheira Apodrecida" (20759) — aparece a janela da PQ com a etapa e
+      a pontuação; matar os monstros da etapa sobe a pontuação; a colocação atualiza a cada minuto.

@@ -487,6 +487,17 @@ impl WorldProtocol for V126Protocol {
         None
     }
 
+    /// B348 — sem PQ no 1.2.6 (o `tasks.data` v55 não marca nenhuma), e o cliente recusa id > 260.
+    fn public_quest_info(&self, _: i32, _: i32, _: i32, _: i32, _: i32) -> Option<S2CGamedataSend> {
+        None
+    }
+    fn public_quest_ranks(&self, _: i32, _: i32, _: &[u32; 13], _: &[[i32; 5]]) -> Option<S2CGamedataSend> {
+        None
+    }
+    fn common_data_notify(&self, _: &[(i32, i32)]) -> Option<S2CGamedataSend> {
+        None
+    }
+
     /// B346 — sem cartas nem liderança no 1.2.6, e o cliente recusa id > 260.
     fn player_leadership(&self, _total: i32, _mais: i32) -> Option<S2CGamedataSend> {
         None

@@ -696,8 +696,9 @@ Conferido contra o código em 2026-09-13 — cada linha diz onde está a evidên
 O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas, animações,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
-1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): PQ, torre (o **casamento**
-   pela missão foi feito no B347; faltam divórcio e a cerimônia),
+1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): torre (o **casamento**
+   pela missão foi feito no B347, faltam divórcio e a cerimônia; a **PQ** e as **variáveis globais** nas
+   missões, no B348),
    força, variáveis globais. Facção recusa sempre (não há sistema de facção). Feitos: invocação,
    falha por morte (B157), coleta com missão (B67), abate em equipe, sucesso/falha da equipe e
    serviço 8 (B164), **falha por região e por data (B335)**, **prêmio por escala de tempo e de
@@ -1352,6 +1353,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 345 | 10-21 | Daimon: atributos, gênios, injetar EXP, vestir peça, aprender e esquecer habilidade |
 | 346 | 10-21 | Cartas de General: liderança, vestir, atributos e devorar |
 | 347 | 10-22 | Casamento pela missão (cônjuge gravado, `PLAYER_CHANGE_SPOUSE`) |
+| 348 | 10-22 | PQ (missão pública) e variáveis globais nas missões |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

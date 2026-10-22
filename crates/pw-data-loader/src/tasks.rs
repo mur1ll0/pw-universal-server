@@ -151,6 +151,55 @@ pub struct EscalaDePremio {
     pub premios: Vec<TaskReward>,
 }
 
+/// B348 — `COMPARE_KEY_VALUE` (`TaskTempl.h:1877-1889`): `esquerda op direita`, cada lado uma variável global
+/// (`tipo` 0) ou um número; `op` 0 `>`, 1 `==`, 2 `<`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComparacaoGlobal {
+    pub tipo_esquerda: i32,
+    pub esquerda: i32,
+    pub operador: i32,
+    pub tipo_direita: i32,
+    pub direita: i32,
+}
+
+/// B348 — `m_bPremNeedComp`/`m_bFinNeedComp` com as duas comparações e o `m_n*Exp1AndOrExp2` (0 "ou", 1 "e").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CondicaoGlobal {
+    pub e: bool,
+    pub a: ComparacaoGlobal,
+    pub b: ComparacaoGlobal,
+}
+
+/// B348 — `MONSTERS_CONTRIB` (`TaskTempl.h:337-349`): a contribuição de PQ por abate do monstro.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContribuicaoDeMonstro {
+    pub monstro: u32,
+    /// `m_iWholeContrib` — de quem é dono do abate, dividida pela equipe.
+    pub inteira: i32,
+    /// `m_iShareContrib` — repartida pelo dano da equipe.
+    pub compartilhada: i32,
+    /// `m_iPersonalWholeContrib` — pelo dano pessoal.
+    pub pessoal: i32,
+}
+
+/// B348 — `RANKING_AWARD` (21 bytes empacotados, `TaskTempl.h:351-364`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PremioPorColocacao {
+    pub de: u32,
+    pub ate: u32,
+    pub comum: bool,
+    pub item: u32,
+    pub quantidade: u32,
+    pub periodo: i32,
+}
+
+/// B348 — `AWARD_PQ_RANKING`: por classe (`m_bAwardByProf`) ou geral, e as faixas.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PremioDaPq {
+    pub por_classe: bool,
+    pub faixas: Vec<PremioPorColocacao>,
+}
+
 /// O que a missão paga (`AWARD_DATA`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TaskReward {
@@ -184,6 +233,24 @@ pub struct TaskReward {
     /// B346 — `m_iLeaderShip` (só v129; `AddLeaderShip`, `TaskProcess.cpp:1310`).
     #[serde(default)]
     pub lideranca: i32,
+    /// B348 — `m_lMonsCtrl`/`m_bTrigCtrl` do prêmio (o controlador mexido no fim da etapa da PQ).
+    #[serde(default)]
+    pub controle_de_monstros: i32,
+    #[serde(default)]
+    pub dispara_controle: bool,
+    /// B348 — `m_ulSpecifyContribTaskID`, `m_ulSpecifyContribSubTaskID`, `m_ulSpecifyContrib`.
+    #[serde(default)]
+    pub contribuicao_definida: (u32, u32, i32),
+    /// B348 — `m_ulContrib`, `m_ulRandContrib`, `m_ulLowestcontrib`.
+    #[serde(default)]
+    pub contribuicao: i32,
+    #[serde(default)]
+    pub contribuicao_sorteada: i32,
+    #[serde(default)]
+    pub contribuicao_minima: i32,
+    /// B348 — `m_PQRankingAward`.
+    #[serde(default)]
+    pub premio_da_pq: Option<PremioDaPq>,
 }
 
 impl TaskReward {
@@ -338,6 +405,25 @@ pub struct TaskTemplate {
     pub torre: bool,
     pub pq: bool,
     pub pq_sub: bool,
+    /// B348 — as variáveis globais da PQ (`m_pszPQExp`, cada uma o `atoi` do texto).
+    #[serde(default)]
+    pub pq_chaves: Vec<i32>,
+    /// B348 — `m_MonstersContrib`.
+    #[serde(default)]
+    pub contribuicao_por_monstro: Vec<ContribuicaoDeMonstro>,
+    /// B348 — `m_lMonsCtrl` / `m_bTrigCtrl`: o controlador ligado (ou desligado) quando a etapa começa.
+    #[serde(default)]
+    pub controle_de_monstros: i32,
+    #[serde(default)]
+    pub dispara_controle: bool,
+    /// B348 — `IsNotChangePQRanking()`: nesta etapa a colocação não é refeita a cada 60 s.
+    #[serde(default)]
+    pub nao_muda_colocacao: bool,
+    /// B348 — `m_bPremNeedComp` + `m_Prem1/2KeyValue` (começar) e `m_bFinNeedComp` + `m_Fin1/2KeyValue` (concluir).
+    #[serde(default)]
+    pub global_inicio: Option<CondicaoGlobal>,
+    #[serde(default)]
+    pub global_fim: Option<CondicaoGlobal>,
     pub limite_de_conta: bool,
     pub limite_de_personagem: bool,
     pub nao_conta_falha: bool,
@@ -512,6 +598,13 @@ mod v129 {
         pub const TORRE: usize = 284;
         pub const PQ: usize = 288;
         pub const PQ_SUB: usize = 301;
+        /// B348 — `specs/tasks_155/layout129.tsv`.
+        pub const CONTROLE_DE_MONSTROS: usize = 221;
+        /// `m_bChangePQRanking` — o `IsNotChangePQRanking()` o devolve (`TaskTempl.h:2797`).
+        pub const NAO_MUDA_COLOCACAO: usize = 278;
+        pub const DISPARA_CONTROLE: usize = 225;
+        pub const GLOBAL_INICIO: usize = 713;
+        pub const GLOBAL_FIM: usize = 993;
         pub const LIMITE_DE_CONTA: usize = 321;
         pub const LIMITE_DE_PERSONAGEM: usize = 322;
         pub const NAO_CONTA_FALHA: usize = 328;
@@ -653,6 +746,15 @@ mod v129 {
         /// B346 — `m_iLeaderShip`: depois de `m_ulTitleNum` (253) e do ponteiro `m_pTitleAward` (257), no
         /// `AWARD_DATA` empacotado (`TaskTempl.h:1230-1232`, `#pragma pack(1)` na `:221`).
         pub const LIDERANCA: usize = 261;
+        /// B348 — `specs/tasks_155/award_layout.tsv`.
+        pub const CONTROLE_DE_MONSTROS: usize = 77;
+        pub const DISPARA_CONTROLE: usize = 81;
+        pub const CONTRIB_DEFINIDA_MISSAO: usize = 124;
+        pub const CONTRIB_DEFINIDA_ETAPA: usize = 128;
+        pub const CONTRIB_DEFINIDA: usize = 132;
+        pub const CONTRIB: usize = 136;
+        pub const CONTRIB_SORTEADA: usize = 140;
+        pub const CONTRIB_MINIMA: usize = 144;
     }
 }
 
@@ -863,10 +965,23 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         });
     }
     let ranking = u32_em(a, p::PQ_RANKING_CNT);
+    let mut premio_da_pq = None;
     if ranking != 0 {
-        l.pular(1)?;
+        let por_classe = l.u8()? != 0;
         let n = l.contador(ranking, v129::RANKING_AWARD)?;
-        l.pular(n * v129::RANKING_AWARD)?;
+        let mut faixas = Vec::with_capacity(n);
+        for _ in 0..n {
+            let r = l.bytes(v129::RANKING_AWARD)?;
+            faixas.push(PremioPorColocacao {
+                de: u32_em(r, 0),
+                ate: u32_em(r, 4),
+                comum: r[8] != 0,
+                item: u32_em(r, 9),
+                quantidade: u32_em(r, 13),
+                periodo: u32_em(r, 17) as i32,
+            });
+        }
+        premio_da_pq = Some(PremioDaPq { por_classe, faixas });
     }
     for (campo, tamanho) in [
         (p::TITLE_NUM, v129::TITLE_AWARD),
@@ -902,6 +1017,17 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         tipo_do_multiplicador: u32_em(a, p::TIPO_DO_MULTIPLICADOR) as i32,
         multiplicador: u32_em(a, p::MULTIPLICADOR) as i32,
         lideranca: u32_em(a, p::LIDERANCA) as i32,
+        controle_de_monstros: u32_em(a, p::CONTROLE_DE_MONSTROS) as i32,
+        dispara_controle: a[p::DISPARA_CONTROLE] != 0,
+        contribuicao_definida: (
+            u32_em(a, p::CONTRIB_DEFINIDA_MISSAO),
+            u32_em(a, p::CONTRIB_DEFINIDA_ETAPA),
+            u32_em(a, p::CONTRIB_DEFINIDA) as i32,
+        ),
+        contribuicao: u32_em(a, p::CONTRIB) as i32,
+        contribuicao_sorteada: u32_em(a, p::CONTRIB_SORTEADA) as i32,
+        contribuicao_minima: u32_em(a, p::CONTRIB_MINIMA) as i32,
+        premio_da_pq,
     })
 }
 
@@ -918,6 +1044,33 @@ fn escala(l: &mut Leitor, por_itens: bool) -> Result<EscalaDePremio> {
     }
     let limiar = |i: usize| if por_itens { u32_em(&limiares, 4 * i) as f64 } else { f32_em(&limiares, 4 * i) as f64 };
     Ok(EscalaDePremio { item, limiares: (0..n.min(v129::MAX_AWARD_SCALES)).map(limiar).collect(), premios })
+}
+
+/// B348 — `atoi` do C: espaços, sinal e dígitos; o resto é ignorado.
+fn atoi(b: &[u8]) -> i32 {
+    let s = std::str::from_utf8(b).unwrap_or("").trim_start();
+    let (sinal, resto) = match s.as_bytes().first() {
+        Some(b'-') => (-1i64, &s[1..]),
+        Some(b'+') => (1, &s[1..]),
+        _ => (1, s),
+    };
+    let digitos: String = resto.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (sinal * digitos.parse::<i64>().unwrap_or(0)).clamp(i32::MIN as i64, i32::MAX as i64) as i32
+}
+
+/// B348 — `m_b*NeedComp` (1 byte), `m_n*Exp1AndOrExp2` (4) e as duas `COMPARE_KEY_VALUE` (20 cada).
+fn condicao_global(b: &[u8], o: usize) -> Option<CondicaoGlobal> {
+    if b.get(o).copied().unwrap_or(0) == 0 {
+        return None;
+    }
+    let cmp = |p: usize| ComparacaoGlobal {
+        tipo_esquerda: u32_em(b, p) as i32,
+        esquerda: u32_em(b, p + 4) as i32,
+        operador: u32_em(b, p + 8) as i32,
+        tipo_direita: u32_em(b, p + 12) as i32,
+        direita: u32_em(b, p + 16) as i32,
+    };
+    Some(CondicaoGlobal { e: u32_em(b, o + 1) == 1, a: cmp(o + 5), b: cmp(o + 25) })
 }
 
 /// `task_tm`: seis `long` (4 bytes cada no binário de 32 bits).
@@ -1250,13 +1403,28 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         let tipo = if i < 24 { b[f::TM_TYPE + i] } else { 0 };
         janelas.push(JanelaDeHorario { tipo, inicio, fim });
     }
-    for (campo, tamanho) in [
-        (f::CHANGE_KEY_CNT, v129::CHANGE_KEY),
-        (f::PQ_EXP_CNT, v129::EXPRESSAO),
-        (f::MONSTER_CONTRIB_CNT, v129::MONSTERS_CONTRIB),
-    ] {
-        let n = l.contador(u32_em(b, campo), tamanho)?;
-        l.pular(n * tamanho)?;
+    let n = l.contador(u32_em(b, f::CHANGE_KEY_CNT), v129::CHANGE_KEY)?;
+    l.pular(n * v129::CHANGE_KEY)?;
+    // B348 — `m_pszPQExp[i]` (o texto, `EXP_LEN` bytes; o `InitPublicQuestSystem` faz `atoi`) e o `m_pPQExpArr[i]`
+    // analisado (`TaskTempl.cpp:3918-3926`).
+    let n = l.contador(u32_em(b, f::PQ_EXP_CNT), v129::EXPRESSAO)?;
+    let mut pq_chaves = Vec::with_capacity(n);
+    for _ in 0..n {
+        let e = l.bytes(v129::EXPRESSAO)?;
+        let texto = &e[..v129::EXP_LEN];
+        let fim = texto.iter().position(|c| *c == 0).unwrap_or(texto.len());
+        pq_chaves.push(atoi(&texto[..fim]));
+    }
+    let n = l.contador(u32_em(b, f::MONSTER_CONTRIB_CNT), v129::MONSTERS_CONTRIB)?;
+    let mut contribuicao_por_monstro = Vec::with_capacity(n);
+    for _ in 0..n {
+        let m = l.bytes(v129::MONSTERS_CONTRIB)?;
+        contribuicao_por_monstro.push(ContribuicaoDeMonstro {
+            monstro: u32_em(m, 0),
+            inteira: u32_em(m, 4) as i32,
+            compartilhada: u32_em(m, 8) as i32,
+            pessoal: u32_em(m, 12) as i32,
+        });
     }
     let regioes_de_entrega = regioes(l, u32_em(b, f::DELV_REGION_CNT))?;
     let regioes_de_entrar = regioes(l, u32_em(b, f::ENTER_REGION_CNT))?;
@@ -1395,6 +1563,13 @@ fn missao(l: &mut Leitor, pai: Option<u32>, saida: &mut HashMap<u32, TaskTemplat
         torre: flag(f::TORRE),
         pq: flag(f::PQ),
         pq_sub: flag(f::PQ_SUB),
+        pq_chaves,
+        contribuicao_por_monstro,
+        controle_de_monstros: u32_em(b, f::CONTROLE_DE_MONSTROS) as i32,
+        dispara_controle: flag(f::DISPARA_CONTROLE),
+        nao_muda_colocacao: flag(f::NAO_MUDA_COLOCACAO),
+        global_inicio: condicao_global(b, f::GLOBAL_INICIO),
+        global_fim: condicao_global(b, f::GLOBAL_FIM),
         limite_de_conta: flag(f::LIMITE_DE_CONTA),
         limite_de_personagem: flag(f::LIMITE_DE_PERSONAGEM),
         nao_conta_falha: flag(f::NAO_CONTA_FALHA),
@@ -1545,6 +1720,13 @@ impl TaskTemplate {
             torre: false,
             pq: false,
             pq_sub: false,
+            pq_chaves: Vec::new(),
+            contribuicao_por_monstro: Vec::new(),
+            controle_de_monstros: 0,
+            dispara_controle: false,
+            nao_muda_colocacao: false,
+            global_inicio: None,
+            global_fim: None,
             limite_de_conta: false,
             limite_de_personagem: false,
             nao_conta_falha: false,

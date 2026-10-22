@@ -20,6 +20,7 @@ pub mod navegacao;
 pub mod planta;
 pub mod npc;
 pub mod politica;
+pub mod pq;
 pub mod progressao;
 pub mod refino;
 pub mod taxas;

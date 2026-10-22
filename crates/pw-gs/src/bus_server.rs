@@ -1209,6 +1209,17 @@ impl BusServer {
             }
             EventoDoMundo::MissaoDaPolitica { roleid, missao } => self.missao_da_politica(roleid, missao).await,
             EventoDoMundo::Duelo(a) => self.avisar_do_duelo(a).await,
+            EventoDoMundo::Pq(a) => {
+                let para: Vec<i64> = match &a {
+                    crate::pq::AvisoDaPq::Info { para, .. } => vec![*para],
+                    crate::pq::AvisoDaPq::Colocacao { para, .. } | crate::pq::AvisoDaPq::Globais { para, .. } => para.clone(),
+                };
+                if let Some(p) = Self::pacote_da_pq(self.sub.as_ref(), &a) {
+                    for id in para {
+                        self.enviar_ao_jogador(id as i32, p.clone()).await;
+                    }
+                }
+            }
             EventoDoMundo::MonstroRenasceu { id } => {
                 // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
                 // recalcula ao trocar de fatia.
@@ -2553,6 +2564,17 @@ impl BusServer {
         {
             debug!("mundo: {alvo} não está neste servidor de mundo");
         }
+    }
+
+    /// B348 — o pacote de um aviso da PQ (só 1.5.5; o cliente 1.2.6 recusa id > 260).
+    pub(crate) fn pacote_da_pq(sub: &dyn WorldProtocol, a: &crate::pq::AvisoDaPq) -> Option<Vec<u8>> {
+        use crate::pq::AvisoDaPq as A;
+        match a {
+            A::Info { missao, etapa, pontos, na_classe, geral, .. } => sub.public_quest_info(*missao as i32, *etapa as i32, *pontos, *na_classe, *geral),
+            A::Colocacao { missao, jogadores, contagens, entradas, .. } => sub.public_quest_ranks(*missao as i32, *jogadores as i32, contagens, entradas),
+            A::Globais { pares, .. } => sub.common_data_notify(pares),
+        }
+        .map(|p| p.data)
     }
 
     /// B346 — `C2S::SWALLOW_GENERALCARD` (170) `{u8 equip_idx; u8 is_inv; u8 inv_idx; u32 count}`

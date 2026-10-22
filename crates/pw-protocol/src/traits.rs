@@ -226,6 +226,17 @@ pub trait WorldProtocol: Send + Sync {
         Some(S2CGamedataSend::plant_pet_hp_notify(id, hp_factor, hp, mp_factor, mp))
     }
 
+    /// B348 — PUBLIC_QUEST_INFO (284), PUBLIC_QUEST_RANKS (285), COMMON_DATA_NOTIFY (266).
+    fn public_quest_info(&self, missao: i32, etapa: i32, pontos: i32, na_classe: i32, geral: i32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::public_quest_info(missao, etapa, pontos, na_classe, geral))
+    }
+    fn public_quest_ranks(&self, missao: i32, jogadores: i32, contagens: &[u32; 13], entradas: &[[i32; 5]]) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::public_quest_ranks(missao, jogadores, contagens, entradas))
+    }
+    fn common_data_notify(&self, pares: &[(i32, i32)]) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::common_data_notify(pares))
+    }
+
     /// B346 — PLAYER_LEADERSHIP (378) `{int leadership_total; int leadership_added}`.
     fn player_leadership(&self, total: i32, mais: i32) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::player_leadership(total, mais))

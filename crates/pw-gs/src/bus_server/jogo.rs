@@ -93,6 +93,8 @@ mod aviso_do_cliente {
     pub const ENTREGA_AUTOMATICA: u8 = 4;
     pub const GATILHO_MANUAL: u8 = 5;
     pub const SAIU_DO_LUGAR: u8 = 10;
+    /// B348 — `TASK_CLT_NOTIFY_PQ_CHECK_INIT` (`TaskTempl.h:113`).
+    pub const PQ_NA_ENTRADA: u8 = 11;
 }
 
 /// `EQUIP_INDEX_WEAPON` (`EC_IvtrTypes.h:56-67`).
@@ -147,6 +149,9 @@ pub(crate) struct Contexto<'a> {
     pub monstros_a_invocar: Vec<(u32, u32, u32, i32, bool)>,
     /// `TaskNotifyPlayer` pendentes: `(membro, missão, razão)`, entregues depois de gravar.
     pub avisos_a_equipe: Vec<(u32, u32, u8)>,
+    /// B348 — as PQ do mapa e as variáveis globais dele.
+    pub pq: &'a mut crate::pq::GerenciadorDePq,
+    pub globais: Arc<std::sync::Mutex<HashMap<i32, i32>>>,
 }
 
 impl Contexto<'_> {
@@ -165,6 +170,15 @@ impl Contexto<'_> {
         self.p.hp = self.p.hp.min(self.p.max_hp);
         self.p.mp = self.p.mp.min(self.p.max_mp);
         self.para_mim.push(BusServer::ficha_de(self.sub, self.p));
+    }
+
+    /// B348 — os avisos da PQ que saem durante a operação são todos para este jogador.
+    fn avisos_da_pq(&mut self, avisos: Vec<crate::pq::AvisoDaPq>) {
+        for a in avisos {
+            if let Some(p) = BusServer::pacote_da_pq(self.sub, &a) {
+                self.para_mim.push(p);
+            }
+        }
     }
 
     fn bolsa_de(&mut self, comum: bool) -> &mut Bolsa {
@@ -387,6 +401,38 @@ impl Jogador for Contexto<'_> {
     }
     fn conjuge(&self) -> u32 {
         self.p.conjuge.max(0) as u32
+    }
+    fn global(&self, k: i32) -> i32 {
+        self.globais.lock().ok().and_then(|g| g.get(&k).copied()).unwrap_or(0)
+    }
+    fn pq_estampa(&self, missao: u32) -> u32 {
+        self.pq.pqs.get(&missao).map(|p| p.estampa).unwrap_or(0)
+    }
+    fn pq_etapa(&self, missao: u32) -> u32 {
+        self.pq.pqs.get(&missao).map(|p| p.etapa).unwrap_or(0)
+    }
+    fn pq_entrar(&mut self, missao: u32) {
+        let g = self.globais.lock().map(|g| g.clone()).unwrap_or_default();
+        let (id, classe) = (self.p.role_id as i64, self.p.cls as i32);
+        let avisos = self.pq.pqs.get_mut(&missao).map(|p| p.entrar(id, classe, &g)).unwrap_or_default();
+        self.avisos_da_pq(avisos);
+    }
+    fn pq_voltar(&mut self, missao: u32) {
+        let g = self.globais.lock().map(|g| g.clone()).unwrap_or_default();
+        let id = self.p.role_id as i64;
+        let avisos = self.pq.pqs.get_mut(&missao).map(|p| p.voltar(id, &g)).unwrap_or_default();
+        self.avisos_da_pq(avisos);
+    }
+    fn pq_pontos(&self, missao: u32) -> i32 {
+        self.pq.pqs.get(&missao).map(|p| p.pontos(self.p.role_id as i64)).unwrap_or(0)
+    }
+    fn pq_colocacao(&self, missao: u32, por_classe: bool) -> i32 {
+        self.pq.pqs.get(&missao).map(|p| p.colocacao_de(self.p.role_id as i64, por_classe)).unwrap_or(-1)
+    }
+    fn pq_somar(&mut self, missao: u32, n: i32) {
+        let id = self.p.role_id as i64;
+        let avisos = self.pq.pqs.get_mut(&missao).map(|p| p.somar(id, n)).unwrap_or_default();
+        self.avisos_da_pq(avisos);
     }
     fn dar_lideranca(&mut self, v: i32) {
         self.p.lideranca = self.p.lideranca.wrapping_add(v);
@@ -1255,6 +1301,8 @@ impl BusServer {
                     },
                 })
                 .collect();
+            let globais = Arc::clone(&mundo.variaveis_globais);
+            let pq = &mut mundo.pq;
             let p = mundo.players.get_mut(&(roleid as i64))?;
             let gm = autorizacao_gm.is_some();
             let dinheiro_antes = p.money;
@@ -1284,6 +1332,8 @@ impl BusServer {
                 teleporte: None,
                 monstros_a_invocar: Vec::new(),
                 avisos_a_equipe: Vec::new(),
+                pq,
+                globais,
             };
             let r = f(&mut ctx);
             let Contexto {
@@ -3014,6 +3064,9 @@ impl BusServer {
                     .await;
                 }
             }
+            aviso_do_cliente::PQ_NA_ENTRADA => {
+                self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.pq_voltar(id))).await;
+            }
             aviso_do_cliente::GATILHO_MANUAL => {
                 // `OnTaskManualTrig` (`TaskServer.cpp:585-592`): só missão sem NPC que entrega.
                 if dados
@@ -3241,7 +3294,7 @@ impl BusServer {
     /// drop (`DropItem`).
     pub(super) async fn monstro_morreu(&self, alvo: i64) {
         self.encerrar_ataques_ao_alvo(alvo).await;
-        let (tid, nivel_do_monstro, pos, partes, dono, modelo) = {
+        let (tid, nivel_do_monstro, pos, partes, dono, modelo, contribuicoes_de_pq) = {
             let mut mundo = self.world.write().await;
             let dados = Arc::clone(&mundo.data_manager);
             let Some((m, _)) = mundo.monsters.get(&alvo) else {
@@ -3267,6 +3320,16 @@ impl BusServer {
                     );
                 }
             }
+            // B348 — a contribuição de PQ de quem tem etapa de PQ ativa (`GM_MSG_CONTRIBUTION_TO_KILL_NPC`).
+            let contribuicoes: Vec<crate::pq::ContribuicaoDoAbate> = crate::pq::contribuicoes_do_abate(
+                &m.danos,
+                m.max_hp as i64,
+                dono,
+                |id| mundo.grupo_do_jogador(id as i32),
+            )
+            .into_iter()
+            .filter(|c| mundo.tem_etapa_de_pq(c.jogador))
+            .collect();
             let sorteio: f32 = rand::Rng::gen(&mut rand::thread_rng());
             let partes = progressao::repartir_abate(
                 &progressao::Abatido::de(m),
@@ -3282,6 +3345,7 @@ impl BusServer {
                 partes,
                 dono,
                 dados.monstros.get(m.template_id).cloned(),
+                contribuicoes,
             );
             mundo.matar_monstro(alvo);
             if let Some((m, _)) = mundo.monsters.get_mut(&alvo) {
@@ -3292,6 +3356,9 @@ impl BusServer {
         };
 
         let dados_do_abate = self.world.read().await.data_manager.clone();
+        for c in contribuicoes_de_pq {
+            self.com_contexto(c.jogador as i32, |ctx| Self::com_motor(ctx, &dados_do_abate, |m| m.abate_de_pq(tid, &c))).await;
+        }
         let taxas = self.taxas();
         for parte in partes {
             let (quem, exp, sp, equipe) = match parte {
