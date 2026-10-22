@@ -16989,3 +16989,17 @@ comparação lado a lado.
     - Prova: `pq::testes` **4/4** (`empate_pela_ordem_do_hash_map_do_abase`: 10, 203, 5 empatados saem 10, 203, 5; o
       crescimento de 193 para 389 baldes inverte a corrente).
     - Ver em jogo: só com dois personagens empatados na mesma PQ — a janela de colocação mostra a mesma ordem para os dois.
+
+353. **Sessão 2026-10-22: masmorra — expulsão e renovação da cópia.**
+
+    - `mapas.rs`: chave `(roleid, contador)` (`chave_de`, `Copias::propria/atual/renovar`); `conferir_quem_esta_nas_copias`
+      a cada 3 s (o `aei_filter`): renova a chave da cópia de 4 h (`ResetInstance`), avisa quem não confere com
+      `EXIT_INSTANCE` (200) e manda para a cidade em 60 s, cancela quando volta a conferir ou morre. `ao_sair_do_grupo`
+      (comando 30) e `ao_entrar_no_grupo` (dentro da cópia, a chave do líder) ligados no `BusServer`; o login numa
+      masmorra usa a chave atual.
+    - `pw-protocol`: `S2CGamedataSend::exit_instance` (9 B, conferido contra o IR).
+    - Provas: `testes_da_masmorra` **2/2**, `masmorra_por_grupo` **1/1** (o membro que sai do grupo é avisado, o líder e o
+      sozinho não; voltar ao grupo cancela), `subcomandos_s2c_contra_o_ir` **5/5**.
+    - Ver em jogo (1.5.5, dois clientes): os dois em grupo entram na Caverna das Sombras (169); o membro sai do grupo —
+      aparece a contagem de saída de 60 s; ao fim, ele vai para a cidade. Repetir e, antes dos 60 s, o líder convida de
+      novo: a contagem some.

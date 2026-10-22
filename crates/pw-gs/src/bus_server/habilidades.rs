@@ -2234,7 +2234,7 @@ impl BusServer {
     /// forma (`PLAYER_CHGSHAPE`, 163) quando ela mudou.
     /// `gplayer_imp::ReturnToTown` (`gs/player.cpp:10949-10957`): sem ponto de cidade no
     /// distrito, `GetTownPosition` falha e o jogador fica onde está.
-    pub(super) async fn voltar_para_a_cidade(&self, roleid: i32) {
+    pub(crate) async fn voltar_para_a_cidade(&self, roleid: i32) {
         let destino = {
             let mundo = self.world.read().await;
             mundo.players.get(&(roleid as i64)).and_then(|p| {

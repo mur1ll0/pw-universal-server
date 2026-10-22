@@ -28,6 +28,7 @@
 use crate::bus_server::{BusServer, EnvioAoCliente};
 use crate::world::WorldInstance;
 use pw_bus::{BusListener, BusMessage};
+use pw_protocol::packets::s2c::S2CGamedataSend;
 use pw_storage::CharacterRepository;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,6 +80,18 @@ pub const PRIMEIRA_COPIA: i32 = 1_000_000;
 const OCIOSA_S: u64 = 20 * 60;
 const VIDA_S: u64 = 4 * 3600;
 const BATIMENTO_DAS_COPIAS_S: u64 = 10;
+/// B353 — `aei_filter::Heartbeat` (`gs/aei_filter.cpp:32-106`): confere a cada 3 s; quem não confere tem 60 s.
+const CONFERE_A_CADA_S: u64 = 3;
+const PRAZO_DE_SAIDA_S: i32 = 60;
+/// `KIR_NULL`, `KIR_KEY_MISMATCH` (`gs/aei_filter.h:12-13`).
+const KIR_NULL: u8 = 0;
+const KIR_KEY_MISMATCH: u8 = 1;
+
+/// B353 — a chave de cópia `(roleid, contador)` do original (`_cur_ins_key_list`, `instance_hash_key`) num `i64`:
+/// o contador nos 32 bits altos. Contador 0 dá o próprio `roleid`.
+pub fn chave_de(roleid: i32, contador: u32) -> i64 {
+    ((contador as i64) << 32) | (roleid as u32 as i64)
+}
 
 /// B349 — uma cópia de masmorra (`instance_manager::AllocWorld` com a `instance_hash_key`).
 struct CopiaDeMasmorra {
@@ -97,6 +110,61 @@ struct Copias {
     por_chave: HashMap<(i32, i64), i32>,
     copias: HashMap<i32, CopiaDeMasmorra>,
     proximo: i32,
+    /// B353 — `_cur_tag_counter`: o contador de cada `(mapa, roleid)`, que o `ResetInstance` sobe.
+    contadores: HashMap<(i32, i32), u32>,
+    /// B353 — `aei_filter` em `WAIT_ESCAPE`: quem foi avisado, em que cópia e até quando fica.
+    saindo: HashMap<i32, (i32, std::time::Instant)>,
+}
+
+impl Copias {
+    /// A chave própria (`_cur_ins_key_list[tag]`).
+    fn propria(&self, mapa: i32, roleid: i32) -> i64 {
+        chave_de(roleid, self.contadores.get(&(mapa, roleid)).copied().unwrap_or(0))
+    }
+
+    /// `GetInstanceKey` (`player_imp.h:2577-2604`): a do grupo, se tem; senão a própria.
+    fn atual(&self, mapa: i32, roleid: i32) -> i64 {
+        self.chave_do_grupo.get(&roleid).copied().unwrap_or_else(|| self.propria(mapa, roleid))
+    }
+
+    /// `ResetInstance` (`gs/player.cpp:12925-12965`) da chave `velha`: o dono sobe o contador (`p.second++`) e a chave
+    /// do grupo de quem tinha a velha passa à nova (`GM_MSG_REBUILD_TEAM_INSTANCE_KEY`). Devolve a nova.
+    fn renovar(&mut self, mapa: i32, velha: i64) -> i64 {
+        let dono = velha as u32 as i32;
+        let n = self.contadores.entry((mapa, dono)).or_insert(0);
+        *n = n.wrapping_add(1);
+        let nova = self.propria(mapa, dono);
+        for k in self.chave_do_grupo.values_mut() {
+            if *k == velha {
+                *k = nova;
+            }
+        }
+        nova
+    }
+}
+
+/// B353 — o que fazer com quem está numa cópia (`aei_filter::Heartbeat`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conferencia {
+    Fica,
+    /// Avisar a saída em 60 s (`kickout_instance(KIR_KEY_MISMATCH, 60)`).
+    Avisar,
+    /// Voltou a conferir (ou morreu): cancelar (`kickout_instance(KIR_NULL, -1)`).
+    Cancelar,
+    /// O prazo acabou: `ReturnToTown`.
+    Expulsar,
+}
+
+/// B353 — a decisão do `aei_filter` para um jogador: `confere` é a chave dele igual à da cópia; `morto` dispensa;
+/// `prazo` é o fim dos 60 s, se já foi avisado.
+pub fn conferir(confere: bool, morto: bool, prazo: Option<std::time::Instant>, agora: std::time::Instant) -> Conferencia {
+    match prazo {
+        None if !confere && !morto => Conferencia::Avisar,
+        None => Conferencia::Fica,
+        Some(p) if agora >= p => Conferencia::Expulsar,
+        Some(_) if confere || morto => Conferencia::Cancelar,
+        Some(_) => Conferencia::Fica,
+    }
 }
 
 /// Para onde vai quem entra num mapa.
@@ -432,7 +500,7 @@ impl RoteadorDeMapas {
     }
 
     /// B349 — `GetInstanceKey` (`player_imp.h:2577-2610`): em grupo, a do líder; sozinho, a própria.
-    async fn chave_de_masmorra(&self, roleid: i32) -> i64 {
+    async fn chave_de_masmorra(&self, roleid: i32, mapa: i32) -> i64 {
         let membros = match self.mapa_de(roleid).await.and_then(|m| self.mapa(m)) {
             Some(origem) => origem.mundo().read().await.membros_do_grupo(roleid),
             None => Vec::new(),
@@ -440,13 +508,115 @@ impl RoteadorDeMapas {
         let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
         match membros.first() {
             Some(lider) => {
-                let chave = *lider as i64;
+                // B353 — a chave do líder com o contador dele (`_team_ins_key_list = _cur_ins_key_list`).
+                let chave = c.propria(mapa, *lider);
                 for m in &membros {
                     c.chave_do_grupo.insert(*m, chave);
                 }
                 chave
             }
-            None => c.chave_do_grupo.get(&roleid).copied().unwrap_or(roleid as i64),
+            None => c.atual(mapa, roleid),
+        }
+    }
+
+    /// B353 — a chave com que este jogador entra agora no `mapa` (a do login gravado numa masmorra).
+    pub fn chave_atual(&self, mapa: i32, roleid: i32) -> i64 {
+        self.copias.lock().unwrap_or_else(|e| e.into_inner()).atual(mapa, roleid)
+    }
+
+    /// B353 — foi avisado de que sai da cópia (`aei_filter` em `WAIT_ESCAPE`).
+    pub fn saindo_da_masmorra(&self, roleid: i32) -> bool {
+        self.copias.lock().unwrap_or_else(|e| e.into_inner()).saindo.contains_key(&roleid)
+    }
+
+    /// B353 — saiu do grupo pelo comando (`TEAM_LEAVE_PARTY`): sem grupo, a chave volta a ser a própria
+    /// (`GetInstanceKey`); se o grupo acabou, também a de quem ficou. Quem estiver numa cópia de outra chave é avisado
+    /// na próxima conferência. O grupo que se desfaz pela troca de mapa (B51) **não** passa por aqui.
+    pub fn ao_sair_do_grupo(&self, quem: i32, restantes: &[i32]) {
+        let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+        c.chave_do_grupo.remove(&quem);
+        if restantes.len() < 2 {
+            for m in restantes {
+                c.chave_do_grupo.remove(m);
+            }
+        }
+    }
+
+    /// B353 — alguém entrou num grupo: se o líder está numa cópia, a chave do grupo é a chave atual dele (a da cópia
+    /// em que entrou com o grupo de antes, que aqui se desfez na troca de mapa) e vale para todos os membros.
+    pub async fn ao_entrar_no_grupo(&self, lider: i32, membros: &[i32]) {
+        let Some(id) = self.mapa_de(lider).await else { return };
+        let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(mapa) = c.copias.get(&id).map(|x| x.mapa) else { return };
+        let chave = c.atual(mapa, lider);
+        for m in membros {
+            c.chave_do_grupo.insert(*m, chave);
+        }
+    }
+
+    /// B353 — `aei_filter::Heartbeat` (`gs/aei_filter.cpp:32-106`) para todos que estão em cópias, a cada 3 s: a cópia
+    /// com mais de 4 h (`w_life_time == 0`) renova a chave de quem ainda confere (`ResetInstance`); quem não confere
+    /// (saiu do grupo, ou a chave foi renovada) e não está morto é avisado (`EXIT_INSTANCE` com 60 s) e, no fim do
+    /// prazo, volta para a cidade (`ReturnToTown`); se voltar a conferir antes, o aviso é cancelado. Não portado: a
+    /// isenção do GM (`gmfree`) e o excesso de membros do grupo no mapa (`KIR_PLAYERCOUNT_EXCEED`).
+    pub async fn conferir_quem_esta_nas_copias(self: &Arc<Self>) {
+        let donos: Vec<(i32, i32)> = self.donos.read().await.iter().map(|(r, m)| (*r, *m)).collect();
+        let agora = std::time::Instant::now();
+        let mut na_copia: Vec<(Arc<BusServer>, i32, i32, i32, i64)> = Vec::new();
+        {
+            let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+            c.saindo.retain(|r, (copia, _)| donos.iter().any(|(d, m)| d == r && m == copia));
+            for (roleid, id) in &donos {
+                let Some((mapa, chave, velha)) =
+                    c.copias.get(id).map(|x| (x.mapa, x.chave, x.criada.elapsed().as_secs() >= VIDA_S))
+                else {
+                    continue;
+                };
+                if velha && c.atual(mapa, *roleid) == chave {
+                    let nova = c.renovar(mapa, chave);
+                    tracing::info!(roleid, mapa, id, nova, "masmorra: cópia vencida (4 h), chave renovada");
+                }
+                let Some(servidor) = self.mapa(*id) else { continue };
+                na_copia.push((servidor, *roleid, mapa, *id, chave));
+            }
+        }
+        let mut acoes: Vec<(Arc<BusServer>, i32, i32, Conferencia)> = Vec::new();
+        for (servidor, roleid, mapa, id, chave) in na_copia {
+            let morto = servidor.jogador_morto(roleid).await;
+            let acao = {
+                let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+                let confere = c.atual(mapa, roleid) == chave;
+                let acao = conferir(confere, morto, c.saindo.get(&roleid).map(|(_, p)| *p), agora);
+                match acao {
+                    Conferencia::Avisar => {
+                        c.saindo.insert(roleid, (id, agora + std::time::Duration::from_secs(PRAZO_DE_SAIDA_S as u64)));
+                    }
+                    Conferencia::Cancelar | Conferencia::Expulsar => {
+                        c.saindo.remove(&roleid);
+                    }
+                    Conferencia::Fica => {}
+                }
+                acao
+            };
+            acoes.push((servidor, roleid, mapa, acao));
+        }
+        for (servidor, roleid, mapa, acao) in acoes {
+            match acao {
+                Conferencia::Avisar => {
+                    info!("masmorra: {roleid} não confere com a cópia do {mapa} — sai em {PRAZO_DE_SAIDA_S} s");
+                    servidor
+                        .enviar_ao_jogador(roleid, S2CGamedataSend::exit_instance(mapa, KIR_KEY_MISMATCH, PRAZO_DE_SAIDA_S).data)
+                        .await;
+                }
+                Conferencia::Cancelar => {
+                    servidor.enviar_ao_jogador(roleid, S2CGamedataSend::exit_instance(mapa, KIR_NULL, -1).data).await;
+                }
+                Conferencia::Expulsar => {
+                    info!("masmorra: {roleid} expulso da cópia do {mapa}");
+                    servidor.voltar_para_a_cidade(roleid).await;
+                }
+                Conferencia::Fica => {}
+            }
         }
     }
 
@@ -558,6 +728,14 @@ impl RoteadorDeMapas {
                 copias.batimento_das_copias().await;
             }
         });
+        let conferir = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut t = tokio::time::interval(std::time::Duration::from_secs(CONFERE_A_CADA_S));
+            loop {
+                t.tick().await;
+                conferir.conferir_quem_esta_nas_copias().await;
+            }
+        });
         let _ = self.trocas.set(envio.clone());
         let _ = self.eu.set(Arc::downgrade(self));
         for (_, mapa) in self.todos() {
@@ -582,7 +760,7 @@ impl RoteadorDeMapas {
     async fn trocar(self: &Arc<Self>, p: crate::bus_server::PedidoDeTroca) {
         // B349 — a masmorra vai à cópia da chave (montada antes de pegar a guarda: é pesado).
         let destino_id = if self.mapa_ligado(p.mundo) {
-            let chave = self.chave_de_masmorra(p.roleid).await;
+            let chave = self.chave_de_masmorra(p.roleid, p.mundo).await;
             match self.destino_de_entrada(p.mundo, chave).await {
                 DestinoDeEntrada::Mapa(m) | DestinoDeEntrada::Copia(m) => m,
                 DestinoDeEntrada::Recusada => {
@@ -1329,7 +1507,7 @@ impl RoteadorDeMapas {
             let mapa = if recusada {
                 mapa
             } else if let Some(eu) = self.eu.get().and_then(|e| e.upgrade()) {
-                match eu.destino_de_entrada(mapa, roleid as i64).await {
+                match eu.destino_de_entrada(mapa, eu.chave_atual(mapa, roleid)).await {
                     DestinoDeEntrada::Mapa(m) | DestinoDeEntrada::Copia(m) => m,
                     DestinoDeEntrada::Recusada => {
                         recusada = true;
@@ -1436,5 +1614,38 @@ impl RoteadorDeMapas {
             }
         });
         (id, bus)
+    }
+}
+
+#[cfg(test)]
+mod testes_da_masmorra {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// `aei_filter::Heartbeat`: avisa quem não confere, cancela quem volta a conferir ou morre, expulsa no prazo.
+    #[test]
+    fn decisao_do_filtro_da_copia() {
+        let t = Instant::now();
+        let prazo = Some(t + Duration::from_secs(60));
+        assert_eq!(conferir(true, false, None, t), Conferencia::Fica);
+        assert_eq!(conferir(false, false, None, t), Conferencia::Avisar);
+        assert_eq!(conferir(false, true, None, t), Conferencia::Fica, "morto não é avisado");
+        assert_eq!(conferir(false, false, prazo, t), Conferencia::Fica);
+        assert_eq!(conferir(true, false, prazo, t), Conferencia::Cancelar);
+        assert_eq!(conferir(false, true, prazo, t), Conferencia::Cancelar);
+        assert_eq!(conferir(false, false, prazo, t + Duration::from_secs(60)), Conferencia::Expulsar);
+    }
+
+    /// `ResetInstance`: o dono sobe o contador e a chave do grupo acompanha.
+    #[test]
+    fn renovar_a_chave_sobe_o_contador_do_dono() {
+        let mut c = Copias::default();
+        assert_eq!(c.propria(169, 7), 7, "contador 0 é o próprio roleid");
+        c.chave_do_grupo.insert(8, 7);
+        c.chave_do_grupo.insert(9, 99);
+        let nova = c.renovar(169, 7);
+        assert_eq!(nova, chave_de(7, 1));
+        assert_eq!((c.atual(169, 7), c.atual(169, 8), c.atual(169, 9)), (nova, nova, 99));
+        assert_eq!(c.propria(161, 7), 7, "o contador é por mapa");
     }
 }

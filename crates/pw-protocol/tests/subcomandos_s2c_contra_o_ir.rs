@@ -226,6 +226,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("host_duel_start", "HOST_DUEL_START"),
     ("duel_stop", "DUEL_STOP"),
     ("duel_result", "DUEL_RESULT"),
+    ("exit_instance", "EXIT_INSTANCE"),
     ("player_duel_start", "PLAYER_DUEL_START"),
     ("elf_cmd_result", "ELF_CMD_RESULT"),
     ("player_change_spouse", "PLAYER_CHANGE_SPOUSE"),

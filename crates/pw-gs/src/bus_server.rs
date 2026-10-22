@@ -2783,6 +2783,10 @@ impl BusServer {
             "mundo: {roleid} entrou no grupo de {lider} ({} membros)",
             membros.len()
         );
+        // B353 — dentro de uma cópia, o grupo novo fica com a chave do líder.
+        if let Some(r) = self.roteador.get().and_then(|r| r.upgrade()) {
+            r.ao_entrar_no_grupo(lider, &membros).await;
+        }
         for m in &membros {
             self.enviar_ao_jogador(
                 *m,
@@ -2824,6 +2828,10 @@ impl BusServer {
         };
 
         info!("mundo: {roleid} saiu do grupo; ficaram {}", restantes.len());
+        // B353 — sem grupo, a chave de masmorra volta à própria (`aei_filter` confere em 3 s).
+        if let Some(r) = self.roteador.get().and_then(|r| r.upgrade()) {
+            r.ao_sair_do_grupo(roleid, &restantes);
+        }
         // O próprio, para fechar a interface de grupo.
         self.enviar_ao_jogador(
             roleid,
@@ -6402,6 +6410,11 @@ impl BusServer {
             .await
             .get(&roleid)
             .map(|s| s.envio.clone())
+    }
+
+    /// B353 — o jogador está morto neste mapa (`IsDead`, para o `aei_filter`).
+    pub async fn jogador_morto(&self, roleid: i32) -> bool {
+        self.world.read().await.players.get(&(roleid as i64)).is_some_and(|p| p.hp <= 0)
     }
 
     pub async fn enviar_ao_jogador(&self, roleid: i32, data: Vec<u8>) -> bool {

@@ -2538,6 +2538,18 @@ impl S2CGamedataSend {
         stream.write_u8(u8::from(perdeu));
         Self { data: stream.into_bytes().to_vec() }
     }
+    /// B353 — `EXIT_INSTANCE` (200; `KICKOUT_INSTANCE` no servidor) `{int idInst; char reason; int iLeftTime}` = 9 B
+    /// (`cmd_exit_instance`; `gplayer_dispatcher::kickout_instance`, `gs/player.cpp:5233-5240`): o mapa, a razão
+    /// (`KIR_*`, `gs/aei_filter.h:12-24`: 0 cancela, 1 chave não confere, 2 gente demais) e os segundos até sair
+    /// (-1 cancela).
+    pub fn exit_instance(mapa: i32, razao: u8, segundos: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(200);
+        stream.write_i32_le(mapa);
+        stream.write_u8(razao);
+        stream.write_i32_le(segundos);
+        Self { data: stream.into_bytes().to_vec() }
+    }
     /// `PLAYER_DUEL_START` (229; `ELSE_DUEL_START` no servidor) `{int player_id}` — aos outros em volta.
     pub fn player_duel_start(quem: i32) -> Self {
         let mut stream = OctetsStream::new();
