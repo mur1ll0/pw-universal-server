@@ -1207,6 +1207,7 @@ impl BusServer {
                 }
             }
             EventoDoMundo::MissaoDaPolitica { roleid, missao } => self.missao_da_politica(roleid, missao).await,
+            EventoDoMundo::Duelo(a) => self.avisar_do_duelo(a).await,
             EventoDoMundo::MonstroRenasceu { id } => {
                 // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
                 // recalcula ao trocar de fatia.
@@ -1816,6 +1817,7 @@ impl BusServer {
             ids::BANISH_PET => self.soltar_mascote(roleid, &cmd.payload, envio).await,
             ids::PET_CTRL => self.ordem_ao_mascote(roleid, &cmd.payload).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
+            ids::DUEL_REQUEST | ids::DUEL_REPLY => self.comando_de_duelo(roleid, cmd.id, &cmd.payload, envio).await,
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
             ids::TEAM_LEAVE_PARTY => self.deixar_grupo(roleid).await,
@@ -2292,6 +2294,11 @@ impl BusServer {
         if atacante.efeitos.sem_acao() {
             return;
         }
+        if let Some(vitima) = mundo.players.get(&alvo).cloned() {
+            drop(mundo);
+            self.golpear_jogador(roleid, atacante, vitima, de_longe, envio).await;
+            return;
+        }
         let Some((monstro, _)) = mundo.monsters.get(&alvo) else {
             return;
         };
@@ -2424,6 +2431,36 @@ impl BusServer {
         // (`EventoDoMundo::MonstroMorreu`).
     }
 
+    /// B344 — o golpe normal em outro jogador (duelo ou PvP): `FillAttackMsg` → `HandleAttackMsg` do jogador, com o
+    /// ajuste de PvP (`gplayer_imp::AdjustDamage`). O dano chega depois da animação (`InsertDamageEntry`), e a "morte"
+    /// no duelo é resolvida no `aplicar_dano_no_jogador`. **Não é igual:** sem amuleto de dano, munição, desgaste da
+    /// arma, roubo de vida, chi por golpe nem habilidade do item — o que o golpe no monstro faz e aqui `falta`.
+    async fn golpear_jogador(&self, roleid: i32, atacante: PlayerEntity, vitima: PlayerEntity, de_longe: bool, envio: &EnvioAoCliente) {
+        let velocidade = atraso_do_golpe(atacante.attack_speed);
+        let (dano, marca) = {
+            let mut mundo = self.world.write().await;
+            let camada = mundo.camada_do_jogador(&vitima);
+            let distancia = atacante.position.distance(&vitima.position);
+            let r = CombatEngine::jogador_ataca_jogador(&atacante, &vitima, camada, distancia);
+            if let Some(p) = mundo.players.get_mut(&(roleid as i64)) {
+                p.combate_s = crate::progressao::COMBATE_AO_ATACAR_S;
+            }
+            let dano = r.dano() as i64;
+            mundo.adiar_dano(vitima.role_id as i64, roleid as i64, dano, velocidade as u32 * 50, true);
+            (dano, r.marca())
+        };
+        debug!("mundo: golpe normal de {roleid} no jogador {}: dano {dano}", vitima.role_id);
+        self.responder(roleid, S2CGamedataSend::attack_once(u8::from(de_longe)).data, envio).await;
+        self.responder(roleid, self.sub.host_attack_result(vitima.role_id, saturar(dano), marca, velocidade).data, envio).await;
+        // A vítima vê o golpe (`be_damaged`), como o de monstro (`EventoDoMundo::DanoRecebido`).
+        let peca = self.desgastar_peca(vitima.role_id).await;
+        self.enviar_ao_jogador(
+            vitima.role_id,
+            self.sub.host_attacked(roleid, saturar(dano), peca, marca, velocidade).data,
+        )
+        .await;
+    }
+
     /// Se o jogador está sentado (`PLAYER_SIT_DOWN`).
     pub(super) async fn esta_sentado(&self, roleid: i32) -> bool {
         self.world
@@ -2508,6 +2545,67 @@ impl BusServer {
             .await
         {
             debug!("mundo: {alvo} não está neste servidor de mundo");
+        }
+    }
+
+    /// B344 — `C2S::DUEL_REQUEST` (92) e `DUEL_REPLY` (93) (`playercmd.cpp:3073-3118`): tamanho exato senão
+    /// `ERR_FATAL_ERR`; mapa com `noduel` → `ERR_HERE_CAN_NOT_DUEL` (`falta`: o `noduel` do `gs.conf` não é lido —
+    /// todo mapa aceita duelo); alvo que não é jogador é ignorado (`target.IsPlayer()`).
+    async fn comando_de_duelo(&self, roleid: i32, id: u16, payload: &[u8], envio: &EnvioAoCliente) {
+        let tamanho = if id == ids::DUEL_REQUEST { 4 } else { 8 };
+        if payload.len() != tamanho {
+            self.responder(roleid, S2CGamedataSend::error_message(3).data, envio).await;
+            return;
+        }
+        let int = |i: usize| i32::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3]]);
+        let alvo = int(0);
+        // `MAKE_ID(target, id)` + `IsPlayer()`: id de jogador é positivo.
+        if alvo <= 0 {
+            return;
+        }
+        let mut mundo = self.world.write().await;
+        if id == ids::DUEL_REQUEST {
+            mundo.pedir_duelo(roleid as i64, alvo as i64);
+        } else {
+            mundo.responder_duelo(roleid as i64, alvo as i64, int(4));
+        }
+    }
+
+    /// B344 — os avisos do duelo ao cliente (`gplayer_dispatcher::duel_*`, `player.cpp:5351-5418`).
+    async fn avisar_do_duelo(&self, a: crate::duelo::Aviso) {
+        use crate::duelo::Aviso;
+        match a {
+            Aviso::PedidoRecebido { para, de } => {
+                self.enviar_ao_jogador(para as i32, S2CGamedataSend::duel_recv_request(de as i32).data).await;
+            }
+            Aviso::PedidoRecusado { para, quem, motivo } => {
+                self.enviar_ao_jogador(para as i32, S2CGamedataSend::duel_reject_request(quem as i32, motivo).data).await;
+            }
+            Aviso::Preparar { para, oponente, atraso } => {
+                self.enviar_ao_jogador(para as i32, S2CGamedataSend::duel_prepare(oponente as i32, atraso).data).await;
+            }
+            Aviso::Cancelado { para, oponente } => {
+                self.enviar_ao_jogador(para as i32, S2CGamedataSend::duel_cancel(oponente as i32).data).await;
+            }
+            Aviso::Erro { para, codigo } => {
+                self.enviar_ao_jogador(para as i32, S2CGamedataSend::error_message(codigo).data).await;
+            }
+            // `duel_start`: `HOST_DUEL_START` a si e `ELSE_DUEL_START` à fatia, menos ele.
+            Aviso::Comecou { quem, oponente } => {
+                self.enviar_ao_jogador(quem as i32, S2CGamedataSend::host_duel_start(oponente as i32).data).await;
+                self.transmitir_a_quem_ve(quem, S2CGamedataSend::player_duel_start(quem as i32).data).await;
+            }
+            // `duel_stop`/`duel_result`: `AutoBroadcastCSMsg(..., -1)` — a fatia inteira, ele incluído.
+            Aviso::Parou { quem } => {
+                let p = S2CGamedataSend::duel_stop(quem as i32).data;
+                self.enviar_ao_jogador(quem as i32, p.clone()).await;
+                self.transmitir_a_quem_ve(quem, p).await;
+            }
+            Aviso::Resultado { quem, oponente, perdeu } => {
+                let p = S2CGamedataSend::duel_result(oponente as i32, quem as i32, perdeu).data;
+                self.enviar_ao_jogador(quem as i32, p.clone()).await;
+                self.transmitir_a_quem_ve(quem, p).await;
+            }
         }
     }
 
@@ -3728,6 +3826,13 @@ impl BusServer {
                 (h.cura(nivel, magico).unwrap_or(0), 0)
             } else {
                 let bruto = h.dano(nivel, fisico, magico).unwrap_or(0);
+                // B344 — o `damage_adjust` de PvP (`gplayer_imp::AdjustDamage`, `player.cpp:9610-9632`).
+                let bruto = if alvo == roleid as i64 {
+                    bruto
+                } else {
+                    let (de, para) = (mundo.camada_do_jogador(conjurador), mundo.camada_do_jogador(vitima));
+                    (bruto as f32 * combat::ajuste_de_pvp(de, para)) as i32
+                };
                 let reducao = combat::reducao_por_defesa(vitima.def_phys, conjurador.level);
                 // Os espinhos do alvo pegam o dano físico **bruto** da habilidade física
                 // (`msg.physic_damage`, `skillfilter.h:14646`).
@@ -3753,22 +3858,15 @@ impl BusServer {
             if !h.e_cura() {
                 mundo.golpe_interrompe_coleta(alvo);
                 mundo.devolver_espinhos(alvo, roleid as i64, fisico_bruto, true);
+                // B344 — pelo mundo: filtros do alvo (`dano_recebido`), chi, levantar, a morte de verdade (antes a vida
+                // ia a 0 sem `JogadorMorreu`) e a "morte" do duelo, que deixa 1 de vida.
+                mundo.aplicar_dano_no_jogador(alvo, roleid as i64, valor as i64);
             }
             let Some(vitima) = mundo.players.get_mut(&alvo) else {
                 return;
             };
             if h.e_cura() {
                 vitima.hp = (vitima.hp + valor).min(vitima.max_hp);
-            } else {
-                // Os filtros do alvo também valem contra jogador (`AdjustDamage` e o
-                // `TranslateRecvAttack` dos filtros de invencível): GM invencível não perde vida.
-                let tirado = crate::efeitos::dano_recebido(&mut vitima.efeitos, valor);
-                vitima.hp = (vitima.hp - tirado).max(0);
-                // `EF_DoDamage`: o chi do `Apgen`/`Apleak` de quem apanhou (B221).
-                let chi = vitima.efeitos.chi_ao_apanhar();
-                if chi != 0 {
-                    vitima.mexer_no_chi(chi);
-                }
             }
             (
                 vitima.hp,
@@ -6263,6 +6361,16 @@ impl BusServer {
 /// do atacante, `:3103-3104`), `PVP_ENABLE` do atacante, a chave do alvo e não serem do mesmo
 /// grupo. Duelo, facção, força e agressor (nome laranja/vermelho) não existem no `pw-gs`.
 pub(crate) fn pode_ferir_jogador(mundo: &crate::world::WorldInstance, atacante: &PlayerEntity, alvo: &PlayerEntity) -> bool {
+    let (a, b) = (atacante.role_id as i64, alvo.role_id as i64);
+    // B344 — `TestAttackMsg`/`PetTestHarmfulEffect` com `attacker_mode & PVP_DUEL` (`player_imp.h:3500-3503`,
+    // `player.cpp:15089-15094`): o oponente do duelo fere sem chave, sem forçar e mesmo do grupo.
+    if mundo.em_duelo_entre(a, b) {
+        return true;
+    }
+    // `pvp_duel_filter` nos 5 s depois do fim: o golpe do ex-oponente perde o `force_attack`.
+    if mundo.em_tregua_de_duelo(b, a) {
+        return false;
+    }
     if !(atacante.forcar_ataque && atacante.pvp_ligado && alvo.pvp_ligado) {
         return false;
     }
@@ -6287,6 +6395,17 @@ fn pode_golpear(mundo: &crate::world::WorldInstance, roleid: i32, alvo: i64) -> 
     // GM invisível não ataca: `SetGMInvisible` → `DenyCmd(CMD_ATTACK)` (`gs/player.cpp:13366`).
     if p.efeitos.gm_invisivel {
         return Err(1);
+    }
+    // B344 — golpe normal em jogador: o `CheckAttack` (vivo, ao alcance de `attack_range` + `PLAYER_BODYSIZE`) e a
+    // regra de quem fere quem ([`pode_ferir_jogador`]: duelo ou PvP).
+    if let Some(v) = mundo.players.get(&alvo) {
+        if v.role_id == roleid || v.hp <= 0 || !pode_ferir_jogador(mundo, p, v) {
+            return Err(2);
+        }
+        if p.position.distance(&v.position) > p.attack_range + crate::entity::CORPO_DO_JOGADOR {
+            return Err(4);
+        }
+        return Ok(());
     }
     let Some((m, _)) = mundo.monsters.get(&alvo) else {
         return Err(2);

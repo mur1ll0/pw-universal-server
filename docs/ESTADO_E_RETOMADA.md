@@ -727,8 +727,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     cliente (B51); o `config_data` do molde no `clsconfig` (barra pré-preenchida) segue não
     decodificado (B44b15, B47d).
 8. **Trava de PvP — feita no B146** (chave por jogador, nível > 29, Ctrl, fora do grupo; conferida no B329,
-    `sem_pvp_a_habilidade_nao_fere_outro_jogador`). Faltam duelo, agressor, perdas na morte PvP, zona de segurança e
-    `STATE_PVPMODE`.
+    `sem_pvp_a_habilidade_nao_fere_outro_jogador`). **Duelo feito no B344** (convite, preparo, luta de 600 s,
+    derrota com 1 de vida, trégua de 5 s), com o golpe normal em jogador, o ajuste de PvP (× 0,25) e a morte por PvP.
+    Faltam agressor, perdas na morte PvP, zona de segurança e `STATE_PVPMODE`.
 9. **Mascote de combate:** montaria (B78-B80) e combate (B111/B112: invocar, IA, habilidades,
     soltar, renomear, aprender/esquecer) testados na suíte; falta ver em jogo, e faltam
     invisibilidade, água/ar e bênção de mascote em outro alvo. Do estado estendido, os bits que
@@ -1344,6 +1345,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 341 | 10-21 | Política: trocar de caminho (`AndarPorCaminho`) |
 | 342 | 10-21 | Suíte completa: 1.168/0 no Rust; painel sem regressão (14 falhas de ambiente, as mesmas de antes) |
 | 343 | 10-21 | Política: invocar NPC e mina, histórico (dados únicos em memória) e entregar missão |
+| 344 | 10-21 | Duelo; golpe normal em jogador; ajuste de PvP (× 0,25) e morte por PvP |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

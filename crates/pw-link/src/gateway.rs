@@ -1296,21 +1296,9 @@ impl LinkGateway {
                         // são três coisas que só o mundo tem. Enquanto ela não existe,
                         // não responder é melhor do que destruir um item e inventar um
                         // saldo. Está anotado como dívida em `docs/ESTADO_E_RETOMADA.md`.
-                        92 => {
-                            // C2S 92: DUEL_REQUEST — 6 bytes, `target` no deslocamento 2,
-                            // que é exatamente o que a leitura abaixo faz.
-                            //
-                            // Era `214..=220`. Naquela faixa, 214 a 217 **não existem** no
-                            // IR e 218 a 220 são comandos de **GM**
-                            // (`GM_QUERY_SPEC_ITEM`, `GM_REMOVE_SPEC_ITEM`,
-                            // `GM_OPEN_ACTIVITY`) — que este braço engolia.
-                            if gamedata.data.len() >= 6 {
-                                let opponent_id = i32::from_le_bytes([gamedata.data[2], gamedata.data[3], gamedata.data[4], gamedata.data[5]]);
-                                info!("Duelo entre jogador {} e oponente {}", role_id, opponent_id);
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::duel_prepare(role_id, opponent_id))).await?;
-                                tx.send(OutboundPacket::GamedataSend(S2CGamedataSend::host_duel_start(opponent_id))).await?;
-                            }
-                        }
+                        // C2S 92/93 (`DUEL_REQUEST`/`DUEL_REPLY`) migraram para o `pw-gs` (B344): este
+                        // braço começava o duelo na hora, sem convite, sem o outro aceitar e sem
+                        // estado nenhum no mundo.
                         _ => {
                             debug!("Gamedata subcomando {} recebido do cliente", cmd);
                         }

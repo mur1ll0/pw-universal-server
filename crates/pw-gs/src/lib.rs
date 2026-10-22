@@ -3,6 +3,7 @@ pub mod administracao;
 pub mod bus_server;
 pub mod comandos;
 pub mod dados_unicos;
+pub mod duelo;
 pub mod combat;
 pub mod economia;
 pub mod organizar;

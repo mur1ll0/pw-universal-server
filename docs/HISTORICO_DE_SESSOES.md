@@ -16874,3 +16874,19 @@ comparação lado a lado.
       `BusServer::missao_da_politica` (`OnTaskManualTrig(id, false)`).
     - Provas: `invocar_npc_e_mina_historia_e_missao`, `dados_unicos::testes`, `invocados_da_politica` **1/1**,
       `politica_do_realm` **3/3** (1.5.5: sem porte só torre 1, depósito 3, PvP de facção 3).
+
+344. **Sessão 2026-10-21: duelo.**
+
+    - `crate::duelo` — porte de `player_duel` (`playerduel.cpp`) e do `pvp_duel_filter`, com as mensagens entre os dois
+      entregues pelo mundo (`World::entregar_do_duelo`, conferência de 20 m do `player.cpp:1943-1968`) e o batimento de
+      1 s. Conferido no `gs` 1.2.6: mesmos ids S2C (0xd6–0xdc, 0xe5), erros 64/66 e convite de 30 s.
+    - C2S 92/93 no `pw-gs` (`comando_de_duelo`); o braço 92 do `gateway.rs` saiu (começava o duelo na hora). S2C
+      214–220 e 229; o `duel_result` antigo (8 B, sem o `result`) foi trocado e saiu do `LAYOUT_DIVERGE`.
+    - Combate: `combat::ajuste_de_pvp` (× 0,25, × 0,125 do ar), `CombatEngine::jogador_ataca_jogador`, golpe normal em
+      jogador (`golpear_jogador`), a habilidade em jogador pelo `aplicar_dano_no_jogador` (corrige: a vida ia a 0 sem
+      morte), e no duelo a "morte" pelo oponente deixa 1 de vida.
+    - Provas: `duelo::testes` **3/3**, `duelo_no_mundo` **2/2**, `duelo_resultado_e_comeco`, conferidor S2C **5/5**,
+      `subcomandos_c2s_contra_o_ir` (link) **4/4**, `combate_real` **32/32**, `pw-gs --lib` **135/135**.
+    - Ver em jogo (dois clientes 1.5.5, a menos de 20 m): botão direito no outro → Duelo; o outro aceita; os dois
+      veem a contagem de 3 s e o duelo começar. Bater até "matar": o perdedor fica com 1 de vida, aparece a mensagem
+      de vitória a quem está perto e os dois param. Logo depois, por 5 s, um não fere o outro. Overlay: silêncio.

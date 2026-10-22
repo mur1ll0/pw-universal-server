@@ -254,7 +254,7 @@ recebidas prontas (`Rolagens`) para teste determinístico:
    (`gnpc_imp::AdjustDamage`, `npc.cpp:1727-1768`; `combat::ajuste_de_camada_no_npc`). A camada
    do jogador é o ar quando voa (nadando ainda não é acompanhado); a do monstro, o habitat.
    O golpe de monstro no jogador **não** tem ajuste por camada (`gplayer_imp::AdjustDamage`,
-   `player.cpp:9610-9652`: só a tabela de PvP, ainda sem porte). **Mascote também não** (B135):
+   `player.cpp:9610-9652`: só a tabela de PvP — portada no B344, ver "Duelo"). **Mascote também não** (B135):
    o ajuste é para `IS_HUMANSIDE(source)` = `type == GM_TYPE_PLAYER` (`common/types.h:321`), e o
    mascote é `GM_TYPE_NPC` — `Golpe::camada` é `None` para ele (no B128 o mascote de ar batia com
    metade no monstro de chão).
@@ -578,8 +578,33 @@ liga acima do nível 29 (`PVP_PROTECT_LEVEL`) e arma 36000 s de espera (`HOST_PV
 (183/184, 5 B no 1.5.5 e 4 B no 1.2.6) a quem vê. Habilidade que machuca outro jogador só pega com
 o golpe forçado (Ctrl, o `force_attack` do `CAST_SKILL`), as duas chaves ligadas e fora do mesmo
 grupo (`PetTestHarmfulEffect`, `player.cpp:15097-15114`); senão não tem efeito. A chave não é
-gravada (volta desligada no login). `falta`: duelo, agressor (nome laranja/vermelho) e perdas na
+gravada (volta desligada no login). `falta`: agressor (nome laranja/vermelho) e perdas na
 morte PvP, zona de segurança (`pvp_limit_filter`), `STATE_PVPMODE` no `state`.
+
+**PvP de verdade (B344, `testado`, falta ver em jogo):** o golpe de jogador em jogador leva o
+`damage_adjust` de PvP (`gplayer_imp::AdjustDamage`, `player.cpp:9610-9632`): × **0,25**
+(`PVP_DAMAGE_REDUCE`, `config.h:126`), × 0,125 do ar no chão ou na água (`combat::ajuste_de_pvp`). A
+habilidade em jogador passa pelo `aplicar_dano_no_jogador` (filtros, chi, levantar e **a morte** —
+antes a vida ia a 0 sem `JogadorMorreu`). O **golpe normal em jogador** passou a existir
+(`pode_golpear` aceita jogador ao alcance de `attack_range + 0,3`; `golpear_jogador`, `HOST_ATTACKED` à
+vítima); **não é igual:** sem amuleto, munição, desgaste da arma, roubo de vida, chi por golpe e
+habilidade do item nesse golpe.
+
+**Duelo (B344, `testado`, falta ver em jogo)** — `crate::duelo` (porte de `player_duel`,
+`playerduel.cpp`, e do `pvp_duel_filter`), igual no `gs` 1.2.6 (VA 0x81414c0: erros 64/66, convite 30):
+
+| passo | regra |
+| :--- | :--- |
+| pedir (C2S 92 `{int target}`) | em combate → 66; já convidando/aceitando ou em duelo → 64 (`ERR_CANNOT_DUEL_TWICE`); alvo que não é jogador → 1. O convite vale 30 s; sem resposta, `DUEL_REJECT_REQUEST(alvo, 1)`. O alvo só recebe a mais de 20 m (`squared_distance <= 400`, `player.cpp:1946`) |
+| responder (C2S 93 `{int who; int param}`) | `param` ≠ 0 recusa (`DUEL_REJECT_REQUEST(quem, motivo)` a quem pediu); 0 aceita (3 s para a resposta chegar). Resposta de longe vira cancelamento (o pedinte só sabe pelo prazo, como no original) |
+| preparar | os dois recebem `DUEL_PREPARE(oponente, 3)`; quem pediu manda o começo 3 s depois aos dois (`HOST_DUEL_START` a si, `PLAYER_DUEL_START` a quem vê) |
+| lutar | 600 s no máximo (`DUEL_TIME_LIMIT`); o oponente fere sem chave de PvP, sem forçar e mesmo do grupo (`attacker_mode & PVP_DUEL`); oponente longe (≥ 100 m), morto ou fora do mapa → empate |
+| fim | o golpe do oponente que zeraria a vida deixa **1** e tira as maldições (`Die` com `PVP_DUEL`, `player.cpp:14082-14098`): `DUEL_RESULT(vencedor, perdedor, 1)`; prazo ou empate: `DUEL_RESULT(…, 0)`; morte por outro motivo durante o duelo: empate. `DUEL_STOP(quem)` a quem vê os dois, maldições tiradas e **5 s de trégua** em que o ex-oponente não fere (`FMID_DUEL_END` → `_mode = 5`) |
+
+`falta`: o `noduel` do mapa (`ERR_HERE_CAN_NOT_DUEL`, 84 — todo mapa aceita), o recuo da conferência de
+invisibilidade (só 1.5.5, e não há invisibilidade de jogador), o bit `STATE_IN_DUEL_MODE` no `state`
+de quem chega depois, o `SetNoAmulet` (os amuletos seguem disparando) e o mascote seguir o duelo
+(`NotifyMasterInfoToPet`).
 
 `falta`: filtros de escudo, esquiva de maldição (`Incdebuffdodge` é lido, a regra não), vigor,
 sessão de golpe contra jogador (o golpe normal não mira jogador), marca no golpe de mascote.

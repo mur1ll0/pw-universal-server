@@ -421,6 +421,8 @@ fn os_ids_dos_comandos_sao_os_do_ir() {
         ("CAST_SKILL", pw_gs::comandos::ids::CAST_SKILL),
         ("CAST_INSTANT_SKILL", pw_gs::comandos::ids::CAST_INSTANT_SKILL),
         ("TEAM_INVITE", pw_gs::comandos::ids::TEAM_INVITE),
+        ("DUEL_REQUEST", pw_gs::comandos::ids::DUEL_REQUEST),
+        ("DUEL_REPLY", pw_gs::comandos::ids::DUEL_REPLY),
         ("TEAM_AGREE_INVITE", pw_gs::comandos::ids::TEAM_AGREE_INVITE),
         ("TEAM_REJECT_INVITE", pw_gs::comandos::ids::TEAM_REJECT_INVITE),
         ("TEAM_LEAVE_PARTY", pw_gs::comandos::ids::TEAM_LEAVE_PARTY),

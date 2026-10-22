@@ -140,6 +140,18 @@ pub fn ajuste_de_camada_no_npc(atacante: Camada, alvo: Camada) -> f32 {
     }
 }
 
+/// B344 — `gplayer_imp::AdjustDamage` (`player.cpp:9610-9632`) quando quem bate é jogador ou mascote
+/// (`IS_HUMANSIDE`): `damage_adjust *= PVP_DAMAGE_REDUCE` (0,25, `config.h:126`), e metade disso do ar no chão
+/// ou na água.
+pub const REDUCAO_DE_PVP: f32 = 0.25;
+pub fn ajuste_de_pvp(atacante: Camada, alvo: Camada) -> f32 {
+    use Camada::*;
+    match (atacante, alvo) {
+        (Ar, Chao) | (Ar, Agua) => REDUCAO_DE_PVP * 0.5,
+        _ => REDUCAO_DE_PVP,
+    }
+}
+
 impl Camada {
     /// `gnpc_imp::SetInhabitMode` (`gs/npc.cpp:823-843`): no ar `TakeOff`, na água
     /// `Swiming`, senão `Ground`.
@@ -184,6 +196,9 @@ pub struct Defesa {
     /// A camada do alvo quando ele é NPC (`gnpc_imp`): liga o ajuste de
     /// [`ajuste_de_camada_no_npc`]. `None` para jogador.
     pub camada_de_npc: Option<Camada>,
+    /// B344 — a camada do alvo quando ele é **jogador**: liga o ajuste de PvP de [`ajuste_de_pvp`] no golpe de
+    /// jogador/mascote (`gplayer_imp::AdjustDamage`, `player.cpp:9610-9632`). `None` deixa sem ajuste.
+    pub camada_de_jogador: Option<Camada>,
     /// `GetAttackLevelPunishment(nível do atacante − nível do NPC)` do `gnpc_imp::AdjustDamage`
     /// (`npc.cpp:1731-1733`; no `gs` 1.2.6, VA 0x809f7ea): o `attack_adjust` da tabela de
     /// diferença de nível. Vale só para golpe de jogador em NPC (`IS_HUMANSIDE`); 1 sem tabela.
@@ -222,6 +237,7 @@ impl Defesa {
             reducao_longe_normal: 0.0,
             resiliencia: 0,
             camada_de_npc: None,
+            camada_de_jogador: None,
             ajuste_de_nivel: 1.0,
             reducao_de_dano: 0,
             reducao_de_dano_magico: [0; CLASSES_MAGICAS],
@@ -544,6 +560,10 @@ pub fn resolver(
     }
     if defesa.camada_de_npc.is_some() && golpe.penetracao > 0 {
         ajuste *= 1.0 + 3.0 * golpe.penetracao as f32 / (golpe.penetracao + 300) as f32;
+    }
+    // B344 — o PvP (jogador/mascote batendo em jogador): o ajuste por camada vem no lugar da resiliência.
+    if let (Some(alvo), Some(atacante), true) = (defesa.camada_de_jogador, golpe.camada, golpe.atacante_e_jogador_ou_pet) {
+        ajuste *= ajuste_de_pvp(atacante, alvo);
     }
     if defesa.camada_de_npc.is_none() && !golpe.atacante_e_jogador_ou_pet && defesa.resiliencia > 0 {
         ajuste *= 1.0 - defesa.resiliencia as f32 / (defesa.resiliencia + golpe.nivel_do_atacante).max(1) as f32;
@@ -945,6 +965,21 @@ impl CombatEngine {
     }
 
     /// Um golpe de monstro em jogador.
+    /// B344 — golpe normal de jogador em jogador (o duelo, ou o PvP com as chaves ligadas): o mesmo
+    /// `FillAttackMsg` do golpe no monstro e a defesa do jogador, com o ajuste de PvP pela camada de cada um.
+    pub fn jogador_ataca_jogador(
+        atacante: &PlayerEntity,
+        alvo: &PlayerEntity,
+        camada_do_alvo: Camada,
+        distancia: f32,
+    ) -> Resultado {
+        let mut golpe = Self::golpe_de_jogador(atacante);
+        golpe.dano_fisico += atacante.reforco_do_amuleto(false);
+        let mut defesa = Self::defesa_do_jogador(alvo);
+        defesa.camada_de_jogador = Some(camada_do_alvo);
+        resolver(&golpe, &defesa, distancia, false, Rolagens::sortear())
+    }
+
     pub fn monstro_ataca_jogador(
         monstro: &MonsterEntity,
         jogador: &PlayerEntity,

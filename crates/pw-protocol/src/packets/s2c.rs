@@ -2483,6 +2483,69 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// B344 — o duelo (`gplayer_dispatcher::duel_*`, `gs/player.cpp:5351-5418`; structs em `EC_GPDataType.h`):
+    /// `DUEL_RECV_REQUEST` (214) `{int player_id}`. Mesmos ids no `gs` 1.2.6 (`Make<duel_*>`: 0xd6–0xdc, 0xe5).
+    pub fn duel_recv_request(de: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(214);
+        stream.write_i32_le(de);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `DUEL_REJECT_REQUEST` (215) `{int player_id; int reason}` — `DUEL_REPLY_*`.
+    pub fn duel_reject_request(quem: i32, motivo: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(215);
+        stream.write_i32_le(quem);
+        stream.write_i32_le(motivo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `DUEL_PREPARE` (216) `{int player_id; int delay}` — o atraso em segundos (3).
+    pub fn duel_prepare(oponente: i32, atraso: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(216);
+        stream.write_i32_le(oponente);
+        stream.write_i32_le(atraso);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `DUEL_CANCEL` (217) `{int player_id}`.
+    pub fn duel_cancel(oponente: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(217);
+        stream.write_i32_le(oponente);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `HOST_DUEL_START` (218) `{int idOpponent}` — só ao próprio.
+    pub fn host_duel_start(oponente: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(218);
+        stream.write_i32_le(oponente);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `DUEL_STOP` (219) `{int player_id}` — quem parou, a todos em volta.
+    pub fn duel_stop(quem: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(219);
+        stream.write_i32_le(quem);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `DUEL_RESULT` (220) `{int id1; int id2; char result}` = 9 B: `Make<duel_result>::From(target, self, is_failed)`.
+    /// O cliente: `result` 0 empate; senão `id1` venceu `id2` (`EC_ManPlayer.cpp:1049-1070`).
+    pub fn duel_result(id1: i32, id2: i32, perdeu: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(220);
+        stream.write_i32_le(id1);
+        stream.write_i32_le(id2);
+        stream.write_u8(u8::from(perdeu));
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// `PLAYER_DUEL_START` (229; `ELSE_DUEL_START` no servidor) `{int player_id}` — aos outros em volta.
+    pub fn player_duel_start(quem: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(229);
+        stream.write_i32_le(quem);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn npc_died(nid: i32, killer_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20
@@ -3213,32 +3276,6 @@ impl S2CGamedataSend {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(119);              // CMD_S2C_INVADER_FADE = 119
         stream.write_i32_le(role_id);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando DUEL_PREPARE (Comando 216) iniciando a contagem de duelo
-    pub fn duel_prepare(attacker_id: i32, target_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(216);              // CMD_S2C_DUEL_PREPARE = 216
-        stream.write_i32_le(attacker_id);
-        stream.write_i32_le(target_id);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando HOST_DUEL_START (Comando 218) iniciando o duelo
-    pub fn host_duel_start(target_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(218);              // CMD_S2C_HOST_DUEL_START = 218
-        stream.write_i32_le(target_id);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando DUEL_RESULT (Comando 220) finalizando o duelo
-    pub fn duel_result(winner_id: i32, loser_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(220);              // CMD_S2C_DUEL_RESULT = 220
-        stream.write_i32_le(winner_id);
-        stream.write_i32_le(loser_id);
         Self { data: stream.into_bytes().to_vec() }
     }
 

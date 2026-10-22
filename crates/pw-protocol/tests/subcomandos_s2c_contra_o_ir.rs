@@ -219,9 +219,14 @@ const INTENCAO: &[(&str, &str)] = &[
     ("invader_rise", "INVADER_RISE"),
     ("pariah_rise", "PARIAH_RISE"),
     ("invader_fade", "INVADER_FADE"),
+    ("duel_recv_request", "DUEL_RECV_REQUEST"),
+    ("duel_reject_request", "DUEL_REJECT_REQUEST"),
     ("duel_prepare", "DUEL_PREPARE"),
+    ("duel_cancel", "DUEL_CANCEL"),
     ("host_duel_start", "HOST_DUEL_START"),
+    ("duel_stop", "DUEL_STOP"),
     ("duel_result", "DUEL_RESULT"),
+    ("player_duel_start", "PLAYER_DUEL_START"),
 ];
 
 /// Funções que não escrevem cabeçalho porque **delegam** a outra que escreve.
@@ -270,7 +275,6 @@ const LAYOUT_DIVERGE: &[&str] = &[
     "decompose_start",
     "flysword_time",
     "pariah_rise",
-    "duel_result",
     // Estes quatro passaram a divergir em 2026-09-04, quando `bytes_do_comando` parou
     // de pular structs "de tamanho variável" que só têm um rabo condicional (ver o
     // comentário da função). São divergências REAIS e MEDIDAS — cada um tem o layout

@@ -43,7 +43,6 @@ const FONTE: &str = include_str!("../src/gateway.rs");
 
 /// Que comando do protocolo cada braço do `match` pretende atender.
 const INTENCAO: &[(u16, &str)] = &[
-    (92, "DUEL_REQUEST"),
     (118, "GET_MALL_ITEM_PRICE"),
 ];
 

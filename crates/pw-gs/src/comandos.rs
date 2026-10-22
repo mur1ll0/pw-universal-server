@@ -149,6 +149,10 @@ pub mod ids {
     /// `{int region_index; int target_tag}`, mandado ao pisar numa caixa de transporte do
     /// `region.sev` (`EC_World.cpp:2360-2373`). B208.
     pub const ENTER_INSTANCE: u16 = 86;
+    /// B344 — `SRV::C2S::CMD::duel_request { int target }` (`common/protocol.h`, 6 B com o cabeçalho).
+    pub const DUEL_REQUEST: u16 = 92;
+    /// B344 — `SRV::C2S::CMD::duel_reply { int who; int param }` (10 B com o cabeçalho).
+    pub const DUEL_REPLY: u16 = 93;
     /// `SRV::C2S::CMD::team_invite` — 6 bytes, `id` no deslocamento 2.
     pub const TEAM_INVITE: u16 = 27;
     /// `SRV::C2S::CMD::team_agree_invite`

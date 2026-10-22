@@ -1247,3 +1247,13 @@ fn tocar_e_parar_acao_do_monstro() {
     assert_eq!(d, esperado);
     assert_eq!(S2CGamedataSend::object_stop_play_action(0x0102).data, vec![0x30, 0x01, 0x02, 0x01, 0, 0]);
 }
+
+/// B344 — `DUEL_RESULT` (220) é `{int id1; int id2; char result}` = 2 + 9 (`EC_GPDataType.h:3372-3377`); o
+/// codificador antigo mandava 2 + 8, sem o `result`, e o cliente o descartava. `PLAYER_DUEL_START` é o 229.
+#[test]
+fn duelo_resultado_e_comeco() {
+    use pw_protocol::packets::s2c::S2CGamedataSend;
+    assert_eq!(S2CGamedataSend::duel_result(7, 9, true).data, vec![220, 0, 7, 0, 0, 0, 9, 0, 0, 0, 1]);
+    assert_eq!(S2CGamedataSend::duel_prepare(9, 3).data, vec![216, 0, 9, 0, 0, 0, 3, 0, 0, 0]);
+    assert_eq!(S2CGamedataSend::player_duel_start(7).data, vec![229, 0, 7, 0, 0, 0]);
+}

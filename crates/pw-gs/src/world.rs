@@ -104,6 +104,8 @@ pub enum EventoDoMundo {
     NpcApareceu { id: i64 },
     /// B343 — `GM_MSG_DELIVER_TASK` da política: `OnTaskManualTrig(id, false)` no jogador.
     MissaoDaPolitica { roleid: RoleId, missao: u32 },
+    /// B344 — o que o duelo manda ao cliente (`player_duel`, [`crate::duelo::Aviso`]).
+    Duelo(crate::duelo::Aviso),
     /// Chegou a hora do próximo golpe normal do jogador (`session_normal_attack::RepeatSession`).
     GolpeDoJogador { roleid: RoleId },
     /// Um item ou monte de moedas no chão acabou a vida (`gmatter_item_base_imp`,
@@ -362,6 +364,8 @@ pub struct WorldInstance {
     pub rotas_do_global: HashMap<i32, i32>,
     /// B343 — NPCs e minas invocados com prazo (ms): `SetLifeTime`/`SetLife` (0 = para sempre, não entra aqui).
     pub prazos_de_invocados: HashMap<i64, u32>,
+    /// B344 — o `player_duel` de cada jogador que está convidando, duelando ou na trégua do fim.
+    pub duelos: HashMap<i64, crate::duelo::Duelo>,
     /// O líder de cada área de grupo ou de chefe (`group_spawner::_leader_id`), pela área do
     /// `npcgen.data`, e os subordinados de cada líder (B136).
     lideres_das_areas: HashMap<i32, i64>,
@@ -502,6 +506,7 @@ impl WorldInstance {
             rotas: HashMap::new(),
             rotas_do_global: HashMap::new(),
             prazos_de_invocados: HashMap::new(),
+            duelos: HashMap::new(),
             lideres_das_areas: HashMap::new(),
             subordinados: HashMap::new(),
             movimento: pw_data_loader::MapaDeMovimento::vazio(),
@@ -1300,6 +1305,107 @@ impl WorldInstance {
 
     /// A mina some do mapa e espera o tempo de renascer (`BeMined` → `Reclaim`,
     /// `matter.cpp:215-229`, `npcgenerator.cpp:4960-5000`).
+    /// B344 — os dois estão lutando um contra o outro (`IsDuelStarted` com o `_duel_target`).
+    pub fn em_duelo_entre(&self, a: i64, b: i64) -> bool {
+        self.duelos.get(&a).and_then(|d| d.oponente()) == Some(b)
+    }
+
+    /// B344 — `pvp_duel_filter` com `_mode > 0`: o golpe de `atacante` em `alvo` não fere nos 5 s depois do duelo.
+    pub fn em_tregua_de_duelo(&self, alvo: i64, atacante: i64) -> bool {
+        self.duelos.get(&alvo).is_some_and(|d| d.em_tregua_com(atacante))
+    }
+
+    /// B344 — `C2S::DUEL_REQUEST` (`playercmd.cpp:3073-3096`).
+    pub fn pedir_duelo(&mut self, eu: i64, alvo: i64) {
+        let em_combate = self.players.get(&eu).is_some_and(|p| p.combate_s > 0);
+        let e_jogador = self.players.contains_key(&alvo);
+        let s = self.duelos.entry(eu).or_default().pedir(eu, alvo, e_jogador, em_combate);
+        self.entregar_do_duelo(s);
+    }
+
+    /// B344 — `C2S::DUEL_REPLY` (`playercmd.cpp:3098-3118`).
+    pub fn responder_duelo(&mut self, eu: i64, alvo: i64, param: i32) {
+        let em_combate = self.players.get(&eu).is_some_and(|p| p.combate_s > 0);
+        let e_jogador = self.players.contains_key(&alvo);
+        let s = self.duelos.entry(eu).or_default().responder(eu, alvo, e_jogador, param, em_combate);
+        self.entregar_do_duelo(s);
+    }
+
+    /// `_duel.OnDeath` (`player.cpp:14091-14101`).
+    fn duelo_ao_morrer(&mut self, eu: i64, perdeu_o_duelo: bool) {
+        let Some(d) = self.duelos.get_mut(&eu) else { return };
+        let s = d.ao_morrer(eu, perdeu_o_duelo);
+        self.entregar_do_duelo(s);
+    }
+
+    /// `_duel.Heartbeat` de cada um (1 s). O oponente "existe" se está neste mapa, vivo e a menos de 100 m.
+    fn batimento_dos_duelos(&mut self) {
+        let ids: Vec<i64> = self.duelos.keys().copied().collect();
+        for eu in ids {
+            let ok = match (self.players.get(&eu), self.duelos.get(&eu).and_then(|d| d.oponente())) {
+                (Some(p), Some(o)) => self.players.get(&o).is_some_and(|q| {
+                    q.hp > 0 && q.position.distance_squared(&p.position) < crate::duelo::DISTANCIA_DE_EMPATE_2
+                }),
+                (None, _) => false,
+                (Some(_), None) => true,
+            };
+            let Some(d) = self.duelos.get_mut(&eu) else { continue };
+            let s = d.batimento(eu, ok);
+            self.entregar_do_duelo(s);
+        }
+        let presentes: std::collections::HashSet<i64> = self.players.keys().copied().collect();
+        self.duelos.retain(|id, d| presentes.contains(id) && !d.ocioso());
+    }
+
+    /// Entrega as mensagens do duelo entre os dois (`SendTo<0>`, `player.cpp:1943-2005`) e emite os avisos.
+    fn entregar_do_duelo(&mut self, saidas: Vec<crate::duelo::Saida>) {
+        use crate::duelo::{resposta, Aviso, Mensagem, Saida};
+        let mut fila: std::collections::VecDeque<Saida> = saidas.into();
+        let mut voltas = 0;
+        while let Some(s) = fila.pop_front() {
+            voltas += 1;
+            if voltas > 64 {
+                warn!("mundo: duelo — laço de mensagens interrompido");
+                break;
+            }
+            match s {
+                Saida::Aviso(a) => {
+                    // `pvp_duel_filter::OnRelease`: `ClearSpecFilter(FILTER_MASK_DEBUFF)`.
+                    if let Aviso::Parou { quem } = a {
+                        if self.players.get_mut(&quem).is_some_and(|p| p.efeitos.limpar(false)) {
+                            self.refazer_atributos(quem);
+                            self.emitir(EventoDoMundo::EfeitosMudaram { objeto: quem, atributos: true });
+                        }
+                    }
+                    self.emitir(EventoDoMundo::Duelo(a));
+                }
+                Saida::Mensagem { de, para, msg } => {
+                    // A mensagem a quem não está no mapa se perde.
+                    let Some(p) = self.players.get(&para) else { continue };
+                    let em_combate = p.combate_s > 0;
+                    let perto = self
+                        .players
+                        .get(&de)
+                        .is_some_and(|q| q.position.distance_squared(&p.position) <= crate::duelo::ALCANCE_DO_PEDIDO_2);
+                    let d = self.duelos.entry(para).or_default();
+                    let novas = match msg {
+                        Mensagem::Pedido if !perto => {
+                            vec![Saida::Mensagem { de: para, para: de, msg: Mensagem::Resposta(resposta::LONGE) }]
+                        }
+                        Mensagem::Pedido => d.ao_receber_pedido(para, de, em_combate),
+                        Mensagem::Resposta(_) if !perto => vec![Saida::Mensagem { de: para, para: de, msg: Mensagem::Cancelar }],
+                        Mensagem::Resposta(r) => d.ao_receber_resposta(para, de, r, em_combate),
+                        Mensagem::Preparar => d.ao_receber_preparo(para, de),
+                        Mensagem::Cancelar => d.ao_receber_cancelamento(para, de),
+                        Mensagem::Comecar => d.ao_receber_comeco(para, de),
+                        Mensagem::Parar(_) => d.ao_receber_fim(para, de),
+                    };
+                    fila.extend(novas);
+                }
+            }
+        }
+    }
+
     /// O `QueryObject(target)` dos `Create*` perto do alvo: jogador ou monstro vivo.
     fn posicao_do_alvo_vivo(&self, alvo: i64) -> Option<pw_core::Vector3> {
         self.players
@@ -1503,6 +1609,7 @@ impl WorldInstance {
                 });
             }
             if let Some(matador) = morto_por {
+                self.duelo_ao_morrer(id, false);
                 self.refazer_atributos(id);
                 self.emitir(EventoDoMundo::EfeitosMudaram {
                     objeto: id,
@@ -2299,7 +2406,7 @@ impl WorldInstance {
 
     /// Tira a vida do jogador e resolve a morte, como o laço de golpes de monstro fazia
     /// quando o dano era imediato.
-    fn aplicar_dano_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64) {
+    pub fn aplicar_dano_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64) {
         let Some(player) = self.players.get_mut(&alvo) else {
             return;
         };
@@ -2346,6 +2453,20 @@ impl WorldInstance {
         if hp > 0 {
             return;
         }
+        // `Die(attacker, ..., attacker_mode)` (`player.cpp:14082-14101`): o golpe do oponente de duelo não mata —
+        // fica com 1 de vida, perde as maldições e perde o duelo.
+        if self.em_duelo_entre(alvo, atacante) {
+            if let Some(p) = self.players.get_mut(&alvo) {
+                p.hp = 1;
+                p.efeitos.limpar(false);
+            }
+            self.refazer_atributos(alvo);
+            self.emitir(EventoDoMundo::EfeitosMudaram { objeto: alvo, atributos: true });
+            self.emitir(EventoDoMundo::EstadoMudou { roleid: role_id });
+            self.duelo_ao_morrer(alvo, true);
+            return;
+        }
+        self.duelo_ao_morrer(alvo, false);
         info!("Jogador #{alvo} morreu");
         // `KillTarget` da política de quem o matou (`npc.cpp:685`).
         if let Some((m, ai)) = self.monsters.get_mut(&atacante) {
@@ -3041,6 +3162,7 @@ impl WorldInstance {
             for p in self.players.values_mut().filter(|p| p.pvp_ligado) {
                 p.pvp_espera_s = (p.pvp_espera_s - 1).max(0);
             }
+            self.batimento_dos_duelos();
             for ev in self.gastar_mana_do_voo() {
                 self.emitir(ev);
             }
