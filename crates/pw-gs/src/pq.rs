@@ -66,6 +66,86 @@ pub struct Pq {
     pontos_mudaram: bool,
     sem_mudar_colocacao: bool,
     pub jogadores: HashMap<i64, JogadorNaPq>,
+    /// A ordem de iteração do `SCORE_MAP` (`abase::hash_map<int,…>`, `public_quest.h:39`), que decide o empate.
+    tabela: TabelaAbase,
+    /// A colocação geral da última ordenação (`_ranks[USER_CLASS_COUNT]` percorrido do maior para o menor).
+    ordem: Vec<i64>,
+}
+
+/// Primos do `abase::hashtab` (`cgame/include/hashtab.h:20-28`).
+const PRIMOS_ABASE: [u64; 28] = [
+    53, 97, 193, 389, 769, 1543, 3079, 6151, 12289, 24593, 49157, 98317, 196613, 393241, 786433, 1572869, 3145739,
+    6291469, 12582917, 25165843, 50331653, 100663319, 201326611, 402653189, 805306457, 1610612741, 3221225473,
+    4294967291,
+];
+
+/// `__abase_next_prime`: o primeiro primo **maior** que `n` (`hashtab.h:30-40`).
+fn proximo_primo_abase(n: u64) -> u64 {
+    PRIMOS_ABASE.iter().copied().find(|p| *p > n).unwrap_or(u64::MAX)
+}
+
+/// Só a ordem das chaves de um `abase::hashtab<int>` (`cgame/include/hashtab.h`): `hash_map()` nasce com
+/// `_M_next_size(100)` = 193 baldes; o balde é `chave % baldes` (`_hash_function` devolve o próprio `int`);
+/// inserir põe o nó na **cabeça** da corrente (`put_noresize`, linhas 389-401) depois do `resize(n + 1)`, que
+/// só cresce quando `n + 1` passa do número de baldes e reencadeia cada corrente da cabeça para a cauda,
+/// sempre na cabeça do balde novo (linhas 406-428); o `clear` esvazia sem encolher; a iteração vai do balde 0
+/// ao último, da cabeça para a cauda (`iterator_template`, linhas 150-200).
+#[derive(Debug, Clone)]
+struct TabelaAbase {
+    /// Cada balde com a corrente da cabeça (índice 0) para a cauda.
+    baldes: Vec<Vec<i64>>,
+    elementos: usize,
+}
+
+impl TabelaAbase {
+    fn nova() -> Self {
+        Self { baldes: vec![Vec::new(); proximo_primo_abase(100) as usize], elementos: 0 }
+    }
+
+    fn balde(chave: i64, baldes: usize) -> usize {
+        // `unsigned long operator()(int data)`: o `int` estendido com sinal para 64 bits.
+        ((chave as i32 as i64 as u64) % baldes as u64) as usize
+    }
+
+    fn inserir(&mut self, chave: i64) {
+        let pedido = self.elementos as u64 + 1;
+        let antigos = self.baldes.len() as u64;
+        if pedido > antigos {
+            let n = proximo_primo_abase(pedido);
+            if n > antigos {
+                let mut novos: Vec<Vec<i64>> = vec![Vec::new(); n as usize];
+                for corrente in std::mem::take(&mut self.baldes) {
+                    for k in corrente {
+                        novos[Self::balde(k, n as usize)].insert(0, k);
+                    }
+                }
+                self.baldes = novos;
+            }
+        }
+        let b = Self::balde(chave, self.baldes.len());
+        if self.baldes[b].contains(&chave) {
+            return;
+        }
+        self.baldes[b].insert(0, chave);
+        self.elementos += 1;
+    }
+
+    fn remover(&mut self, chave: i64) {
+        let b = Self::balde(chave, self.baldes.len());
+        if let Some(i) = self.baldes[b].iter().position(|k| *k == chave) {
+            self.baldes[b].remove(i);
+            self.elementos -= 1;
+        }
+    }
+
+    fn limpar(&mut self) {
+        self.baldes.iter_mut().for_each(Vec::clear);
+        self.elementos = 0;
+    }
+
+    fn em_ordem(&self) -> impl Iterator<Item = i64> + '_ {
+        self.baldes.iter().flat_map(|c| c.iter().copied())
+    }
 }
 
 impl Pq {
@@ -82,6 +162,8 @@ impl Pq {
             pontos_mudaram: false,
             sem_mudar_colocacao: false,
             jogadores: HashMap::new(),
+            tabela: TabelaAbase::nova(),
+            ordem: Vec::new(),
         }
     }
 
@@ -121,6 +203,8 @@ impl Pq {
         self.contador = 0;
         self.pontos_mudaram = false;
         self.jogadores.clear();
+        self.tabela.limpar();
+        self.ordem.clear();
         self.etapa = self.primeira_etapa;
         self.estampa = agora;
         for k in chaves {
@@ -210,6 +294,7 @@ impl Pq {
             j.ativo = true;
             return s;
         }
+        self.tabela.inserir(roleid);
         self.jogadores.insert(roleid, JogadorNaPq { roleid, ativo: true, classe, pontos: 0, colocacao_na_classe: -1, colocacao_geral: -1, sorteio: -1 });
         s.push(AvisoDaPq::Globais { para: vec![roleid], pares: self.todas_as_globais(globais_do_mapa) });
         s.push(AvisoDaPq::Info { para: roleid, missao: self.missao, etapa: self.etapa, pontos: 0, na_classe: -1, geral: -1 });
@@ -222,6 +307,8 @@ impl Pq {
         if self.estado != EstadoDaPq::Rodando || self.jogadores.remove(&roleid).is_none() {
             return Vec::new();
         }
+        self.tabela.remover(roleid);
+        self.ordem.retain(|r| *r != roleid);
         vec![AvisoDaPq::Info { para: roleid, missao: self.missao, etapa: 0, pontos: 0, na_classe: -1, geral: -1 }]
     }
 
@@ -268,10 +355,16 @@ impl Pq {
             .unwrap_or(-1)
     }
 
-    /// `SortRanks`: maior pontuação primeiro, 1, 2, 3…; cada classe e a geral.
+    /// `SortRanks` (`public_quest.cpp:365-400`): cada jogador entra no `std::multimap<score>` da classe e no
+    /// geral **na ordem de iteração do `SCORE_MAP`**; o `multimap` põe o igual depois dos iguais já presentes e a
+    /// colocação percorre do fim (`rbegin`), então, na mesma pontuação, quem a tabela entrega **por último** fica
+    /// na frente. Lugares sempre seguidos (1, 2, 3…), mesmo empatados.
     fn ordenar(&mut self) {
-        let mut todos: Vec<(i32, i64)> = self.jogadores.values().map(|j| (j.pontos, j.roleid)).collect();
-        todos.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut todos: Vec<(i32, i64)> =
+            self.tabela.em_ordem().filter_map(|id| self.jogadores.get(&id).map(|j| (j.pontos, id))).collect();
+        todos.reverse();
+        todos.sort_by(|a, b| b.0.cmp(&a.0));
+        self.ordem = todos.iter().map(|(_, id)| *id).collect();
         let mut por_classe = [1i32; CLASSES];
         for (lugar, (_, id)) in todos.iter().enumerate() {
             let Some(j) = self.jogadores.get_mut(id) else { continue };
@@ -288,8 +381,8 @@ impl Pq {
 
     /// `SendRanks`/`BroadcastRanks`.
     fn colocacao(&self, para: Vec<i64>) -> AvisoDaPq {
-        let mut todos: Vec<&JogadorNaPq> = self.jogadores.values().filter(|j| j.colocacao_geral > 0).collect();
-        todos.sort_by(|a, b| b.pontos.cmp(&a.pontos).then(a.roleid.cmp(&b.roleid)));
+        // `BroadcastRanks` percorre os `multimap` montados na última ordenação, com a pontuação de agora.
+        let todos: Vec<&JogadorNaPq> = self.ordem.iter().filter_map(|id| self.jogadores.get(id)).collect();
         let mut contagens = [0u32; CLASSES + 1];
         let mut entradas = Vec::new();
         let mut blocos: Vec<Vec<[i32; 5]>> = vec![Vec::new(); CLASSES + 1];
@@ -573,5 +666,41 @@ mod testes {
         assert!(!condicao_vale(&c, &g), "0 > 5 falha o 'e'");
         c.e = false;
         assert!(condicao_vale(&c, &g), "o 'ou' passa");
+    }
+
+    /// Empate como no original: 10 e 203 caem no mesmo balde (203 % 193 = 10), o 203 entra depois e fica na
+    /// cabeça; a iteração dá 5, 203, 10 e o `multimap` percorrido do fim põe 10, 203, 5.
+    #[test]
+    fn empate_pela_ordem_do_hash_map_do_abase() {
+        let d = dados();
+        let mut globais = HashMap::new();
+        let (mut g, _) = GerenciadorDePq::iniciar(&d, 1000, &mut globais);
+        let pq = g.pqs.get_mut(&100).unwrap();
+        for id in [10, 203, 5] {
+            pq.entrar(id, 0, &globais);
+        }
+        pq.ordenar();
+        let lugares: Vec<i32> = [10, 203, 5].iter().map(|id| pq.colocacao_de(*id, false)).collect();
+        assert_eq!(lugares, vec![1, 2, 3]);
+        assert_eq!(pq.colocacao_de(5, true), 3, "a classe segue a mesma ordem");
+        // Quem pontua mais passa à frente; entre os empatados a ordem fica.
+        pq.somar(5, 1);
+        pq.ordenar();
+        assert_eq!(pq.ordem, vec![5, 10, 203]);
+        // Crescer a tabela (194 jogadores → 389 baldes) reencadeia na cabeça e inverte a corrente antiga.
+        let mut t = TabelaAbase::nova();
+        for k in [7, 200, 393] {
+            t.inserir(k);
+        }
+        assert_eq!(t.em_ordem().collect::<Vec<_>>(), vec![393, 200, 7]);
+        for k in 1000..1190 {
+            t.inserir(k);
+        }
+        assert_eq!(t.baldes.len(), 193);
+        t.inserir(5000);
+        assert_eq!(t.baldes.len(), 389);
+        let primeiros: Vec<i64> = t.em_ordem().filter(|k| [7, 200, 393].contains(k)).collect();
+        // 7 % 389 = 7, 200 % 389 = 200, 393 % 389 = 4 — cada um no seu balde agora.
+        assert_eq!(primeiros, vec![393, 7, 200]);
     }
 }

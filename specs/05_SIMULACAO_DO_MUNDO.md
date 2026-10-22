@@ -1480,8 +1480,10 @@ Portados em 2026-10-21 (`testado` por unidade, falta ver em jogo):
   equipe / membros` + `pessoal × fração pessoal`, fator `1/max(dano total, vida)`); o prêmio exige a mínima,
   dá o item da faixa de colocação e a contribuição definida; voltar ao jogo (aviso 11) recebe tudo de novo ou
   falha a PQ de outra rodada; sair do jogo deixa inativo. **Variáveis globais** agora valem nas missões: a
-  condição de início (`CheckGlobalKeyValue`, erro 31) e a conclusão por variável global. **Não é igual:**
-  empate de colocação pelo id; o raio de equipe da contribuição não é conferido; `IsContributionFinish` não
+  condição de início (`CheckGlobalKeyValue`, erro 31) e a conclusão por variável global. **Empate de colocação (B352)** como no
+  original: a ordem de iteração do `SCORE_MAP` (`abase::hash_map`, 193 baldes, `roleid % baldes`, inserção na
+  cabeça, crescimento que reencadeia) entra no `multimap` e o percurso do fim põe, entre iguais, o último
+  entregue na frente (`TabelaAbase` em `pq.rs`). **Não é igual:** o raio de equipe da contribuição não é conferido; `IsContributionFinish` não
   está portado.
 
 `falta` (recusado ou ignorado, nunca inventado): torre

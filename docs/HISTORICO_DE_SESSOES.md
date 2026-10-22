@@ -16979,3 +16979,13 @@ comparação lado a lado.
 
 351. **Sessão 2026-10-22: suíte completa depois do B343–B350.** `cargo test --workspace --no-fail-fast` com o banco:
      **1.194 passaram, 0 falharam** (6 ignorados) — 26 a mais que no B342.
+
+352. **Sessão 2026-10-22: empate da colocação da PQ como no original.**
+
+    - `pq.rs`: `TabelaAbase` reproduz a ordem de iteração do `abase::hash_map<int>` (`cgame/include/hashtab.h`: 193 baldes,
+      `roleid % baldes`, inserção na cabeça, `resize` que reencadeia na cabeça); `ordenar` monta a colocação na ordem do
+      `multimap` percorrido do fim (entre iguais, o último entregue primeiro, `public_quest.cpp:365-400`) e guarda a ordem
+      geral, que o aviso 285 percorre.
+    - Prova: `pq::testes` **4/4** (`empate_pela_ordem_do_hash_map_do_abase`: 10, 203, 5 empatados saem 10, 203, 5; o
+      crescimento de 193 para 389 baldes inverte a corrente).
+    - Ver em jogo: só com dois personagens empatados na mesma PQ — a janela de colocação mostra a mesma ordem para os dois.
