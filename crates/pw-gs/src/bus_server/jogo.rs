@@ -2101,7 +2101,7 @@ impl BusServer {
     /// `mount_petdata_imp::DoActivePet`, `:319-392`): recusa o que não pode montar, põe o
     /// `mount_filter` — que manda `PLAYER_MOUNTING` e sobrepõe a velocidade — e só então
     /// manda o `SUMMON_PET` (233).
-    async fn montar(
+    pub(super) async fn montar(
         &self,
         roleid: i32,
         indice: u16,
@@ -2686,6 +2686,8 @@ impl BusServer {
             // zera o vigor.
             if p.daimon.as_ref().map(|d| d.item_id) != daimon_antes {
                 p.vigor_do_daimon = 0.0;
+                // B360 — `OnTakeOut`: o efeito do refino sai com o Daimon.
+                p.refino_do_daimon_ativo = false;
             }
             p.auto_hp = None;
             p.auto_mp = None;

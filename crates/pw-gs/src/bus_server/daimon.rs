@@ -914,3 +914,64 @@ mod testes_do_refino {
         assert_eq!(exp_da_decomposicao(1, 0, 1.0, curva), 0);
     }
 }
+
+impl BusServer {
+    /// B360 — `gplayer_imp::TriggerElfRefineEffect` (`player.cpp:21782-21818`): sem Daimon vestido, `ERR_FATAL_ERR`; refino
+    /// 0, `ERR_ELF_REFINE_ACTIVATE_FAILED` (129); ligando, paga `std_cost × (nível + 105) / 210 × 60` de resistência
+    /// (sem ela, `ERR_ELF_NOT_ENOUGH_STAMINA` 127) e soma a vida e os graus do refino (`ElfRefineActivate`); desligando,
+    /// tira. `ELF_REFINE_ACTIVATE` (268) a quem vê. **Não é igual:** o bit `STATE_ELF_REFINE_ACTIVATE` do estado do
+    /// objeto (`object.h:173`) não vai na ficha de quem chega depois.
+    pub(super) async fn ligar_refino_do_daimon(&self, roleid: i32) {
+        const ATIVAR_FALHOU: i32 = 129;
+        const SEM_RESISTENCIA: i32 = 127;
+        let r = {
+            let mut m = self.world.write().await;
+            let r = (|| {
+                let p = m.players.get_mut(&(roleid as i64)).ok_or(erro::FATAL)?;
+                let nivel = p.level;
+                let ligado = p.refino_do_daimon_ativo;
+                let d = p.daimon.as_mut().ok_or(erro::FATAL)?;
+                if d.estado.refino <= 0 || d.estado.refino as usize > REFINO_MAXIMO {
+                    return Err(ATIVAR_FALHOU);
+                }
+                if ligado {
+                    p.refino_do_daimon_ativo = false;
+                    return Ok((false, None));
+                }
+                let (_, ligar) = crate::entity::gasto_do_refino_do_daimon(d.estado.refino, nivel);
+                if d.estado.vigor < ligar {
+                    return Err(SEM_RESISTENCIA);
+                }
+                d.estado.vigor -= ligar;
+                d.sujo = true;
+                let resistencia = d.estado.vigor;
+                p.refino_do_daimon_ativo = true;
+                Ok((true, Some(resistencia)))
+            })();
+            if r.is_ok() {
+                m.refazer_atributos(roleid as i64);
+            }
+            r
+        };
+        match r {
+            Ok((ligado, resistencia)) => {
+                if let Some(x) = resistencia {
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::elf_stamina(x).data).await;
+                }
+                info!("mundo: {roleid} {} o efeito do refino do Daimon", if ligado { "ligou" } else { "desligou" });
+                self.avisar_refino_do_daimon(roleid, ligado).await;
+            }
+            Err(codigo) => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(codigo).data).await;
+            }
+        }
+    }
+
+    /// `elf_refine_activate(status)` a quem vê, e a ficha refeita ao próprio (`PlayerGetProperty` + `SetRefreshState`).
+    pub(super) async fn avisar_refino_do_daimon(&self, roleid: i32, ligado: bool) {
+        let pacote = S2CGamedataSend::elf_refine_activate(roleid, ligado).data;
+        self.enviar_ao_jogador(roleid, pacote.clone()).await;
+        self.transmitir_a_quem_ve(roleid as i64, pacote).await;
+        self.avisar_efeitos(roleid as i64, true).await;
+    }
+}

@@ -89,6 +89,9 @@ pub enum EventoDoMundo {
     EstadoMudou { roleid: RoleId },
     /// B355 — o vigor do Daimon mudou (`refresh_vigor` → `ELF_VIGOR`, `playerctrl.cpp:162-168`).
     VigorDoDaimon { roleid: RoleId },
+    /// B360 — o efeito do refino gastou resistência (`query_elf_stamina`); `desligou` quando ela acabou
+    /// (`ElfRefineDeactivate` + `elf_refine_activate(0)`, `player.cpp:9196-9215`).
+    ResistenciaDoDaimon { roleid: RoleId, resistencia: i32, desligou: bool },
     /// A mana acabou no voo de asas e o filtro de voo saiu (`angel_wing_fly_filter::Heartbeat`
     /// → `_is_deleted`, `gs/fly_filter.cpp:42-48`): o jogador pousa.
     PousouSemMana { roleid: RoleId },
@@ -323,6 +326,18 @@ pub struct Grupo {
     pub membros: Vec<RoleId>,
 }
 
+/// B359 — os grupos de um roteador (todos os mapas dele).
+#[derive(Debug, Default)]
+pub struct RegistroDeGrupos {
+    /// Grupos ativos, por id.
+    pub grupos: HashMap<u32, Grupo>,
+    /// Em que grupo cada jogador está — o índice inverso, para não varrer todos.
+    pub grupo_de: HashMap<RoleId, u32>,
+    /// Convites pendentes: convidado → quem convidou.
+    pub convites: HashMap<RoleId, RoleId>,
+    pub proximo_grupo: u32,
+}
+
 /// `off > 0.5` liga o `_under_water` do jogador (`gs/player.cpp:14337`).
 const MERGULHO_MINIMO: f32 = 0.5;
 /// `offset > 1.0` derruba a montaria (`gs/petman.cpp:404`).
@@ -396,13 +411,10 @@ pub struct WorldInstance {
     pub drops: HashMap<i64, ItemDropEntity>,
     pub data_manager: Arc<GameDataManager>,
     pub char_repo: CharacterRepository,
-    /// Grupos ativos, por id.
-    grupos: HashMap<u32, Grupo>,
-    /// Em que grupo cada jogador está — o índice inverso, para não varrer todos.
-    grupo_de: HashMap<RoleId, u32>,
-    /// Convites pendentes: convidado → quem convidou.
-    convites: HashMap<RoleId, RoleId>,
-    proximo_grupo: u32,
+    /// B359 — os grupos, os convites e o próximo id, **compartilhados** pelos mapas do mesmo roteador
+    /// ([`WorldInstance::compartilhar_grupos`]): o grupo do original é do jogador (`_team`, que vai junto na troca de
+    /// servidor, `gplayer_imp::Swap`, `player.cpp:11465`), não do mapa — trocar de mapa não o desfaz.
+    grupos: std::sync::Arc<std::sync::Mutex<RegistroDeGrupos>>,
     /// Por onde a simulação avisa o mundo lá fora. `None` num mundo sem rede — que é o
     /// caso em teste de unidade, e era o caso do `pw-gs` inteiro antes do barramento.
     eventos: Option<mpsc::Sender<EventoDoMundo>>,
@@ -525,10 +537,7 @@ impl WorldInstance {
             drops: HashMap::new(),
             data_manager,
             char_repo,
-            grupos: HashMap::new(),
-            grupo_de: HashMap::new(),
-            convites: HashMap::new(),
-            proximo_grupo: 0,
+            grupos: Default::default(),
             eventos: None,
             _entity_counter: 100000,
             autosave_timer_ms: 0,
@@ -1087,7 +1096,7 @@ impl WorldInstance {
         // Sair do mundo é sair do grupo. Sem isto o grupo guardaria um membro que não
         // existe mais, e a lista de membros mostraria um fantasma.
         self.sair_do_grupo(role_id);
-        self.convites.remove(&role_id);
+        self.registro().convites.remove(&role_id);
         self.players.remove(&id)
     }
 
@@ -1109,8 +1118,9 @@ impl WorldInstance {
         }
     }
     pub(crate) fn concluir_troca(&mut self,role:RoleId,mascote:Option<crate::mascote::Mascote>) {
-        self.sair_do_grupo(role);
-        self.convites.remove(&role);
+        // B359 — a troca de mapa não tira do grupo (o grupo é do roteador); o convite pendente cai.
+        let _ = role;
+        self.registro().convites.remove(&role);
         if let Some(m)=mascote {
             let id=m.corpo.id;
             self.estado_dos_mascotes.remove(&id);
@@ -1903,19 +1913,35 @@ impl WorldInstance {
     /// `CliInviteOther` (`playerteam.cpp:160-176`, `:819-840`): convidar de novo quem já foi convidado é
     /// `ERR_TEAM_ALREADY_INVITE`; os convites pendentes mais os membros (1 sem grupo) chegando à capacidade é
     /// `ERR_TEAM_CANNOT_INVITE` (sem grupo o mapa de convites tem `TEAM_MEMBER_CAPACITY − 1`, `playerteam.h:21`).
+    /// B359 — o registro de grupos deste mapa (o do roteador, depois de [`Self::compartilhar_grupos`]).
+    fn registro(&self) -> std::sync::MutexGuard<'_, RegistroDeGrupos> {
+        self.grupos.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// B359 — passa a usar os grupos de todos os mapas do roteador.
+    pub fn compartilhar_grupos(&mut self, registro: std::sync::Arc<std::sync::Mutex<RegistroDeGrupos>>) {
+        self.grupos = registro;
+    }
+
+    /// B359 — o registro de grupos (para o roteador compartilhar com os outros mapas).
+    pub fn registro_de_grupos(&self) -> std::sync::Arc<std::sync::Mutex<RegistroDeGrupos>> {
+        std::sync::Arc::clone(&self.grupos)
+    }
+
     pub fn convidar_para_grupo(&mut self, quem_convida: RoleId, convidado: RoleId) -> Result<(), RecusaDoConvite> {
-        if quem_convida == convidado || self.grupo_de.contains_key(&convidado) {
+        let mut r = self.registro();
+        if quem_convida == convidado || r.grupo_de.contains_key(&convidado) {
             return Err(RecusaDoConvite::NaoPode);
         }
-        if self.convites.get(&convidado) == Some(&quem_convida) {
+        if r.convites.get(&convidado) == Some(&quem_convida) {
             return Err(RecusaDoConvite::JaConvidado);
         }
-        let pendentes = self.convites.values().filter(|q| **q == quem_convida).count();
-        let membros = self.grupo_de.get(&quem_convida).and_then(|g| self.grupos.get(g)).map_or(1, |g| g.membros.len());
+        let pendentes = r.convites.values().filter(|q| **q == quem_convida).count();
+        let membros = r.grupo_de.get(&quem_convida).and_then(|g| r.grupos.get(g)).map_or(1, |g| g.membros.len());
         if pendentes + membros >= self.capacidade_do_grupo {
             return Err(RecusaDoConvite::Cheio);
         }
-        self.convites.insert(convidado, quem_convida);
+        r.convites.insert(convidado, quem_convida);
         Ok(())
     }
 
@@ -1924,45 +1950,47 @@ impl WorldInstance {
     /// `None` quando não havia convite de quem o cliente diz — é o que impede um jogador
     /// de entrar em qualquer grupo mandando o comando com o id de um estranho.
     pub fn aceitar_convite(&mut self, quem: RoleId, de_quem: RoleId) -> Option<Vec<RoleId>> {
-        match self.convites.get(&quem) {
+        let mut r = self.registro();
+        match r.convites.get(&quem) {
             Some(convidou) if *convidou == de_quem => {}
             _ => return None,
         }
-        self.convites.remove(&quem);
+        r.convites.remove(&quem);
         // B334 — `MsgAgreeInvite` (`playerteam.cpp:957`): com o grupo já cheio, o aceite é ignorado.
-        if self.grupo_de.get(&de_quem).and_then(|g| self.grupos.get(g)).is_some_and(|g| g.membros.len() >= self.capacidade_do_grupo) {
+        if r.grupo_de.get(&de_quem).and_then(|g| r.grupos.get(g)).is_some_and(|g| g.membros.len() >= self.capacidade_do_grupo) {
             return None;
         }
 
-        let id = match self.grupo_de.get(&de_quem) {
+        let id = match r.grupo_de.get(&de_quem) {
             Some(id) => *id,
             None => {
                 // Quem convidou ainda não tinha grupo: cria um, com ele de líder.
-                self.proximo_grupo += 1;
-                let id = self.proximo_grupo;
-                self.grupos.insert(
+                r.proximo_grupo += 1;
+                let id = r.proximo_grupo;
+                r.grupos.insert(
                     id,
                     Grupo {
                         lider: de_quem,
                         membros: vec![de_quem],
                     },
                 );
-                self.grupo_de.insert(de_quem, id);
+                r.grupo_de.insert(de_quem, id);
                 id
             }
         };
 
-        let g = self.grupos.get_mut(&id)?;
+        r.grupo_de.insert(quem, id);
+        let g = r.grupos.get_mut(&id)?;
         if !g.membros.contains(&quem) {
             g.membros.push(quem);
         }
-        self.grupo_de.insert(quem, id);
         Some(g.membros.clone())
     }
 
     /// Recusa o convite pendente.
     pub fn recusar_convite(&mut self, quem: RoleId) -> Option<RoleId> {
-        self.convites.remove(&quem)
+        let mut r = self.registro();
+        r.convites.remove(&quem)
     }
 
     /// Tira o jogador do grupo. Devolve `(líder, quem ficou)`, para que sejam avisados.
@@ -1974,8 +2002,9 @@ impl WorldInstance {
     /// Um grupo com um membro só deixa de ser grupo: mantê-lo faria o jogador continuar
     /// "em grupo" sozinho, sem nunca conseguir aceitar outro convite.
     pub fn sair_do_grupo(&mut self, quem: RoleId) -> Option<(RoleId, Vec<RoleId>)> {
-        let id = self.grupo_de.remove(&quem)?;
-        let g = self.grupos.get_mut(&id)?;
+        let mut r = self.registro();
+        let id = r.grupo_de.remove(&quem)?;
+        let g = r.grupos.get_mut(&id)?;
         g.membros.retain(|m| *m != quem);
 
         if g.lider == quem {
@@ -1989,9 +2018,9 @@ impl WorldInstance {
         let restantes = g.membros.clone();
         if restantes.len() < 2 {
             for m in &restantes {
-                self.grupo_de.remove(m);
+                r.grupo_de.remove(m);
             }
-            self.grupos.remove(&id);
+            r.grupos.remove(&id);
         }
         Some((lider, restantes))
     }
@@ -2017,6 +2046,33 @@ impl WorldInstance {
             let roleid = p.role_id;
             self.emitir(EventoDoMundo::Levantou { roleid });
         }
+    }
+
+    /// B360 — `OnHeartbeat` (`player.cpp:9196-9215`): com o efeito do refino ligado, a resistência do Daimon paga o
+    /// gasto do segundo; sem o bastante, zera e o efeito desliga (os atributos são refeitos).
+    fn batimento_do_refino_do_daimon(&mut self) -> Vec<EventoDoMundo> {
+        let ids: Vec<i64> = self.players.values().filter(|p| p.refino_do_daimon_ativo && p.hp > 0).map(|p| p.role_id as i64).collect();
+        let mut evs = Vec::new();
+        for id in ids {
+            let Some(p) = self.players.get_mut(&id) else { continue };
+            let nivel = p.level;
+            let Some(d) = p.daimon.as_mut() else {
+                p.refino_do_daimon_ativo = false;
+                continue;
+            };
+            let (custo, _) = crate::entity::gasto_do_refino_do_daimon(d.estado.refino, nivel);
+            let desligou = d.estado.vigor <= custo;
+            d.estado.vigor = if desligou { 0 } else { d.estado.vigor - custo };
+            d.sujo = true;
+            let resistencia = d.estado.vigor;
+            let roleid = p.role_id;
+            if desligou {
+                p.refino_do_daimon_ativo = false;
+                self.refazer_atributos(id);
+            }
+            evs.push(EventoDoMundo::ResistenciaDoDaimon { roleid, resistencia, desligou });
+        }
+        evs
     }
 
     /// B355 — o máximo e o ganho por segundo do vigor do Daimon vestido (`UpdateElfVigor`).
@@ -2045,28 +2101,32 @@ impl WorldInstance {
     }
 
     pub fn membros_do_grupo(&self, quem: RoleId) -> Vec<RoleId> {
-        self.grupo_de
+        let r = self.registro();
+        r.grupo_de
             .get(&quem)
-            .and_then(|id| self.grupos.get(id))
+            .and_then(|id| r.grupos.get(id))
             .map(|g| g.membros.clone())
             .unwrap_or_default()
     }
 
     /// O id do grupo do jogador.
     pub fn grupo_do_jogador(&self, quem: RoleId) -> Option<u32> {
-        self.grupo_de.get(&quem).copied()
+        let r = self.registro();
+        r.grupo_de.get(&quem).copied()
     }
 
     /// Os membros de um grupo pelo id.
     pub fn membros_do_grupo_por_id(&self, id: u32) -> Vec<RoleId> {
-        self.grupos.get(&id).map(|g| g.membros.clone()).unwrap_or_default()
+        let r = self.registro();
+        r.grupos.get(&id).map(|g| g.membros.clone()).unwrap_or_default()
     }
 
     /// Quem lidera o grupo do jogador.
     pub fn lider_do_grupo(&self, quem: RoleId) -> Option<RoleId> {
-        self.grupo_de
+        let r = self.registro();
+        r.grupo_de
             .get(&quem)
-            .and_then(|id| self.grupos.get(id))
+            .and_then(|id| r.grupos.get(id))
             .map(|g| g.lider)
     }
 
@@ -3268,6 +3328,9 @@ impl WorldInstance {
             self.batimento_dos_duelos();
             for roleid in self.batimento_do_vigor_do_daimon() {
                 self.emitir(EventoDoMundo::VigorDoDaimon { roleid });
+            }
+            for ev in self.batimento_do_refino_do_daimon() {
+                self.emitir(ev);
             }
             for ev in self.gastar_mana_do_voo() {
                 self.emitir(ev);

@@ -70,7 +70,11 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
   mapa novo e repassa o pedido; o destino o trata como entrada (o personagem vem do banco),
   manda `NOTIFY_HOSTPOS` e responde `SwitchServerSuccess` (4103) — o `is_from_outside` do
   original (`global_message.cpp:111-117`). Sem confirmar a gravação, o jogador volta ao mapa de
-  origem. Mapa que ninguém serve continua recusado. `falta`: o mascote e o grupo atravessarem.
+  origem. Mapa que ninguém serve continua recusado. **B358:** a chave leva também o slot do mascote ativo e o da
+  montaria (`-1` = nenhum; 20 bytes no total): a origem grava o mascote na jaula antes do aviso, e o destino o invoca
+  de novo (`PostSwitchServer`: só o de combate; o ornamental fica recolhido) e monta de novo a montaria. `falta`: o
+  **grupo** entre contêineres — o registro de grupos é do roteador (B359: atravessa a troca de mapa no mesmo
+  processo), e entre servidores de mundo faltaria o protocolo de grupo entre eles.
 - Um segundo realm da mesma versão: receita em `docs/MULTIPLOS_REALMS.md`; cada realm
   precisa de uma linha em `realms` e dos moldes em `class_templates`.
 

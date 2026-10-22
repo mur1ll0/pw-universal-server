@@ -720,7 +720,8 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    compose de hoje um só GS serve todos os mapas do realm, então nada muda até separar um mapa.
    O **teleporte por NPC** (`NPC_TRANSMIT_SERVICE`) já está feito
    (`bus_server/jogo.rs`, `teleportar_pela_transportadora`); o S4 do Estúdio cria distritos,
-   portais e destinos (B251–B253). O grupo se desfaz na troca.
+   portais e destinos (B251–B253). O grupo e o mascote de combate atravessam a troca de mapa (B358–B359);
+   entre contêineres, só o mascote e a montaria (o grupo precisaria de protocolo entre servidores de mundo).
 6. **Habilidades:** dano (1.123), efeitos no alvo (2.304 roteiros) e em si (266) pelos stubs,
    37 efeitos portados (B53), mais `Wingshield` (B73), `Fairyform` (B95, Forma Sombria),
    `Foxform` e `Retort`/`Retort2` (B120), `Rebirth`/`Decregiondmg` (B115), `Ap`/`Returntown` e as
@@ -1366,6 +1367,9 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 355 | 10-22 | Daimon: vigor e conjurar habilidade (as 96 com o cálculo no catálogo) |
 | 356 | 10-22 | Daimon: refino, transferência de refino e decomposição (serviços 52–54) |
 | 357 | 10-22 | Cartas de General: conjuntos, efeitos extras, renascer e a coleção |
+| 358 | 10-22 | Troca de mapa: o mascote de combate volta no mapa novo (e entre contêineres, com a montaria) |
+| 359 | 10-22 | Grupo: um registro por roteador; trocar de mapa não desfaz o grupo |
+| 360 | 10-22 | Daimon: ligar o efeito do refino (usar o Daimon vestido) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

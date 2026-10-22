@@ -158,6 +158,44 @@ impl BusServer {
 
     /// Invocar um mascote de combate, ao fim da canalização (`PlayerSummonPet` →
     /// `pet_manager::ActivePet`). `Err` com o `ERR_*` do original.
+    /// B358 — `pet_manager::PostSwitchServer` (`gs/petman.cpp:1857-1866`): depois de trocar de mapa (ou de servidor de
+    /// mundo), o mascote de combate volta a ser invocado na posição nova (`combat_petdata_imp::PostSwitchServer`,
+    /// `:844-870`: `CreatePet2` + `summon_pet` + `pet_ai_state`); o ornamental (`follow_petdata_imp`, `:1049-1052`)
+    /// fica recolhido; a montaria não muda (`:530-532`). `info` é o da jaula; sem ele, lê do banco.
+    pub(crate) async fn reinvocar_depois_da_troca(&self, roleid: RoleId, slot: u16, info: Option<pw_core::InfoPet>) {
+        let info = match info {
+            Some(i) => i,
+            None => {
+                let Ok(Some(item)) = self.itens().await.get_item_by_slot(roleid, ContainerType::PetCorral, slot).await else {
+                    return;
+                };
+                match pw_core::InfoPet::do_bloco(&item.octets) {
+                    Some(i) => i,
+                    None => return,
+                }
+            }
+        };
+        let classe = {
+            let dados = self.world.read().await.data_manager.clone();
+            dados.modelos_de_mascote.get(&(info.pet_tid as u32)).map(|m| m.classe).unwrap_or(info.pet_class)
+        };
+        if classe != pw_core::PET_CLASS_COMBAT {
+            debug!("mundo: o mascote {} de {roleid} (classe {classe}) não volta depois da troca", info.pet_tid);
+            return;
+        }
+        info!("mundo: {roleid} trocou de mapa — o mascote {} volta (PostSwitchServer)", info.pet_tid);
+        self.invocar_mascote_de_combate(roleid, slot, info).await;
+    }
+
+    /// B358 — a montaria que veio na troca de servidor de mundo: o original não a desfaz (`mount_petdata_imp::
+    /// PostSwitchServer` vazio, `petman.cpp:530-532`); aqui o destino lê o mascote do banco e monta de novo.
+    pub(crate) async fn remontar_depois_da_troca(&self, roleid: RoleId, slot: u16, envio: &EnvioAoCliente) {
+        let Ok(Some(item)) = self.itens().await.get_item_by_slot(roleid, ContainerType::PetCorral, slot).await else { return };
+        let Some(info) = pw_core::InfoPet::do_bloco(&item.octets) else { return };
+        let tid = if info.pet_vis_tid > 0 { info.pet_vis_tid } else { info.pet_tid } as u32;
+        self.montar(roleid, slot, tid, &info, envio).await;
+    }
+
     pub(super) async fn invocar_mascote_de_combate(&self, roleid: RoleId, slot: u16, info: pw_core::InfoPet) {
         let (pet_tid, nivel) = (info.pet_tid, info.level);
         let r = self.world.write().await.invocar_mascote(roleid, slot, info);

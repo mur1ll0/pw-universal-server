@@ -900,10 +900,20 @@ impl BusServer {
                 // esperava a vez (B57).
                 self.golpe_na_fila.write().await.remove(&roleid);
                 // B355 — a morte zera o vigor do Daimon (`player.cpp:14111-14115`).
-                let tinha_daimon = self.world.write().await.players.get_mut(&(roleid as i64)).is_some_and(|p| {
-                    p.vigor_do_daimon = 0.0;
-                    p.daimon.is_some()
-                });
+                let (tinha_daimon, refino_ligado) = {
+                    let mut m = self.world.write().await;
+                    let r = m.players.get_mut(&(roleid as i64)).map(|p| {
+                        p.vigor_do_daimon = 0.0;
+                        (p.daimon.is_some(), std::mem::take(&mut p.refino_do_daimon_ativo))
+                    });
+                    if r.is_some_and(|x| x.1) {
+                        m.refazer_atributos(roleid as i64);
+                    }
+                    r.unwrap_or((false, false))
+                };
+                if refino_ligado {
+                    self.avisar_refino_do_daimon(roleid, false).await;
+                }
                 if tinha_daimon {
                     self.avisar_vigor_do_daimon(roleid).await;
                 }
@@ -1078,6 +1088,12 @@ impl BusServer {
 
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
             EventoDoMundo::VigorDoDaimon { roleid } => self.avisar_vigor_do_daimon(roleid).await,
+            EventoDoMundo::ResistenciaDoDaimon { roleid, resistencia, desligou } => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::elf_stamina(resistencia).data).await;
+                if desligou {
+                    self.avisar_refino_do_daimon(roleid, false).await;
+                }
+            }
 
             EventoDoMundo::VidaDoMonstro {
                 id,
@@ -1562,7 +1578,7 @@ impl BusServer {
             // B350 — a chegada de outro servidor de mundo (`global_message.cpp:111-117`, `is_from_outside`): o
             // personagem vem do banco, gravado pela origem já no mapa e na posição novos; `notify_pos` e o mundo em
             // volta, e o `SwitchServerSuccess` ao link.
-            BusMessage::SwitchServerStart { roleid, link_id, localsid, dst_gsid, .. } => {
+            BusMessage::SwitchServerStart { roleid, link_id, localsid, dst_gsid, key, .. } => {
                 self.sessoes.write().await.insert(roleid, Sessao { localsid, envio: envio.clone() });
                 self.colocar_no_mundo(roleid, envio).await;
                 let (pos, este) = {
@@ -1574,6 +1590,14 @@ impl BusServer {
                     info!("mundo: {roleid} chegou de outro servidor ao mapa {este} em {pos:?}");
                 }
                 let _ = envio.try_send(BusMessage::SwitchServerSuccess { roleid, link_id, localsid, dst_gsid });
+                // B358 — o mascote e a montaria que vieram na chave (`PostSwitchServer`).
+                let slot_em = |k: usize| key.get(k..k + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap())).filter(|s| *s >= 0);
+                if let Some(slot) = slot_em(16) {
+                    self.remontar_depois_da_troca(roleid, slot as u16, envio).await;
+                }
+                if let Some(slot) = slot_em(12) {
+                    self.reinvocar_depois_da_troca(roleid, slot as u16, None).await;
+                }
             }
             BusMessage::SwitchServerSuccess { roleid, .. } => {
                 warn!("mundo: recebi um SwitchServerSuccess de {roleid} — sentido invertido");
@@ -1601,11 +1625,21 @@ impl BusServer {
         }
         let (envio, localsid) = (vindo.sessao.envio.clone(), vindo.sessao.localsid);
         let mascote = vindo.mascote.clone();
-        self.concluir_troca_na_origem(roleid, mascote).await;
-        let mut chave = Vec::with_capacity(12);
+        let montaria = vindo.jogador.montaria;
+        // B358 — `PreSwitchServer`: o mascote some e vai à jaula **antes** do aviso, para o destino ler o estado dele do
+        // banco (o recolhimento do evento grava de novo, igual).
+        if let Some(m) = mascote.as_ref() {
+            self.gravar_mascote(roleid, m.slot, &m.para_a_jaula()).await;
+        }
+        self.concluir_troca_na_origem(roleid, mascote.clone()).await;
+        // A chave: a posição (12 bytes), o slot do mascote ativo e o da montaria (-1 = nenhum) — o que o original leva
+        // dentro do objeto transferido (`_petman`, `gplayer_imp::Swap`, `player.cpp:11493`).
+        let mut chave = Vec::with_capacity(20);
         for v in [pos.x, pos.y, pos.z] {
             chave.extend_from_slice(&v.to_le_bytes());
         }
+        chave.extend_from_slice(&mascote.as_ref().map_or(-1, |m| m.slot as i32).to_le_bytes());
+        chave.extend_from_slice(&montaria.map_or(-1, |m| m.indice as i32).to_le_bytes());
         let _ = envio.try_send(BusMessage::SwitchServerStart { roleid, link_id: 0, localsid, src_gsid: origem, dst_gsid: mundo, key: chave });
         info!("mundo: {roleid} saiu do mapa {origem} para o {mundo}, de outro servidor de mundo");
         true
@@ -2815,14 +2849,10 @@ impl BusServer {
         if let Some(r) = self.roteador.get().and_then(|r| r.upgrade()) {
             r.ao_entrar_no_grupo(lider, &membros).await;
         }
+        // B359 — o membro pode estar noutro mapa do roteador: o aviso vai aonde ele estiver.
         for m in &membros {
-            self.enviar_ao_jogador(
-                *m,
-                S2CGamedataSend::team_join_party(lider, PICK_FLAG_PADRAO).data,
-            )
-            .await;
-            self.enviar_ao_jogador(*m, self.sub.team_member_data(lider, &dados).data)
-                .await;
+            self.enviar_onde_estiver(*m, S2CGamedataSend::team_join_party(lider, PICK_FLAG_PADRAO).data).await;
+            self.enviar_onde_estiver(*m, self.sub.team_member_data(lider, &dados).data).await;
         }
     }
 
@@ -2868,13 +2898,8 @@ impl BusServer {
         .await;
         // E os que ficaram, com o id de quem saiu e a lista nova.
         for m in &restantes {
-            self.enviar_ao_jogador(
-                *m,
-                S2CGamedataSend::team_member_leave(lider, roleid, SAIDA_VOLUNTARIA).data,
-            )
-            .await;
-            self.enviar_ao_jogador(*m, self.sub.team_member_data(lider, &dados).data)
-                .await;
+            self.enviar_onde_estiver(*m, S2CGamedataSend::team_member_leave(lider, roleid, SAIDA_VOLUNTARIA).data).await;
+            self.enviar_onde_estiver(*m, self.sub.team_member_data(lider, &dados).data).await;
         }
     }
 
@@ -2994,6 +3019,11 @@ impl BusServer {
         // Não existe comando C2S de decolar: o cliente manda `USE_ITEM` apontando para o
         // slot 12 (`EQUIPIVTR_FLYSWORD`) e espera o `OBJECT_TAKEOFF` (96). Ver
         // `S2CGamedataSend::object_takeoff`.
+        // B360 — usar o Daimon vestido liga ou desliga o efeito do refino (`elf_item::OnUse`, `item_elf.cpp:438-448`).
+        if ct == ContainerType::Equipment && u.slot == 23 {
+            self.ligar_refino_do_daimon(roleid).await;
+            return;
+        }
         if ct == ContainerType::Equipment && u.slot == SLOT_DE_VOO {
             self.alternar_voo(roleid, envio).await;
             return;
@@ -6467,6 +6497,34 @@ impl BusServer {
     /// B353 — o jogador está morto neste mapa (`IsDead`, para o `aei_filter`).
     pub async fn jogador_morto(&self, roleid: i32) -> bool {
         self.world.read().await.players.get(&(roleid as i64)).is_some_and(|p| p.hp <= 0)
+    }
+
+    /// B359 — manda ao jogador neste mapa ou, pelo roteador, no mapa em que ele estiver (os avisos de grupo, cujo
+    /// registro é de todos os mapas).
+    pub(crate) async fn enviar_onde_estiver(&self, roleid: i32, data: Vec<u8>) -> bool {
+        if self.sessoes.read().await.contains_key(&roleid) {
+            return self.enviar_ao_jogador(roleid, data).await;
+        }
+        match self.roteador.get().and_then(|r| r.upgrade()) {
+            Some(r) => r.enviar_ao_jogador(roleid, data).await,
+            None => false,
+        }
+    }
+
+    /// B359 — depois de trocar de mapa, o grupo (que não se desfez) vai de novo ao cliente que chegou — o
+    /// `TEAM_JOIN_PARTY` e a lista de membros —, e os outros recebem a lista com ele.
+    pub(crate) async fn reenviar_grupo(&self, roleid: i32) {
+        let (lider, membros, dados) = {
+            let mundo = self.world.read().await;
+            let Some(lider) = mundo.lider_do_grupo(roleid) else { return };
+            let membros = mundo.membros_do_grupo(roleid);
+            let dados = mundo.dados_dos_membros(&membros);
+            (lider, membros, dados)
+        };
+        self.enviar_ao_jogador(roleid, S2CGamedataSend::team_join_party(lider, PICK_FLAG_PADRAO).data).await;
+        for m in &membros {
+            self.enviar_onde_estiver(*m, self.sub.team_member_data(lider, &dados).data).await;
+        }
     }
 
     pub async fn enviar_ao_jogador(&self, roleid: i32, data: Vec<u8>) -> bool {

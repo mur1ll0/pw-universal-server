@@ -68,6 +68,8 @@ pub struct RoteadorDeMapas {
     remotos: std::sync::RwLock<std::collections::HashSet<i32>>,
     /// B349 — as cópias de masmorra (uma por chave), com ids internos a partir de [`PRIMEIRA_COPIA`].
     copias: std::sync::Mutex<Copias>,
+    /// B359 — o registro de grupos de todos os mapas deste roteador.
+    grupos: Arc<std::sync::Mutex<crate::world::RegistroDeGrupos>>,
     /// Quando o processo montou o roteador (B249): o painel compara com a última publicação de arquivo do servidor
     /// para dizer "aguarda reinício" — os dados do `config` são lidos uma vez, na partida.
     iniciado_em: std::time::SystemTime,
@@ -104,8 +106,8 @@ struct CopiaDeMasmorra {
 
 #[derive(Default)]
 struct Copias {
-    /// `_team_ins_key_list`: a chave do grupo, guardada para cada membro quando um deles entra (o grupo daqui se desfaz
-    /// na troca de mapa, B51; o do original é global).
+    /// `_team_ins_key_list`: a chave do grupo, guardada para cada membro quando um deles entra (desde o B359 o grupo
+    /// também não se desfaz na troca de mapa, como o `_team` do original).
     chave_do_grupo: HashMap<i32, i64>,
     por_chave: HashMap<(i32, i64), i32>,
     copias: HashMap<i32, CopiaDeMasmorra>,
@@ -253,7 +255,16 @@ impl RoteadorDeMapas {
     /// Como [`Self::new`], com o mapa padrão dado: ele pode estar desligado pelo painel e
     /// fora de `mapas` (B183) — aí a entrada que cairia nele é recusada.
     pub fn com_padrao(padrao: i32, mapas: Vec<(i32, Arc<BusServer>)>, repo: CharacterRepository) -> Self {
+        // B359 — um registro de grupos só para todos os mapas: trocar de mapa não desfaz o grupo.
+        let grupos: Arc<std::sync::Mutex<crate::world::RegistroDeGrupos>> = Default::default();
+        for (_, servidor) in &mapas {
+            match servidor.mundo().try_write() {
+                Ok(mut m) => m.compartilhar_grupos(Arc::clone(&grupos)),
+                Err(_) => warn!("roteador: mapa ocupado ao montar — os grupos dele ficam separados"),
+            }
+        }
         Self {
+            grupos,
             mapas: std::sync::RwLock::new(mapas.into_iter().collect()),
             padrao,
             donos: RwLock::new(HashMap::new()),
@@ -438,6 +449,7 @@ impl RoteadorDeMapas {
             servidor.descarregar().await;
             return;
         }
+        servidor.mundo().write().await.compartilhar_grupos(Arc::clone(&self.grupos));
         self.mapas.write().unwrap_or_else(|e| e.into_inner()).insert(mapa, servidor);
         tracing::info!(mapa, ms = inicio.elapsed().as_millis() as u64, "mapa carregado pelo painel");
     }
@@ -613,7 +625,7 @@ impl RoteadorDeMapas {
 
     /// B353 — saiu do grupo pelo comando (`TEAM_LEAVE_PARTY`): sem grupo, a chave volta a ser a própria
     /// (`GetInstanceKey`); se o grupo acabou, também a de quem ficou. Quem estiver numa cópia de outra chave é avisado
-    /// na próxima conferência. O grupo que se desfaz pela troca de mapa (B51) **não** passa por aqui.
+    /// na próxima conferência. Sair do jogo também tira do grupo, sem passar por aqui.
     pub fn ao_sair_do_grupo(&self, quem: i32, restantes: &[i32]) {
         let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
         c.chave_do_grupo.remove(&quem);
@@ -625,7 +637,7 @@ impl RoteadorDeMapas {
     }
 
     /// B353 — alguém entrou num grupo: se o líder está numa cópia, a chave do grupo é a chave atual dele (a da cópia
-    /// em que entrou com o grupo de antes, que aqui se desfez na troca de mapa) e vale para todos os membros.
+    /// em que entrou) e vale para todos os membros.
     pub async fn ao_entrar_no_grupo(&self, lider: i32, membros: &[i32]) {
         let Some(id) = self.mapa_de(lider).await else { return };
         let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
@@ -752,6 +764,7 @@ impl RoteadorDeMapas {
             id
         };
         servidor.definir_id_de_rota(id);
+        servidor.mundo().write().await.compartilhar_grupos(Arc::clone(&self.grupos));
         self.mapas.write().unwrap_or_else(|e| e.into_inner()).insert(id, servidor);
         tracing::info!(mapa, chave, id, ms = inicio.elapsed().as_millis() as u64, "masmorra: cópia nova");
         Some(id)
@@ -895,6 +908,10 @@ impl RoteadorDeMapas {
                 let (saiu,resultado)=origem.concluir_troca_na_origem(p.roleid,mascote.clone()).await;
                 self.donos.write().await.insert(p.roleid,destino_id);
                 if saiu {destino.encerrar_apos_transferencia(p.roleid,&envio,resultado).await;}
+                // B358 — `PostSwitchServer`: o mascote de combate volta no mapa novo.
+                else if let Some(m)=mascote.as_ref() {destino.reinvocar_depois_da_troca(p.roleid,m.slot,Some(m.para_a_jaula())).await;}
+                // B359 — o grupo segue: o cliente que chegou recebe o grupo de novo.
+                if !saiu {destino.reenviar_grupo(p.roleid).await;}
             },
             Err((vindo,false))=> {origem.restaurar_troca(p.roleid,vindo).await;},
             Err((vindo,true))=> {
@@ -1463,6 +1480,14 @@ impl RoteadorDeMapas {
         let mapa = self.mapa_de(roleid).await?;
         let pos = self.mapa(mapa)?.posicao_do_jogador(roleid).await?;
         Some((mapa, pos))
+    }
+
+    /// B359 — manda ao jogador no mapa em que ele está (os avisos de grupo).
+    pub async fn enviar_ao_jogador(&self, roleid: i32, data: Vec<u8>) -> bool {
+        match self.mapa_de(roleid).await.and_then(|m| self.mapa(m)) {
+            Some(s) => s.enviar_ao_jogador(roleid, data).await,
+            None => false,
+        }
     }
 
     /// Em que mapa este jogador está sendo atendido agora.

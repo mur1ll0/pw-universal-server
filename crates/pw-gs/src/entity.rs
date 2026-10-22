@@ -302,6 +302,9 @@ pub struct PlayerEntity {
     /// (`UpdateElfVigor`: `100 + vitalidade final`, `1 + energia final × 0,02` por segundo, `player.cpp:21671-21678`,
     /// `item_elf.h:19-20`), vai a 0 na morte (`player.cpp:14111-14115`) e é o que a habilidade do Daimon gasta.
     pub vigor_do_daimon: f32,
+    /// B360 — o efeito do refino do Daimon ligado (`_cur_elf_info.refine_effect_active`): soma a vida e os graus da
+    /// tabela do refino (`ElfRefineActivate`, `player.cpp:21820-21836`) e gasta resistência a cada segundo.
+    pub refino_do_daimon_ativo: bool,
     /// B357 — a coleção das Cartas de General (`_generalcard_collection`, `abase::bitmap<512>`): o bit `show_order`
     /// de cada carta já obtida, em bytes que crescem até o último bit ligado (`staticmap.h:381-397`).
     pub colecao_de_cartas: Vec<u8>,
@@ -1060,7 +1063,14 @@ impl PlayerEntity {
         // `UpdateLife`/`UpdateMana` (`playertemplate.h:1153-1189`): o equipamento entra em
         // `_en_point.max_hp/max_mp` e a porcentagem em `_en_percent` — na vida o
         // `Inchp`/`Dechp`, na mana o `ImpairScaleMaxMP` da raposa (`filter_Foxform`).
-        self.max_hp = resultado(a.max_hp, e.vida + b.vida, r.vida).max(1);
+        // B360 — `ElfRefineActivate`: a vida do refino entra no `_en_point.max_hp`.
+        let refino = self
+            .daimon
+            .as_ref()
+            .filter(|_| self.refino_do_daimon_ativo)
+            .and_then(|d| EFEITO_DO_REFINO_DO_DAIMON.get(d.estado.refino.max(0) as usize).copied())
+            .unwrap_or([0; 4]);
+        self.max_hp = resultado(a.max_hp, e.vida + b.vida + refino[0], r.vida).max(1);
         self.max_mp = resultado(a.max_mp, e.mana + b.mana, r.mana);
 
         // `UpdatePlayerMPHPGen` (`playertemplate.h:874-894`): a regeneração da classe mais
@@ -1176,8 +1186,8 @@ impl PlayerEntity {
                 + def_pontos)
                 .max(0);
         // `_attack_degree`/`_defend_degree` dos addons.
-        self.attack_degree = b.grau_de_ataque;
-        self.defend_degree = b.grau_de_defesa;
+        self.attack_degree = b.grau_de_ataque + refino[1];
+        self.defend_degree = b.grau_de_defesa + refino[2];
         // B222: as parcelas do `CalcPetEnhance`, antes das porcentagens.
         self.base_para_mascote = BaseParaMascote {
             vida: a.max_hp + e.vida + b.vida,
@@ -1716,6 +1726,7 @@ impl PlayerEntity {
             auto_mp: None,
             daimon: None,
             vigor_do_daimon: 0.0,
+            refino_do_daimon_ativo: false,
             colecao_de_cartas: Vec::new(),
             recarga_do_auto_hp_s: 0,
             recarga_do_auto_mp_s: 0,
@@ -2159,6 +2170,28 @@ pub struct AtuaisDoDaimon {
 /// o mínimo dos gênios 4, 3, 2, 1, 0.
 /// B355 — `UpdateElfVigor` (`player.cpp:21671-21678`): `max_vigor = INITIAL_MAX_VIGOR + final_vitality` e
 /// `vigor_gen = INITIAL_VIGOR_GEN + final_energy × 0,02` (`item_elf.h:19-20`: 100 e 1).
+/// B360 — `elf_refine_effect_table` (`gs/item/item_elf.cpp:9-50`): `{max_hp, attack_degree, defend_degree, std_cost}`
+/// por nível de refino (0 não usa).
+pub const EFEITO_DO_REFINO_DO_DAIMON: [[i32; 4]; 37] = [
+    [0, 0, 0, 0],
+    [45, 0, 0, 10], [100, 0, 0, 10], [165, 0, 0, 10], [240, 0, 0, 10], [325, 0, 0, 10],
+    [420, 0, 0, 10], [420, 1, 0, 10], [420, 2, 0, 20], [420, 2, 1, 30], [420, 2, 2, 40],
+    [420, 3, 3, 50], [420, 4, 4, 60], [420, 6, 5, 70], [420, 9, 6, 80], [420, 12, 7, 90],
+    [420, 16, 8, 100], [420, 20, 9, 110], [420, 24, 11, 120], [420, 28, 13, 130], [420, 32, 15, 140],
+    [420, 36, 17, 150], [420, 41, 19, 160], [420, 46, 21, 170], [420, 51, 24, 180], [420, 56, 27, 190],
+    [420, 61, 30, 200], [420, 66, 33, 210], [420, 72, 36, 220], [420, 78, 39, 230], [420, 84, 42, 240],
+    [420, 90, 45, 250], [420, 96, 48, 260], [420, 102, 51, 270], [420, 108, 54, 280], [420, 114, 57, 290],
+    [420, 120, 60, 300],
+];
+
+/// B360 — o gasto de resistência do efeito do refino por segundo (`std_cost × (nível + 105) / 210`, `player.cpp:9199`)
+/// e o de ligar (× 60, `:21800`), com a aritmética inteira do original.
+pub fn gasto_do_refino_do_daimon(refino: i16, nivel_do_jogador: i32) -> (i32, i32) {
+    let custo = EFEITO_DO_REFINO_DO_DAIMON.get(refino.max(0) as usize).map_or(0, |e| e[3]);
+    let por_segundo = custo * (nivel_do_jogador + 105) / 210;
+    (por_segundo, por_segundo * 60)
+}
+
 pub fn limites_do_vigor(a: &AtuaisDoDaimon) -> (f32, f32) {
     (100.0 + a.atributos[2] as f32, 1.0 + a.atributos[3] as f32 * 0.02)
 }

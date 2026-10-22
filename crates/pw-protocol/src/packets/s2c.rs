@@ -2556,6 +2556,15 @@ impl S2CGamedataSend {
         stream.write_u32_le(indice);
         Self { data: stream.into_bytes().to_vec() }
     }
+    /// B360 — `ELF_REFINE_ACTIVATE` (268; `PLAYER_ELF_REFINE_ACTIVATE`) `{int pid; char status}` = 5 (a quem vê, ele
+    /// incluído: `AutoBroadcastCSMsg`, `player.cpp:4902-4909`).
+    pub fn elf_refine_activate(quem: i32, ligado: bool) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(268);
+        stream.write_i32_le(quem);
+        stream.write_u8(u8::from(ligado));
+        Self { data: stream.into_bytes().to_vec() }
+    }
     /// B355 — `ELF_VIGOR` (262) `{int vigor; int max_vigor; int vigor_gen}` (`cmd_elf_vigor`; `query_elf_vigor`,
     /// `player.cpp:3576-3582`: o ganho vai × 100 arredondado).
     pub fn elf_vigor(vigor: i32, maximo: i32, ganho_x100: i32) -> Self {

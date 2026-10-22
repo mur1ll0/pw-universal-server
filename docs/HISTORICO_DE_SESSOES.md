@@ -17057,3 +17057,36 @@ comparação lado a lado.
     - Ver em jogo (1.5.5): abrir uma caixa de cartas — a janela de coleção marca a carta; vestir as cartas de um conjunto
       completo nos lugares certos — os atributos sobem além da soma das cartas; renascer duas cartas iguais no nível máximo
       no NPC — sobra uma, nível 1, renascida.
+
+358. **Sessão 2026-10-22: mascote na troca de mapa.**
+
+    - `BusServer::reinvocar_depois_da_troca` (`PostSwitchServer`: só o de combate) e `remontar_depois_da_troca`; o roteador
+      reinvoca depois da troca no processo; entre contêineres a chave do `SwitchServerStart` leva os slots do mascote e da
+      montaria, e a origem grava o mascote na jaula antes do aviso.
+    - Provas: `mascote_na_troca` **1/1** (mascote 10386 sai no mapa 1 e volta no 161, dados do `realm_155`),
+      `troca_de_servidor` **1/1**.
+    - Ver em jogo (1.5.5): com o mascote de combate fora, entrar num portal para outro mapa — o mascote aparece ao lado
+      no mapa novo.
+
+359. **Sessão 2026-10-22: o grupo atravessa a troca de mapa.**
+
+    - `world.rs`: `RegistroDeGrupos` (grupos, índice, convites, próximo id) num `Arc<Mutex<>>` que o roteador compartilha
+      com todos os mapas (os de partida, os ligados pelo painel e as cópias de masmorra); `concluir_troca` não tira do grupo;
+      `remove_player` (sair do jogo) ainda tira.
+    - `BusServer::enviar_onde_estiver` (pelo `RoteadorDeMapas::enviar_ao_jogador`) nos avisos de grupo; `reenviar_grupo` a
+      quem chega de outro mapa.
+    - Provas: `masmorra_por_grupo` **1/1** (o membro continua no grupo do líder na cópia), `varios_mapas` **4/4**, os testes de
+      grupo do `subcomandos_no_mundo` **8/8**.
+    - Ver em jogo (1.5.5, dois clientes): em grupo, um entra num portal para outro mapa — a janela de grupo continua com os
+      dois; quem ficou vê o outro na lista. Sair do grupo de longe também chega ao outro.
+
+360. **Sessão 2026-10-22: Daimon — efeito do refino.**
+
+    - `entity::EFEITO_DO_REFINO_DO_DAIMON` e `gasto_do_refino_do_daimon`; `PlayerEntity::refino_do_daimon_ativo` soma vida e
+      graus no recálculo; `World::batimento_do_refino_do_daimon` (gasto por segundo, desliga sem resistência);
+      `BusServer::ligar_refino_do_daimon` (USE_ITEM no slot 23) e `avisar_refino_do_daimon` (268); morte e tirar o Daimon
+      desligam.
+    - Prova: `usar_o_daimon_vestido_liga_o_efeito_do_refino` **1/1** (dados do `realm_155`: refino 5 → +325 de vida,
+      −360 de resistência, 268 ligado e desligado), conferidor S2C **5/5**.
+    - Ver em jogo (1.5.5): com um Daimon refinado vestido, clicar com o botão direito nele na janela de equipamento — o
+      Daimon brilha, a vida máxima sobe; a resistência do Daimon desce a cada segundo; clicar de novo desliga.

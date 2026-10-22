@@ -111,9 +111,12 @@ async fn cada_grupo_ganha_a_sua_copia_da_masmorra() {
     assert_eq!(a, b, "o grupo na mesma cópia");
     assert_ne!(a, c, "quem está sozinho noutra cópia");
     assert!(roteador.mapas().contains(&a) && roteador.mapas().contains(&c));
+    // B359 — o grupo não se desfez na troca de mapa: na cópia, o membro continua no grupo do líder.
+    assert_eq!(mundo_1.read().await.lider_do_grupo(ids[1]), Some(ids[0]), "o registro é o do roteador");
 
     // B353 — dentro da cópia, o membro sai do grupo: a chave dele volta a ser a própria e ele é avisado (60 s); o líder
     // e quem está sozinho na própria cópia ficam. Voltar ao grupo do líder cancela o aviso.
+    mundo_1.write().await.sair_do_grupo(ids[1]);
     roteador.ao_sair_do_grupo(ids[1], &[ids[0]]);
     roteador.conferir_quem_esta_nas_copias().await;
     assert!(roteador.saindo_da_masmorra(ids[1]), "quem saiu do grupo é avisado");

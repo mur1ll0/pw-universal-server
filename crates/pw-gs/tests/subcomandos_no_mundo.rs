@@ -10945,3 +10945,55 @@ async fn renascer_carta_e_colecao_gravada() {
     let e = pw_data_loader::cartas_de_general::EssenciaDaCarta::ler(&bolsa.iter().find(|i| i.slot == 0).unwrap().octets).unwrap();
     assert_eq!((e.nivel, e.exp, e.renascimentos), (1, 0, 1));
 }
+
+/// B360 — usar o Daimon vestido (slot 23) liga o efeito do refino: paga a resistência de ligar, soma a vida do refino
+/// (325 no 5), avisa `ELF_REFINE_ACTIVATE` (268); usar de novo desliga e a vida volta.
+#[tokio::test]
+async fn usar_o_daimon_vestido_liga_o_efeito_do_refino() {
+    let (mundo, addr, roleid, _) = cenario!();
+    // O recálculo da vida precisa da tabela de classes: os dados do `realm_155`.
+    let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_155/config");
+    if !pasta.exists() {
+        eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", pasta.display());
+        return;
+    }
+    let mut reais = GameDataManager::new();
+    reais.load_from_directory(&pasta);
+    mundo.write().await.data_manager = Arc::new(reais);
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    itens.upsert_item(&peca(roleid, pw_core::ContainerType::Equipment, 23, 23752, 0, 0)).await.unwrap();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let vida_antes = {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        let mut estado = pw_gs::entity::Daimon::novo(&[]);
+        estado.refino = 5;
+        estado.vigor = 20_000;
+        p.daimon = Some(pw_gs::entity::DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado, sujo: false });
+        p.level = 40;
+        m.refazer_atributos(roleid as i64);
+        m.players[&(roleid as i64)].max_hp
+    };
+    let usar = {
+        let mut b = vec![1u8, 1];
+        b.extend_from_slice(&23u16.to_le_bytes());
+        b.extend_from_slice(&23752i32.to_le_bytes());
+        subcomando(ids::USE_ITEM, &b)
+    };
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: usar.clone() }).await.unwrap();
+    let a = esperar_comando(&mut link, 268).await;
+    assert_eq!((i32_em(&a, 2), a[6]), (roleid, 1));
+    {
+        let m = mundo.read().await;
+        let p = &m.players[&(roleid as i64)];
+        assert!(p.refino_do_daimon_ativo);
+        // `10 × (40 + 105) / 210 = 6` por segundo; ligar paga 60 segundos.
+        assert_eq!(p.daimon.as_ref().unwrap().estado.vigor, 20_000 - 360);
+        assert_eq!(p.max_hp, vida_antes + 325, "a vida do refino 5");
+    }
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: usar }).await.unwrap();
+    let a = esperar_comando(&mut link, 268).await;
+    assert_eq!(a[6], 0);
+    let m = mundo.read().await;
+    assert_eq!(m.players[&(roleid as i64)].max_hp, vida_antes);
+}
