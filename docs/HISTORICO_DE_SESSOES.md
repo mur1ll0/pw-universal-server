@@ -17107,3 +17107,12 @@ comparação lado a lado.
     - Ver no painel (1.5.5): ficha de um personagem com Daimon → janela Daimon → **Atributos**: mudar força para 41 mostra o
       custo 42; aplicar acima do total recusa com a mensagem; **Habilidades**: ensinar uma, definir nível, esquecer. Em jogo,
       a ficha do Daimon muda na hora.
+
+362. **Sessão 2026-10-22: estado em dia com o B355–B361.** Sem código.
+
+    - `docs/ESTADO_E_RETOMADA.md` §5A: o item 10 (Daimon) ainda dava como faltando conjurar, vigor, refino e
+      decomposição, feitos no B355/B356 (mais o efeito do refino no B360 e a edição pelo painel no B361); o item 12
+      (Cartas de General) ainda dava conjuntos, efeitos extras, renascer e coleção, feitos no B357. Corrigidos: falta do
+      Daimon só pílulas (usar), estado de segurança e bônus de 10 em 10 níveis; das Cartas, o armazém.
+    - §0 "O que falta no 1.5.5" refeito no mesmo sentido (troca de mapa feita no B350; mascote e grupo atravessam no
+      B358/B359; entre contêineres o grupo ainda não).

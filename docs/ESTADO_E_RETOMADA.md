@@ -140,9 +140,10 @@ v156, `tasks.data` 129, build 2569):
   e hierograma automáticos, flechas, descarte com destrave de slot, reparo, caixa de Cartas de General.
 - **Social:** fala, grupo, com experiência repartida pela equipe a 100 m (B164).
 
-**O que falta no 1.5.5** (§5A): o sistema de Cartas de General (a caixa já dá a carta),
-os ~300 efeitos de habilidade sem porte, trava de PvP,
-resto do Daimon e troca de mapa entre contêineres (armazém, munição, coleta, produção e trava
+**O que falta no 1.5.5** (§5A): o armazém de Cartas de General (o resto das cartas no B346/B357),
+os ~300 efeitos de habilidade sem porte, o resto do PvP (agressor, perdas, zona de segurança),
+pílulas, estado de segurança e bônus de nível do Daimon (o resto no B345/B355–B361) e o grupo entre
+contêineres (a troca de mapa é do B350; mascote e grupo atravessam no B358/B359) (armazém, munição, coleta, produção e trava
 de PvP feitos em B144–B147; refinar, incrustar, remover pedras e furar no B163; fôlego: o original não desconta). (O intérprete do `aipolicy.data` foi feito no B127.)
 
 **O que o 1.2.6 faz hoje** (realm `realm_126`, porta 29000): as **regras de jogo são as
@@ -739,15 +740,20 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     invisibilidade, água/ar e bênção de mascote em outro alvo. Do estado estendido, os bits que
     ainda vão zerados são os que não temos dado para preencher — emote, efeitos visíveis,
     facção, barraca, cônjuge, título, VIP e os outros do `state2` (spec 04).
-10. **Daimon (B75/B76, B345):** ficha, experiência, **distribuir atributos e gênios, injetar
-    experiência, vestir peça, aprender e esquecer habilidade no NPC** (B345). Faltam **conjurar**
-    habilidade do Daimon (o catálogo não tem o dano das 96, que dependem de `GetElfstr`), o vigor,
-    as pílulas, a decomposição, o refino, o estado de segurança e o bônus sorteado de 10 em 10 níveis. **O ganho
+10. **Daimon (B75/B76, B345, B355–B361):** ficha, experiência, **distribuir atributos e gênios, injetar
+    experiência, vestir peça, aprender e esquecer habilidade no NPC** (B345); **vigor** (batimento de 1 s,
+    `ELF_VIGOR`) e **conjurar** habilidade do Daimon (C2S 116, cálculo das 96 habilidades extraído do `gs`; B355);
+    **refino, transferência e decomposição** nos serviços 52/53/54 (B356); **efeito do refino** ligado pelo
+    USE_ITEM no slot 23 (vida e resistência, S2C 268; B360); no painel, editar atributos, gênios e habilidades,
+    online e offline (B361). Tudo testado na suíte, **falta ver em jogo**. Faltam as pílulas (usar; a decomposição
+    já dá a 23544), o estado de segurança e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
-12. **Cartas de General (B95 a caixa, B346 o resto):** abrir a caixa dá a carta; **liderança**
+12. **Cartas de General (B95 a caixa, B346, B357):** abrir a caixa dá a carta; **liderança**
     (gravada, ganha em missão, mandada na entrada), **vestir** com nível e liderança, os
     **atributos** da carta no lugar dela (ou o extra da coluna fora dele) e **devorar** para subir de
-    nível (B346). Faltam conjuntos e efeitos extras, renascer, a coleção e o armazém de cartas.
+    nível (B346); **conjuntos** (`POKER_SUITE_ESSENCE`) e efeitos extras, **renascer** carta (serviço 89) e a
+    **coleção** gravada em `characters.generalcard_collection` (S2C 379/380, só 1.5.5) (B357; falta ver em jogo).
+    Falta o armazém de cartas.
 11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
     (B126/B127, spec 05 §4.1); **feitos em 2026-10-21:** invocar monstro (B336), `max_move_range`
     (B337), tocar ação (B338), contar jogadores (B339), trocar de caminho (B341), invocar NPC/mina,
@@ -1371,6 +1377,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 359 | 10-22 | Grupo: um registro por roteador; trocar de mapa não desfaz o grupo |
 | 360 | 10-22 | Daimon: ligar o efeito do refino (usar o Daimon vestido) |
 | 361 | 10-22 | Painel: editar atributos, gênios e habilidades do Daimon |
+| 362 | 10-22 | Estado: §0 e §5A (itens 10 e 12) atualizados com o B355–B361; sem código |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |
