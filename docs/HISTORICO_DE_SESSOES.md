@@ -16852,3 +16852,15 @@ comparação lado a lado.
     `mudar_caminho_pede_a_rota_ao_mundo`; `politica_do_realm` **3/3** com as quatro operações fora da lista de sem porte.
     - Ver em jogo (1.5.5): o log do `pw-world-155` com `RUST_LOG=debug` não lista mais `sem porte: InvocarMonstro`,
       `AndarPorCaminho`, `TocarAcao` nem `ContarJogadores`.
+
+342. **Sessão 2026-10-21: suíte completa depois dos blocos B327–B341.**
+
+    - `cargo test --workspace --no-fail-fast` com `TEST_DATABASE_URL`: **1.168 passaram, 0 falharam** (6 ignorados).
+    - Painel (88 testes, no `pw-admin-api`): `teste_recursos` e `teste_dica` todos passam; **14 falhas de `teste_base`
+      são as mesmas no código de antes da sessão (`6cc04bc`)** — dependem do binário `pw-gs` Linux, da pasta `scripts/` e
+      do daemon real, que o contêiner não tem. Nenhuma regressão.
+    - Como rodar o painel (no Git Bash): copiar `painel/`, `tests/`, `static/` e `main.py` para `/tmp/tp` no contêiner e
+      `MSYS_NO_PATHCONV=1 docker exec -e PYTHONPATH=/tmp/tp:/tmp/tp/tests -e TEST_REDIS_URL=redis://pw-dragonfly:6379
+      pw-admin-api sh -c 'cd /tmp/tp && TEST_DATABASE_URL="$DATABASE_URL" python -m unittest discover -s tests -p "teste_*.py"'`
+      (isolado: schema `test` e chaves com prefixo). Sem o `MSYS_NO_PATHCONV` o Git Bash converte o `PYTHONPATH`; não
+      rodar junto da suíte Rust (esgota as 100 conexões do Postgres).

@@ -1341,6 +1341,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 339 | 10-21 | Política: contar jogadores |
 | 340 | 10-21 | Prêmio de missão por escala de tempo e de itens |
 | 341 | 10-21 | Política: trocar de caminho (`AndarPorCaminho`) |
+| 342 | 10-21 | Suíte completa: 1.168/0 no Rust; painel sem regressão (14 falhas de ambiente, as mesmas de antes) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |
