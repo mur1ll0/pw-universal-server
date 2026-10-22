@@ -715,8 +715,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
    só 1.5.5), interrupção por golpe e exp/SP pelo nível da mina.
 4. **Ataque normal — feito** (B52–B54 sessão de golpe com `HOST_START_ATTACK`/`ATTACK_ONCE`, B62 dano adiado, B67
    ameaça na chegada do golpe; conferido no B329: `combate_real` 30/30). O "sem animação" do B44 #6 era antes disso.
-5. **Troca de mapa só dentro do processo** (B51): mapa de outro contêiner exigiria o link
-   reencaminhar a sessão (o roteador de mapas já serve todos os mapas ligados num só GS, B177/B183).
+5. **Troca de mapa entre contêineres — feita no B350** (`MAPAS_REMOTOS` no mundo, `GS_BUS` por
+   mapa no link, `SwitchServerStart`/`SwitchServerSuccess` pelo barramento; spec 02 §2.2). No
+   compose de hoje um só GS serve todos os mapas do realm, então nada muda até separar um mapa.
    O **teleporte por NPC** (`NPC_TRANSMIT_SERVICE`) já está feito
    (`bus_server/jogo.rs`, `teleportar_pela_transportadora`); o S4 do Estúdio cria distritos,
    portais e destinos (B251–B253). O grupo se desfaz na troca.
@@ -1357,6 +1358,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 347 | 10-22 | Casamento pela missão (cônjuge gravado, `PLAYER_CHANGE_SPOUSE`) |
 | 348 | 10-22 | PQ (missão pública) e variáveis globais nas missões |
 | 349 | 10-22 | Masmorra por grupo: uma cópia do mapa por chave (líder ou jogador) |
+| 350 | 10-22 | Troca de mapa entre servidores de mundo (contêineres) pelo link |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

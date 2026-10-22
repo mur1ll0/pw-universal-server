@@ -16962,3 +16962,17 @@ comparação lado a lado.
       `varios_mapas` **4/4**, `canal_administrativo` **38/38**, portal **2/2**.
     - Ver em jogo (1.5.5, dois clientes): os dois em grupo entram na Caverna das Sombras (169) — se veem lá dentro; um
       terceiro personagem sozinho entra e não vê nenhum dos dois nem os monstros que eles mataram.
+
+350. **Sessão 2026-10-22: troca de mapa entre servidores de mundo.**
+
+    - `pw-bus`: `SwitchServerStart` (4101) e `SwitchServerSuccess` (4103), os protocolos GNET do IR.
+    - `pw-gs`: `MAPAS_REMOTOS` (`RoteadorDeMapas::definir_mapas_remotos`); `trocar` para mapa remoto chama
+      `BusServer::sair_para_outro_servidor` (grava a fotografia no mapa novo, larga sem `PlayerLogout`, avisa o link);
+      a chegada (`SwitchServerStart`) entra como `EnterWorld` + `NOTIFY_HOSTPOS` e responde `SwitchServerSuccess`;
+      o portal aceita destino remoto.
+    - `pw-link`: o `uplink` entrega o pedido à sessão (`OutboundPacket::TrocaDeServidor`, interno), e o laço da sessão
+      troca de servidor de mundo (`LinkGateway::trocar_de_servidor`).
+    - Provas: `troca_de_servidor` **1/1** (dois servidores de mundo: sai do A gravado no 161, chega ao B na posição pedida
+      e confirma), `a_troca_de_servidor_faz_ida_e_volta`, `pw-bus` **23/23**, `pw-link` **18/18**, `varios_mapas` **4/4**.
+    - Ver em jogo: só com um mapa separado noutro contêiner (`GS_BUS: 1=pw-world-155:29100,161=pw-world-155b:29100` no link
+      e `MAPAS_REMOTOS: 161` no mundo do mapa 1). No compose atual nada muda.

@@ -100,6 +100,17 @@ async fn main() -> anyhow::Result<()> {
         servidos.push(RoteadorDeMapas::preparar_mapa(mundo, game_version).await);
     }
     let roteador = Arc::new(RoteadorDeMapas::com_padrao(mapas[0], servidos, char_repo));
+    // B350 — `MAPAS_REMOTOS=161,169`: os mapas que outro contêiner serve (o link os acha pelo `GS_BUS` por mapa).
+    // Ir a um deles troca a sessão de servidor de mundo (`SwitchServerStart`).
+    let remotos: Vec<i32> = std::env::var("MAPAS_REMOTOS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|t| t.trim().parse().ok())
+        .collect();
+    if !remotos.is_empty() {
+        tracing::info!("mapas de outros servidores de mundo: {remotos:?}");
+    }
+    roteador.definir_mapas_remotos(remotos);
     roteador.permitir_carga(pw_gs::mapas::CargaDeMapas {
         dados: Arc::clone(&data_manager),
         versao: game_version,

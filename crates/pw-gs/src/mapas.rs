@@ -62,6 +62,9 @@ pub struct RoteadorDeMapas {
     /// Fila de trocas e o próprio roteador, para ligar os mapas carregados depois.
     trocas: std::sync::OnceLock<mpsc::UnboundedSender<crate::bus_server::PedidoDeTroca>>,
     eu: std::sync::OnceLock<std::sync::Weak<RoteadorDeMapas>>,
+    /// B350 — os mapas servidos por **outro** servidor de mundo do realm (`MAPAS_REMOTOS`): ir a um deles troca a sessão
+    /// de servidor (`SwitchServerStart`). Mapa que ninguém serve continua recusado.
+    remotos: std::sync::RwLock<std::collections::HashSet<i32>>,
     /// B349 — as cópias de masmorra (uma por chave), com ids internos a partir de [`PRIMEIRA_COPIA`].
     copias: std::sync::Mutex<Copias>,
     /// Quando o processo montou o roteador (B249): o painel compara com a última publicação de arquivo do servidor
@@ -197,6 +200,7 @@ impl RoteadorDeMapas {
             eu: std::sync::OnceLock::new(),
             iniciado_em: std::time::SystemTime::now(),
             copias: std::sync::Mutex::new(Copias::default()),
+            remotos: std::sync::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -229,7 +233,8 @@ impl RoteadorDeMapas {
     /// B208: um portal pode levar a `mapa` — ligado pelo painel e servido por este processo (o
     /// que o [`Self::trocar`] exige; sem isto a troca seria recusada em silêncio).
     pub fn aceita_destino(&self, mapa: i32) -> bool {
-        self.mapa_ligado(mapa) && self.serve(mapa)
+        // B350 — ou de outro servidor de mundo do realm (`MAPAS_REMOTOS`).
+        self.mapa_ligado(mapa) && (self.serve(mapa) || self.remoto(mapa))
     }
 
     pub fn mapa_ligado(&self, mapa: i32) -> bool {
@@ -406,6 +411,15 @@ impl RoteadorDeMapas {
     /// aqui os mapas são tarefas do mesmo processo, então a troca é tirar de um e pôr no outro,
     /// e passar a entregar aquele `roleid` ao novo. Mapa que este processo não serve não tem
     /// troca (`falta`: seria o link reencaminhar a sessão).
+    /// B350 — os mapas de outros servidores de mundo do realm.
+    pub fn definir_mapas_remotos(&self, mapas: impl IntoIterator<Item = i32>) {
+        *self.remotos.write().unwrap_or_else(|e| e.into_inner()) = mapas.into_iter().collect();
+    }
+
+    fn remoto(&self, mapa: i32) -> bool {
+        self.remotos.read().unwrap_or_else(|e| e.into_inner()).contains(&mapa)
+    }
+
     /// B349 — a masmorra com cópia por chave (`masmorra_por_chave` do catálogo da versão): o limite por cópia.
     fn masmorra(&self, mapa: i32) -> Option<u32> {
         let versao = self.carga.get()?.versao;
@@ -585,6 +599,15 @@ impl RoteadorDeMapas {
         if !self.mapa_ligado(p.mundo) {
             warn!("mundo: {} pediu o mapa {}, desligado pelo painel — troca recusada", p.roleid, p.mundo);
             return;
+        }
+        // B350 — mapa de outro servidor de mundo (outro contêiner): a sessão troca de servidor pelo link.
+        if self.mapa(destino_id).is_none() && self.remoto(p.mundo) {
+            if let Some(origem) = self.mapa_de(p.roleid).await.and_then(|m| self.mapa(m)) {
+                if origem.sair_para_outro_servidor(p.roleid, p.mundo, p.pos).await {
+                    self.donos.write().await.remove(&p.roleid);
+                    return;
+                }
+            }
         }
         let Some(destino) = self.mapa(destino_id) else {
             warn!(
@@ -1273,7 +1296,7 @@ impl RoteadorDeMapas {
     async fn entregar(&self, msg: BusMessage, envio: &EnvioAoCliente) {
         // Mesmo cabeçalho já decodificado por bus_server.rs::SubComando::ler;
         // apenas reconhece logout para a guarda, sem novo layout/pacote de cliente.
-        let transicao = matches!(&msg, BusMessage::EnterWorld { .. } | BusMessage::PlayerLogout { .. })
+        let transicao = matches!(&msg, BusMessage::EnterWorld { .. } | BusMessage::PlayerLogout { .. } | BusMessage::SwitchServerStart { .. })
             || matches!(&msg, BusMessage::ClientToGame { data, .. }
                 if data.get(..2) == Some(&crate::comandos::ids::LOGOUT.to_le_bytes()));
         let _presenca = if transicao { Some(self.presenca.write().await) } else { None };
@@ -1284,11 +1307,14 @@ impl RoteadorDeMapas {
             | BusMessage::ClientToGame { roleid, .. }
             | BusMessage::GameToClient { roleid, .. }
             | BusMessage::SetCustomData { roleid, .. }
-            | BusMessage::SetCustomDataRe { roleid, .. } => *roleid,
+            | BusMessage::SetCustomDataRe { roleid, .. }
+            | BusMessage::SwitchServerStart { roleid, .. }
+            | BusMessage::SwitchServerSuccess { roleid, .. } => *roleid,
             BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         };
 
-        let mapa = if matches!(msg, BusMessage::EnterWorld { .. }) {
+        // B350 — a chegada de outro servidor de mundo entra como uma entrada (o mapa gravado pela origem).
+        let mapa = if matches!(msg, BusMessage::EnterWorld { .. } | BusMessage::SwitchServerStart { .. }) {
             if let Some(m)=self.mapa_de(roleid).await {
                 if match self.mapa(m) { Some(s) => s.tem_sessao(roleid).await, None => false } {
                     warn!("entrada: {roleid} já possui sessão ou saída pendente; rejeitada duplicata");

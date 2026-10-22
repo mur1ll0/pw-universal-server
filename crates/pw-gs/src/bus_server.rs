@@ -1470,12 +1470,14 @@ impl BusServer {
         let role=match &msg {
             BusMessage::EnterWorld{roleid,..}|BusMessage::PlayerLogout{roleid,..}|
             BusMessage::ClientToGame{roleid,..}|BusMessage::GameToClient{roleid,..}|
-            BusMessage::SetCustomData{roleid,..}|BusMessage::SetCustomDataRe{roleid,..} => *roleid,
+            BusMessage::SetCustomData{roleid,..}|BusMessage::SetCustomDataRe{roleid,..}|
+            BusMessage::SwitchServerStart{roleid,..}|BusMessage::SwitchServerSuccess{roleid,..} => *roleid,
             BusMessage::ChatSingleCast{dstroleid,..} => *dstroleid,
         };
         let controle=self.repo().await.controle_de_gravacao(role);
         let _guarda=controle.alterar().await;
-        if matches!(&msg,BusMessage::EnterWorld{..}) {
+        // B350 — a chegada de outro servidor de mundo é uma entrada.
+        if matches!(&msg,BusMessage::EnterWorld{..}|BusMessage::SwitchServerStart{..}) {
             if self.tem_sessao(role).await || self.world.read().await.players.contains_key(&(role as i64)) {
                 warn!("entrada: personagem {role} já presente ou com saída pendente; conexão recusada");
                 return;
@@ -1532,7 +1534,56 @@ impl BusServer {
             BusMessage::SetCustomDataRe { roleid, .. } => {
                 warn!("mundo: recebi um SetCustomData_Re (101) de {roleid} — sentido invertido");
             }
+            // B350 — a chegada de outro servidor de mundo (`global_message.cpp:111-117`, `is_from_outside`): o
+            // personagem vem do banco, gravado pela origem já no mapa e na posição novos; `notify_pos` e o mundo em
+            // volta, e o `SwitchServerSuccess` ao link.
+            BusMessage::SwitchServerStart { roleid, link_id, localsid, dst_gsid, .. } => {
+                self.sessoes.write().await.insert(roleid, Sessao { localsid, envio: envio.clone() });
+                self.colocar_no_mundo(roleid, envio).await;
+                let (pos, este) = {
+                    let m = self.world.read().await;
+                    (m.players.get(&(roleid as i64)).map(|p| p.position), m.world_id)
+                };
+                if let Some(pos) = pos {
+                    self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data).await;
+                    info!("mundo: {roleid} chegou de outro servidor ao mapa {este} em {pos:?}");
+                }
+                let _ = envio.try_send(BusMessage::SwitchServerSuccess { roleid, link_id, localsid, dst_gsid });
+            }
+            BusMessage::SwitchServerSuccess { roleid, .. } => {
+                warn!("mundo: recebi um SwitchServerSuccess de {roleid} — sentido invertido");
+            }
         }
+    }
+
+    /// B350 — o jogador vai a um mapa de **outro** servidor de mundo (`SwitchServerStart`): sai da vista, a fotografia
+    /// é gravada já com o mapa e a posição novos (quem chega lê do banco), larga a sessão sem `PlayerLogout` e o link é
+    /// avisado. Sem confirmar a gravação, volta ao mapa.
+    pub(crate) async fn sair_para_outro_servidor(&self, roleid: i32, mundo: i32, pos: Vector3) -> bool {
+        let Some(vindo) = self.retirar_para_troca(roleid).await else { return false };
+        let (repo, origem) = {
+            let m = self.world.read().await;
+            (m.char_repo.clone(), m.world_id)
+        };
+        let mut jogador = vindo.jogador.clone();
+        jogador.position = pos;
+        let estado = crate::world::EstadoParaGravar::do_jogador(&jogador, mundo, &repo);
+        let gravado = tokio::time::timeout(std::time::Duration::from_secs(3), repo.gravar_fotografia(&estado.fotografia)).await;
+        if !matches!(gravado, Ok(Ok(()))) {
+            warn!("troca de servidor: fotografia de {roleid} não confirmada ({gravado:?}) — fica no mapa {origem}");
+            self.restaurar_troca(roleid, vindo).await;
+            return false;
+        }
+        let (envio, localsid) = (vindo.sessao.envio.clone(), vindo.sessao.localsid);
+        let mascote = vindo.mascote.clone();
+        self.concluir_troca_na_origem(roleid, mascote).await;
+        let mut chave = Vec::with_capacity(12);
+        for v in [pos.x, pos.y, pos.z] {
+            chave.extend_from_slice(&v.to_le_bytes());
+        }
+        let _ = envio.try_send(BusMessage::SwitchServerStart { roleid, link_id: 0, localsid, src_gsid: origem, dst_gsid: mundo, key: chave });
+        info!("mundo: {roleid} saiu do mapa {origem} para o {mundo}, de outro servidor de mundo");
+        true
     }
 
     /// Carrega o personagem e o põe no mundo simulado.

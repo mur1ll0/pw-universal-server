@@ -60,7 +60,17 @@ uma `GAME_VERSION` inválida é erro ao subir — não cai em 1.2.6 em silêncio
 - **Trocar de mapa durante a sessão** (B51): entre mapas do **mesmo processo**, pelo roteador
   (`RoteadorDeMapas::ligar_trocas`): o mapa de origem solta sessão e entidade, o destino manda
   `NOTIFY_HOSTPOS` com o `tag` novo e grava mapa e posição antes de mostrar o jogador (spec 05
-  §7). Mapa servido por **outro** contêiner `falta` (o link teria de reencaminhar a sessão).
+  §7). **Mapa servido por outro contêiner (B350):** o mundo de origem precisa do
+  `MAPAS_REMOTOS=<tag>,...` (os mapas que outro servidor serve; o link os acha pelo `GS_BUS`
+  por mapa). Ir a um deles: a origem tira o jogador da vista, grava a fotografia já com o mapa e
+  a posição novos, larga sessão e entidade **sem** `PlayerLogout` e manda ao link o
+  `SwitchServerStart` (GNET 4101 `{roleid, link_id, localsid, src_gsid, dst_gsid, key}` — aqui
+  os `gsid` são os mapas e a `key` a posição, 12 bytes); o link (`OutboundPacket::
+  TrocaDeServidor`, interno, nunca vai ao fio) desregistra do servidor antigo, registra no do
+  mapa novo e repassa o pedido; o destino o trata como entrada (o personagem vem do banco),
+  manda `NOTIFY_HOSTPOS` e responde `SwitchServerSuccess` (4103) — o `is_from_outside` do
+  original (`global_message.cpp:111-117`). Sem confirmar a gravação, o jogador volta ao mapa de
+  origem. Mapa que ninguém serve continua recusado. `falta`: o mascote e o grupo atravessarem.
 - Um segundo realm da mesma versão: receita em `docs/MULTIPLOS_REALMS.md`; cada realm
   precisa de uma linha em `realms` e dos moldes em `class_templates`.
 

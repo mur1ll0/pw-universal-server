@@ -254,6 +254,22 @@ impl LinkGateway {
             .collect()
     }
 
+    /// B350 — leva a sessão ao servidor de mundo do `mundo`: tira do registro do antigo, registra no novo e repassa o
+    /// `SwitchServerStart`, que o novo trata como a chegada (o personagem já foi gravado no mapa novo pela origem).
+    #[allow(clippy::too_many_arguments)]
+    async fn trocar_de_servidor(&self, tx: &tokio::sync::mpsc::Sender<OutboundPacket>, session: &mut ClientSession, roleid: i32, localsid: u32, de: i32, mundo: i32, chave: Vec<u8>) {
+        if let Some(antigo) = self.uplink_da_sessao(session) {
+            antigo.desregistrar(roleid).await;
+        }
+        session.world_id = Some(mundo);
+        let Some(novo) = self.uplink_da_sessao(session) else {
+            warn!("pw-link: {roleid} iria ao mapa {mundo}, sem servidor de mundo");
+            return;
+        };
+        novo.registrar(roleid, tx.clone()).await;
+        novo.enviar(BusMessage::SwitchServerStart { roleid, link_id: 0, localsid, src_gsid: de, dst_gsid: mundo, key: chave });
+    }
+
     /// O servidor de mundo que atende esta sessão: o do mundo do personagem, ou o padrão.
     fn uplink_da_sessao(&self, session: &ClientSession) -> Option<&Arc<BusUplink>> {
         session
@@ -430,6 +446,11 @@ impl LinkGateway {
                     }
                 }
                 Some(out_pkt) = rx.recv() => {
+                    // B350 — a troca de servidor de mundo (`SwitchServerStart`): a sessão passa ao servidor do mapa novo.
+                    if let OutboundPacket::TrocaDeServidor { roleid, localsid, de, mundo, chave } = out_pkt {
+                        self.trocar_de_servidor(&tx, &mut session, roleid, localsid, de, mundo, chave).await;
+                        continue;
+                    }
                     if let Err(e) = framed.send(out_pkt).await {
                         warn!("Erro ao enviar pacote para Sessão #{}: {:?}", session_id, e);
                         break;

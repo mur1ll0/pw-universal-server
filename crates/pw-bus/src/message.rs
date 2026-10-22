@@ -47,6 +47,10 @@ pub mod opcode {
     pub const SET_CUSTOM_DATA: u32 = 100;
     /// `PROTOCOL_SETCUSTOMDATA_RE` — a resposta, do `gamed` ao link e do link ao cliente.
     pub const SET_CUSTOM_DATA_RE: u32 = 101;
+    /// B350 — `PROTOCOL_SWITCHSERVERSTART` (4101) — `glinkd`, `gdeliveryd`, `gamed`: o jogador vai a outro `gamed`.
+    pub const SWITCH_SERVER_START: u32 = 4101;
+    /// B350 — `PROTOCOL_SWITCHSERVERSUCCESS` (4103): o `gamed` de destino recebeu o jogador.
+    pub const SWITCH_SERVER_SUCCESS: u32 = 4103;
 }
 
 /// Uma mensagem entre daemons.
@@ -109,6 +113,24 @@ pub enum BusMessage {
         roleid: i32,
         localsid: u32,
     },
+    /// B350 — `SwitchServerStart` (4101) `{roleid, link_id, localsid, src_gsid, dst_gsid, key}`: o `gamed` de origem
+    /// pede ao link que leve a sessão ao de destino. Aqui o `src_gsid`/`dst_gsid` são os mapas (o link escolhe o
+    /// servidor de mundo pelo mapa) e a `key` leva a posição de chegada (`x, y, z` em `f32`, 12 bytes).
+    SwitchServerStart {
+        roleid: i32,
+        link_id: i32,
+        localsid: u32,
+        src_gsid: i32,
+        dst_gsid: i32,
+        key: Vec<u8>,
+    },
+    /// B350 — `SwitchServerSuccess` (4103) `{roleid, link_id, localsid, dst_gsid}`.
+    SwitchServerSuccess {
+        roleid: i32,
+        link_id: i32,
+        localsid: u32,
+        dst_gsid: i32,
+    },
 }
 
 impl BusMessage {
@@ -121,6 +143,8 @@ impl BusMessage {
             BusMessage::ChatSingleCast { .. } => opcode::CHAT_SINGLE_CAST,
             BusMessage::SetCustomData { .. } => opcode::SET_CUSTOM_DATA,
             BusMessage::SetCustomDataRe { .. } => opcode::SET_CUSTOM_DATA_RE,
+            BusMessage::SwitchServerStart { .. } => opcode::SWITCH_SERVER_START,
+            BusMessage::SwitchServerSuccess { .. } => opcode::SWITCH_SERVER_SUCCESS,
         }
     }
 
@@ -133,6 +157,8 @@ impl BusMessage {
             | BusMessage::EnterWorld { roleid, .. }
             | BusMessage::PlayerLogout { roleid, .. }
             | BusMessage::SetCustomData { roleid, .. }
+            | BusMessage::SwitchServerStart { roleid, .. }
+            | BusMessage::SwitchServerSuccess { roleid, .. }
             | BusMessage::SetCustomDataRe { roleid, .. } => *roleid,
             BusMessage::ChatSingleCast { dstroleid, .. } => *dstroleid,
         }
@@ -201,6 +227,20 @@ impl BusMessage {
                 w.i32(*roleid);
                 w.u32(*localsid);
             }
+            BusMessage::SwitchServerStart { roleid, link_id, localsid, src_gsid, dst_gsid, key } => {
+                w.i32(*roleid);
+                w.i32(*link_id);
+                w.u32(*localsid);
+                w.i32(*src_gsid);
+                w.i32(*dst_gsid);
+                w.octets(key);
+            }
+            BusMessage::SwitchServerSuccess { roleid, link_id, localsid, dst_gsid } => {
+                w.i32(*roleid);
+                w.i32(*link_id);
+                w.u32(*localsid);
+                w.i32(*dst_gsid);
+            }
         }
     }
 
@@ -256,6 +296,20 @@ impl BusMessage {
                 roleid: r.i32()?,
                 localsid: r.u32()?,
             },
+            opcode::SWITCH_SERVER_START => BusMessage::SwitchServerStart {
+                roleid: r.i32()?,
+                link_id: r.i32()?,
+                localsid: r.u32()?,
+                src_gsid: r.i32()?,
+                dst_gsid: r.i32()?,
+                key: r.octets()?.to_vec(),
+            },
+            opcode::SWITCH_SERVER_SUCCESS => BusMessage::SwitchServerSuccess {
+                roleid: r.i32()?,
+                link_id: r.i32()?,
+                localsid: r.u32()?,
+                dst_gsid: r.i32()?,
+            },
             opcode::PLAYER_LOGOUT => BusMessage::PlayerLogout {
                 result: r.i32()?,
                 roleid: r.i32()?,
@@ -282,6 +336,12 @@ mod tests {
             .expect("opcode não reconhecido");
         assert_eq!(lido, m);
         assert_eq!(r.remaining(), 0, "sobraram bytes");
+    }
+
+    #[test]
+    fn a_troca_de_servidor_faz_ida_e_volta() {
+        ida_e_volta(BusMessage::SwitchServerStart { roleid: 7, link_id: 0, localsid: 9, src_gsid: 1, dst_gsid: 161, key: vec![1, 2, 3, 4] });
+        ida_e_volta(BusMessage::SwitchServerSuccess { roleid: 7, link_id: 0, localsid: 9, dst_gsid: 161 });
     }
 
     #[test]

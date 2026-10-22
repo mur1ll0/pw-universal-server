@@ -250,6 +250,22 @@ async fn entregar(msg: BusMessage, sessoes: &RwLock<HashMap<i32, EnvioAoCliente>
             }
         }
 
+        BusMessage::SwitchServerStart { roleid, localsid, src_gsid, dst_gsid, key, .. } => {
+            // B350 — o mundo de origem largou o jogador: a sessão troca de servidor de mundo (o laço dela intercepta).
+            let sessoes = sessoes.read().await;
+            let Some(envio) = sessoes.get(&roleid) else {
+                warn!("barramento: troca de servidor de {roleid}, que não está neste link");
+                return;
+            };
+            info!("barramento: {roleid} troca do mapa {src_gsid} para o {dst_gsid}");
+            let pedido = OutboundPacket::TrocaDeServidor { roleid, localsid, de: src_gsid, mundo: dst_gsid, chave: key };
+            if envio.try_send(pedido).is_err() {
+                warn!("barramento: não consegui pedir a troca de servidor de {roleid}");
+            }
+        }
+        BusMessage::SwitchServerSuccess { roleid, dst_gsid, .. } => {
+            info!("barramento: {roleid} chegou ao servidor do mapa {dst_gsid}");
+        }
         BusMessage::SetCustomDataRe { result, crc, roleid, localsid } => {
             // B199: o GS conferiu o bilhete de rosto e gravou (ou recusou); o link entrega ao
             // cliente o `SetCustomData_Re` (101), como o `gdeliveryd`.

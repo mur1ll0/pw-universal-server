@@ -50,7 +50,7 @@ impl MundoDeTeste {
                             self.sessoes.lock().await.remove(&roleid);
                         }
                         BusMessage::GameToClient { .. } | BusMessage::ChatSingleCast { .. } | BusMessage::SetCustomDataRe { .. } => panic!("sentido invertido"),
-                        BusMessage::SetCustomData { .. } => {}
+                        BusMessage::SetCustomData { .. } | BusMessage::SwitchServerStart { .. } | BusMessage::SwitchServerSuccess { .. } => {}
                     }
                 }
                 saida = fila.recv() => {
