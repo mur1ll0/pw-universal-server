@@ -904,6 +904,35 @@ impl GameDataManager {
         Some((fator, habilidades))
     }
 
+    /// B345 — o modelo do Daimon (`GOBLIN_ESSENCE`) que o `elf_item::UpdateEssenceData` lê
+    /// (`gs/item/item_elf.cpp:219-263`): os atributos iniciais `init_strength/agility/tili/energy`.
+    pub fn atributos_iniciais_do_daimon(&self, item_id: u32) -> Option<[i16; 4]> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("GOBLIN_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let c = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0) as i16;
+        Some([c("init_strength"), c("init_agility"), c("init_tili"), c("init_energy")])
+    }
+
+    /// B345 — uma peça de equipamento do Daimon (`GOBLIN_EQUIP_ESSENCE`), como o `UpdateEquipData` e o
+    /// `EquipElfItem` a leem (`item_elf.cpp:265-304`, `:970-990`).
+    pub fn equipamento_de_daimon(&self, item_id: u32) -> Option<EquipamentoDeDaimon> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g
+            .get("GOBLIN_EQUIP_ESSENCE")
+            .iter()
+            .find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let c = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+        Some(EquipamentoDeDaimon {
+            tipo: c("equip_type"),
+            nivel_exigido: c("req_goblin_level") as i16,
+            atributos: [c("strength") as i16, c("agility") as i16, c("tili") as i16, c("energy") as i16],
+            genios: [1, 2, 3, 4, 5].map(|k| c(&format!("magic_{k}")) as i16),
+        })
+    }
+
     /// Os números de um amuleto vestido: `(ponto, gatilho, recarga_ms, é_de_vida)`.
     ///
     /// `point` e `trigger_percent` são o que `OnActivate` entrega ao jogador
@@ -1353,4 +1382,14 @@ mod testes_do_vinculo {
         assert_eq!(d.proc_type_da_instancia(10, true), 0x0100 | 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x8000);
         assert_eq!(d.proc_type_da_instancia(11, false), 0);
     }
+}
+
+/// B345 — `GOBLIN_EQUIP_ESSENCE`: o lugar (`equip_type`, 0–3), o nível de Daimon exigido e o que a peça soma
+/// (força, agilidade, vitalidade — o `tili` —, energia, e os cinco gênios `magic[5]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EquipamentoDeDaimon {
+    pub tipo: i32,
+    pub nivel_exigido: i16,
+    pub atributos: [i16; 4],
+    pub genios: [i16; 5],
 }

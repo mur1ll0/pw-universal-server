@@ -2126,6 +2126,38 @@ impl Daimon {
     }
 }
 
+/// B345 — `elf_extend_prop` (`gs/item/item_elf.h`): força/agilidade/vitalidade/energia e os cinco gênios de agora,
+/// a máscara das peças vestidas e as vagas de habilidade (`cur_skill_slot`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtuaisDoDaimon {
+    pub atributos: [i16; 4],
+    pub genios: [i16; 5],
+    pub mascara: u32,
+    pub vagas: usize,
+}
+
+/// B345 — `SkillWrapper::ElfLearnSkill` (`cskill/skill/skillwrapper.cpp:1570-1605`): o `GetRequiredLevel` de uma
+/// habilidade de Daimon é uma máscara — `% 100` o nível do Daimon, e cada dígito acima, da direita para a esquerda,
+/// o mínimo dos gênios 4, 3, 2, 1, 0.
+pub fn requisito_de_daimon_cumprido(mascara: i32, nivel: i16, genios: [i16; 5]) -> bool {
+    if (nivel as i32) < mascara % 100 {
+        return false;
+    }
+    let mut m = mascara / 100;
+    let mut tipo = 4i32;
+    while m != 0 {
+        if (genios[tipo as usize] as i32) < m % 10 {
+            return false;
+        }
+        m /= 10;
+        tipo -= 1;
+        if tipo < 0 {
+            break;
+        }
+    }
+    true
+}
+
 /// O Daimon vestido: o item (para gravar o bloco de volta), o `exp_factor` do
 /// `GOBLIN_ESSENCE` e o estado.
 #[derive(Debug, Clone, PartialEq)]
@@ -2150,18 +2182,32 @@ impl DaimonVestido {
     /// Devolve `(ganhou_alguma, subiu_de_nivel)`.
     pub fn receber_exp(
         &mut self,
-        mut exp: u32,
+        exp: u32,
         nivel_da_exp: i16,
         nivel_do_jogador: i16,
         exp_do_nivel: impl Fn(i16) -> u32,
     ) -> (bool, bool) {
+        let (consumida, subiu) = self.inserir_exp(exp, nivel_da_exp, nivel_do_jogador, exp_do_nivel);
+        (consumida > 0, subiu)
+    }
+
+    /// O `InsertExp` com o retorno do original: quanto da experiência dada foi **consumido** (`old_exp - exp`),
+    /// que o `ElfPlayerInsertExp` desconta do jogador (B345). No teto do nível do dono o Daimon para a um ponto de
+    /// subir e consome `ceil((levelupexp - 1) / fator)` (antes do B345 isto não era descontado).
+    pub fn inserir_exp(
+        &mut self,
+        mut exp: u32,
+        nivel_da_exp: i16,
+        nivel_do_jogador: i16,
+        exp_do_nivel: impl Fn(i16) -> u32,
+    ) -> (u32, bool) {
         let d = &mut self.estado;
         if exp == 0 || nivel_do_jogador <= 0 || nivel_da_exp <= 0 || nivel_do_jogador < d.nivel {
-            return (false, false);
+            return (0, false);
         }
         let precisa = |nivel: i16| (exp_do_nivel(nivel) as f64 * self.fator_de_exp as f64) as u32;
         if nivel_do_jogador == d.nivel && precisa(d.nivel) <= d.exp + 1 {
-            return (false, false);
+            return (0, false);
         }
         let inicial = exp;
         let mut subiu = false;
@@ -2183,6 +2229,8 @@ impl DaimonVestido {
                 if d.nivel >= nivel_do_jogador {
                     // No teto do nível do jogador o Daimon para a um ponto de subir.
                     d.exp += ate_subir - 1;
+                    let gasto = (((ate_subir - 1) as f64) / fator).ceil() as u32;
+                    exp = if gasto > exp { 0 } else { exp - gasto };
                     break;
                 }
                 d.subir_de_nivel();
@@ -2196,9 +2244,9 @@ impl DaimonVestido {
                 break;
             }
         }
-        let ganhou = exp < inicial;
-        self.sujo |= ganhou;
-        (ganhou, subiu)
+        let consumida = inicial - exp;
+        self.sujo |= consumida > 0;
+        (consumida, subiu)
     }
 }
 
@@ -2210,6 +2258,157 @@ impl Daimon {
     /// `falta`: o bônus de atributo sorteado de 10 em 10 níveis (`rand_prop` do
     /// `GOBLIN_ESSENCE` com `abase::RandSelect`, `item_elf.cpp:779-796`) — a semântica do
     /// sorteio não está medida.
+    /// B345 — `ATTRIBUTE_UPPER_LIMIT`, `GENIUS_UPPER_LIMIT`, `MAX_ELF_SKILL_CNT` (`gs/item/item_elf.h`).
+    pub const LIMITE_DE_ATRIBUTO: i32 = 40;
+    pub const LIMITE_DE_GENIO: i16 = 8;
+    pub const MAXIMO_DE_HABILIDADES: usize = 8;
+
+    /// B345 — o `elf_extend_prop` (`UpdateEssenceData` + `UpdateEquipData` + `UpdateSkillData`,
+    /// `item_elf.cpp:219-328`): os atributos e gênios de agora (iniciais do modelo + distribuídos + peças), as
+    /// peças vestidas (máscara pelo `equip_type`) e as vagas de habilidade. Peça inválida (sem modelo, nível
+    /// abaixo do exigido, lugar repetido) interrompe a soma **antes** do teto de 8 nos gênios, como o `return false`
+    /// do original.
+    pub fn atuais(
+        &self,
+        iniciais: [i16; 4],
+        peca: impl Fn(u32) -> Option<pw_data_loader::manager::EquipamentoDeDaimon>,
+    ) -> AtuaisDoDaimon {
+        let mut a = AtuaisDoDaimon {
+            atributos: [
+                iniciais[0] + self.forca,
+                iniciais[1] + self.agilidade,
+                iniciais[2] + self.vitalidade,
+                iniciais[3] + self.energia,
+            ],
+            genios: self.genios,
+            mascara: 0,
+            vagas: 0,
+        };
+        let mut valido = true;
+        for id in &self.equipamento {
+            let Some(eq) = peca(*id) else {
+                valido = false;
+                break;
+            };
+            let bit = 1u32.checked_shl(eq.tipo.max(0) as u32).unwrap_or(0);
+            if self.nivel < eq.nivel_exigido || a.mascara & bit != 0 {
+                valido = false;
+                break;
+            }
+            a.mascara |= bit;
+            for k in 0..4 {
+                a.atributos[k] += eq.atributos[k];
+            }
+            for k in 0..5 {
+                a.genios[k] += eq.genios[k];
+            }
+        }
+        if valido {
+            for g in &mut a.genios {
+                *g = (*g).min(Self::LIMITE_DE_GENIO);
+            }
+        }
+        // `ss_table[] = {50, 70, 80, 90, 100}` sobre `total_attribute - level + 1` (os pontos sorteados).
+        let sorteados = self.total_de_atributos as i32 - self.nivel as i32 + 1;
+        let i = [50, 70, 80, 90, 100].iter().position(|l| sorteados <= *l).unwrap_or(5);
+        a.vagas = (4 + i).min(Self::MAXIMO_DE_HABILIDADES);
+        a
+    }
+
+    /// B345 — `AddAttributePoint` (`item_elf.cpp:451-475`): acima de 40 cada ponto custa dois.
+    pub fn somar_atributos(&mut self, mais: [i16; 4], so_conferir: bool) -> bool {
+        if mais.iter().any(|v| *v < 0) || mais.iter().all(|v| *v == 0) {
+            return false;
+        }
+        let atuais = [self.forca, self.agilidade, self.vitalidade, self.energia];
+        let custo: i32 = (0..4)
+            .map(|k| {
+                let t = mais[k] as i32 + atuais[k] as i32;
+                if t > Self::LIMITE_DE_ATRIBUTO {
+                    t + t - Self::LIMITE_DE_ATRIBUTO
+                } else {
+                    t
+                }
+            })
+            .sum();
+        if custo > self.total_de_atributos as i32 {
+            return false;
+        }
+        if !so_conferir {
+            self.forca += mais[0];
+            self.agilidade += mais[1];
+            self.vitalidade += mais[2];
+            self.energia += mais[3];
+        }
+        true
+    }
+
+    /// B345 — `AddGeniusPoint` (`item_elf.cpp:496-514`): cada gênio até 8 contando as peças (`genios_atuais`), e a
+    /// soma distribuída até o `total_genius`.
+    pub fn somar_genios(&mut self, mais: [i16; 5], genios_atuais: [i16; 5], so_conferir: bool) -> bool {
+        if mais.iter().any(|v| *v < 0) || mais.iter().all(|v| *v == 0) {
+            return false;
+        }
+        if (0..5).any(|k| mais[k] > Self::LIMITE_DE_GENIO - genios_atuais[k]) {
+            return false;
+        }
+        let soma: i32 = mais.iter().chain(self.genios.iter()).map(|v| *v as i32).sum();
+        if soma > self.total_de_genios as i32 {
+            return false;
+        }
+        if !so_conferir {
+            for k in 0..5 {
+                self.genios[k] += mais[k];
+            }
+        }
+        true
+    }
+
+    /// B345 — `EquipElfItem` (`item_elf.cpp:970-990`): lugar livre e nível de Daimon suficiente.
+    pub fn equipar(&mut self, id: u32, peca: &pw_data_loader::manager::EquipamentoDeDaimon, mascara: u32, so_conferir: bool) -> bool {
+        let bit = 1u32.checked_shl(peca.tipo.max(0) as u32).unwrap_or(0);
+        if mascara & bit != 0 || self.nivel < peca.nivel_exigido {
+            return false;
+        }
+        if !so_conferir {
+            self.equipamento.push(id);
+        }
+        true
+    }
+
+    /// B345 — `LearnSkill` (`item_elf.cpp:526-573`), sem o `ElfLearnSkill` do invólucro (requisitos, SP e item, que
+    /// ficam com quem chama): o nível novo (`atual + 1`), ou `None` quando não cabe (habilidade nova sem vaga).
+    pub fn proximo_nivel_de_habilidade(&self, id: u16, vagas: usize) -> Option<i16> {
+        match self.habilidades.iter().find(|(h, _)| *h == id) {
+            Some((_, n)) => Some(n + 1),
+            None if self.habilidades.len() >= vagas => None,
+            None => Some(1),
+        }
+    }
+
+    /// Grava o nível aprendido (`skillvect[index].level = new_level` ou `push_back`).
+    pub fn aprender(&mut self, id: u16, nivel: i16) {
+        match self.habilidades.iter_mut().find(|(h, _)| *h == id) {
+            Some(h) => h.1 = nivel,
+            None => self.habilidades.push((id, nivel)),
+        }
+    }
+
+    /// B345 — `ForgetSkill` (`item_elf.cpp:575-606`): tira `niveis` níveis; todos, apaga. Devolve o que sobrou.
+    pub fn esquecer(&mut self, id: u16, niveis: i16) -> Option<i16> {
+        let i = self.habilidades.iter().position(|(h, _)| *h == id)?;
+        let nivel = self.habilidades[i].1;
+        if niveis <= 0 || niveis > nivel {
+            return None;
+        }
+        if niveis == nivel {
+            self.habilidades.remove(i);
+        } else {
+            self.habilidades[i].1 -= niveis;
+        }
+        Some(nivel - niveis)
+    }
+
     pub fn subir_de_nivel(&mut self) {
         let proximo = self.nivel + 1;
         self.exp = 0;

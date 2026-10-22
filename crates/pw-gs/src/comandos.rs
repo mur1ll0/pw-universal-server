@@ -149,6 +149,14 @@ pub mod ids {
     /// `{int region_index; int target_tag}`, mandado ao pisar numa caixa de transporte do
     /// `region.sev` (`EC_World.cpp:2360-2373`). B208.
     pub const ENTER_INSTANCE: u16 = 86;
+    /// B345 — `elf_add_attribute { short str, agi, vit, eng }` (10 B com o cabeçalho).
+    pub const ELF_ADD_ATTRIBUTE: u16 = 111;
+    /// B345 — `elf_add_genius { short genius[5] }` (12 B).
+    pub const ELF_ADD_GENIUS: u16 = 112;
+    /// B345 — `elf_player_insert_exp { unsigned int exp; char use_sp }` (7 B).
+    pub const ELF_PLAYER_INSERT_EXP: u16 = 113;
+    /// B345 — `elf_equip_item { unsigned char index_inv }` (3 B).
+    pub const ELF_EQUIP_ITEM: u16 = 114;
     /// B344 — `SRV::C2S::CMD::duel_request { int target }` (`common/protocol.h`, 6 B com o cabeçalho).
     pub const DUEL_REQUEST: u16 = 92;
     /// B344 — `SRV::C2S::CMD::duel_reply { int who; int param }` (10 B com o cabeçalho).

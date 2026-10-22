@@ -16890,3 +16890,22 @@ comparação lado a lado.
     - Ver em jogo (dois clientes 1.5.5, a menos de 20 m): botão direito no outro → Duelo; o outro aceita; os dois
       veem a contagem de 3 s e o duelo começar. Bater até "matar": o perdedor fica com 1 de vida, aparece a mensagem
       de vitória a quem está perto e os dois param. Logo depois, por 5 s, um não fere o outro. Overlay: silêncio.
+
+345. **Sessão 2026-10-21: Daimon — equipamento e habilidades.**
+
+    - `bus_server/daimon.rs`: C2S 111–114 (atributos, gênios, injetar EXP com recarga de 1 s, vestir peça) e os
+      serviços 50/51 (aprender/esquecer habilidade de um Daimon da bolsa). Lógica no `Daimon` (`atuais`,
+      `somar_atributos`, `somar_genios`, `equipar`, `proximo_nivel_de_habilidade`, `aprender`, `esquecer`) e a máscara de
+      requisito `requisito_de_daimon_cumprido` (`SkillWrapper::ElfLearnSkill`).
+    - Dados: `equipamento_de_daimon` (`GOBLIN_EQUIP_ESSENCE`), `atributos_iniciais_do_daimon`, e nos serviços do NPC
+      `habilidades_de_daimon` (`id_goblin_skill_service`) e `esquecer_habilidade_de_daimon` (`0x80000`). S2C
+      `ELF_CMD_RESULT` (265).
+    - Correção: `DaimonVestido::inserir_exp` devolve o consumido (`old_exp - exp`) e passa a descontar no teto do nível
+      do dono.
+    - Provas: `daimon` **8/8** (limites de atributo/gênio, peças, vagas, máscara, aprender/esquecer, consumo no teto,
+      dados do `realm_155`: 350 peças, 2 NPCs ensinam, 2 fazem esquecer), conferidor S2C **5/5**, `comandos_contra_o_ir`
+      **18/18**.
+    - `falta`: conjurar habilidade do Daimon (o catálogo não tem o dano das 96 habilidades `cls` 258).
+    - Ver em jogo (1.5.5): com o Daimon vestido, distribuir pontos de atributo e de gênio na janela dele; arrastar uma
+      peça de Daimon para ele (some da bolsa, aparece nele); no NPC que ensina habilidade de Daimon, aprender com o
+      Daimon na bolsa (SP desconta). Overlay: silêncio.

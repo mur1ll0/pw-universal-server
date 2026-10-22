@@ -227,6 +227,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("duel_stop", "DUEL_STOP"),
     ("duel_result", "DUEL_RESULT"),
     ("player_duel_start", "PLAYER_DUEL_START"),
+    ("elf_cmd_result", "ELF_CMD_RESULT"),
 ];
 
 /// Funções que não escrevem cabeçalho porque **delegam** a outra que escreve.

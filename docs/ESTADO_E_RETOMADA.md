@@ -735,9 +735,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     invisibilidade, água/ar e bênção de mascote em outro alvo. Do estado estendido, os bits que
     ainda vão zerados são os que não temos dado para preencher — emote, efeitos visíveis,
     facção, barraca, cônjuge, título, VIP e os outros do `state2` (spec 04).
-10. **Daimon (B75/B76, parcial):** tem ficha e ganha experiência, e só. Faltam o equipamento e
-    as habilidades dele, o vigor, as pílulas de experiência, a decomposição, o refino,
-    distribuir pontos de atributo e de gênio, e o bônus sorteado de 10 em 10 níveis. **O ganho
+10. **Daimon (B75/B76, B345):** ficha, experiência, **distribuir atributos e gênios, injetar
+    experiência, vestir peça, aprender e esquecer habilidade no NPC** (B345). Faltam **conjurar**
+    habilidade do Daimon (o catálogo não tem o dano das 96, que dependem de `GetElfstr`), o vigor,
+    as pílulas, a decomposição, o refino, o estado de segurança e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
 12. **Cartas de General (B95, só a caixa):** abrir a caixa (`POKER_DICE_ESSENCE`) dá a carta
     com o bloco certo. Falta o sistema: equipar a carta, liderança, os atributos que ela dá,
@@ -1346,6 +1347,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 342 | 10-21 | Suíte completa: 1.168/0 no Rust; painel sem regressão (14 falhas de ambiente, as mesmas de antes) |
 | 343 | 10-21 | Política: invocar NPC e mina, histórico (dados únicos em memória) e entregar missão |
 | 344 | 10-21 | Duelo; golpe normal em jogador; ajuste de PvP (× 0,25) e morte por PvP |
+| 345 | 10-21 | Daimon: atributos, gênios, injetar EXP, vestir peça, aprender e esquecer habilidade |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

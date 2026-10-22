@@ -2546,6 +2546,19 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// B345 — `ELF_CMD_RESULT` (265) `{int cmd; int result; int param1; int param2}` = 2 + 16 (`cmd_elf_result`,
+    /// `EC_GPDataType.h`; `gplayer_dispatcher::elf_cmd_result`): `cmd` é o `enum // elf cmd` (`common/protocol.h:946-958`)
+    /// e `result` o id do Daimon.
+    pub fn elf_cmd_result(cmd: i32, resultado: i32, param1: i32, param2: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(265);
+        stream.write_i32_le(cmd);
+        stream.write_i32_le(resultado);
+        stream.write_i32_le(param1);
+        stream.write_i32_le(param2);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn npc_died(nid: i32, killer_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20

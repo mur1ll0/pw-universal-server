@@ -141,3 +141,97 @@ fn o_daimon_do_realm_traz_fator_e_habilidades() {
     assert_eq!(b.len(), 46 + iniciais.len() * 4);
     assert_eq!(Daimon::ler(&b).map(|d| d.habilidades.len()), Some(iniciais.len()));
 }
+
+/// B345 — `AddAttributePoint` (`item_elf.cpp:451-475`): acima de 40 cada ponto custa dois; `AddGeniusPoint`
+/// (`:496-514`): cada gênio até 8 contando as peças e a soma até o `total_genius`.
+#[test]
+fn atributos_e_genios_seguem_os_limites_do_original() {
+    let mut d = Daimon::novo(&[]);
+    d.total_de_atributos = 50;
+    d.total_de_genios = 6;
+    // 45 em força custa 45 + 45 - 40 = 50: cabe exato; 46 não.
+    assert!(!d.somar_atributos([46, 0, 0, 0], true));
+    assert!(d.somar_atributos([45, 0, 0, 0], false));
+    assert_eq!(d.forca, 45);
+    assert!(!d.somar_atributos([0, 0, 0, 0], true), "tudo zero é recusado");
+    // Gênio: 3 + 3 = 6 cabe; o sétimo não. Com 7 vindo das peças, só cabe 1 naquele gênio.
+    assert!(d.somar_genios([3, 3, 0, 0, 0], [0; 5], false));
+    assert!(!d.somar_genios([1, 0, 0, 0, 0], [3, 3, 0, 0, 0], true), "passa do total_genius");
+    let mut e = Daimon::novo(&[]);
+    e.total_de_genios = 10;
+    assert!(!e.somar_genios([0, 0, 2, 0, 0], [0, 0, 7, 0, 0], true), "7 das peças + 2 > 8");
+    assert!(e.somar_genios([0, 0, 1, 0, 0], [0, 0, 7, 0, 0], true));
+}
+
+/// B345 — `UpdateEquipData`/`EquipElfItem`: um lugar por `equip_type`, nível exigido, e a soma das peças; as vagas
+/// de habilidade pelo `ss_table` sobre os pontos sorteados.
+#[test]
+fn pecas_vagas_e_mascara_de_requisito() {
+    use pw_data_loader::manager::EquipamentoDeDaimon;
+    use pw_gs::entity::requisito_de_daimon_cumprido;
+    let peca = |tipo: i32, nivel: i16| EquipamentoDeDaimon { tipo, nivel_exigido: nivel, atributos: [1, 2, 3, 4], genios: [5, 0, 0, 0, 1] };
+    let mut d = Daimon::novo(&[]);
+    d.nivel = 10;
+    d.total_de_atributos = 10; // 10 - 10 + 1 = 1 sorteado → 4 vagas
+    assert!(d.equipar(9001, &peca(0, 10), 0, false));
+    assert!(!d.equipar(9002, &peca(0, 1), 0b1, true), "lugar 0 ocupado");
+    assert!(!d.equipar(9003, &peca(1, 11), 0b1, true), "nível 11 exigido");
+    d.genios = [4, 0, 0, 0, 0];
+    let pecas = |id: u32| (id == 9001).then(|| peca(0, 10));
+    let a = d.atuais([10, 10, 10, 10], pecas);
+    assert_eq!(a.atributos, [11, 12, 13, 14]);
+    assert_eq!(a.genios, [8, 0, 0, 0, 1], "4 + 5 = 9, teto 8");
+    assert_eq!((a.mascara, a.vagas), (0b1, 4));
+    d.total_de_atributos = 70; // 61 sorteados: o primeiro limiar >= 61 é o 70 (índice 1) → 4 + 1 = 5 vagas
+    assert_eq!(d.atuais([0; 4], pecas).vagas, 5);
+    // A máscara da habilidade 1008 nível 1: 1001111 → Daimon nível 11, gênios 4 ≥ 1, 3 ≥ 1, 0 ≥ 1.
+    assert!(requisito_de_daimon_cumprido(1001111, 11, [1, 0, 0, 1, 1]));
+    assert!(!requisito_de_daimon_cumprido(1001111, 10, [1, 0, 0, 1, 1]), "nível");
+    assert!(!requisito_de_daimon_cumprido(1001111, 11, [0, 0, 0, 1, 1]), "gênio 0");
+    // Aprender e esquecer.
+    assert_eq!(d.proximo_nivel_de_habilidade(1008, 5), Some(1));
+    d.aprender(1008, 1);
+    d.aprender(1008, 2);
+    assert_eq!(d.habilidades, vec![(1008, 2)]);
+    assert_eq!(d.esquecer(1008, 3), None);
+    assert_eq!(d.esquecer(1008, 1), Some(1));
+    assert_eq!(d.esquecer(1008, 1), Some(0));
+    assert!(d.habilidades.is_empty());
+}
+
+/// B345 — os dados do `realm_155`: as peças do Daimon (`GOBLIN_EQUIP_ESSENCE`), os atributos iniciais do modelo e os
+/// NPCs que ensinam habilidade de Daimon (`id_goblin_skill_service`).
+#[test]
+fn o_realm_tem_pecas_e_professores_de_daimon() {
+    let Some(d) = realm() else { return };
+    let g = d.elements_generic.as_ref().expect("elements");
+    let pecas: Vec<i32> = g.get("GOBLIN_EQUIP_ESSENCE").iter().filter_map(|r| r.get("ID").and_then(|v| v.as_i32())).collect();
+    assert!(!pecas.is_empty());
+    let p = d.equipamento_de_daimon(pecas[0] as u32).expect("peça");
+    assert!((0..4).contains(&p.tipo), "equip_type 0..3: {p:?}");
+    let modelo = g.get("GOBLIN_ESSENCE").iter().filter_map(|r| r.get("ID").and_then(|v| v.as_i32())).next().expect("um Daimon");
+    assert!(d.atributos_iniciais_do_daimon(modelo as u32).is_some());
+    let professores = d.servicos_de_npc.values().filter(|s| !s.habilidades_de_daimon.is_empty()).count();
+    let esquecem = d.servicos_de_npc.values().filter(|s| s.esquecer_habilidade_de_daimon).count();
+    eprintln!("realm_155: {} peças de Daimon, {professores} NPCs ensinam, {esquecem} fazem esquecer", pecas.len());
+    assert!(professores > 0);
+    for s in d.servicos_de_npc.values() {
+        for h in &s.habilidades_de_daimon {
+            assert_eq!(d.habilidades.get(*h).and_then(|x| x.cls), Some(258), "o NPC ensina ao Daimon a {h}, que não é de Daimon");
+        }
+    }
+}
+
+/// B345 — o `InsertExp` devolve o que consumiu (`old_exp - exp`), que o `ElfPlayerInsertExp` tira do jogador. No teto
+/// (Daimon no nível do dono) ele para a um ponto de subir e consome `ceil((levelupexp - 1) / fator)` — antes do B345 o
+/// nosso não descontava isso e dizia que nada tinha entrado.
+#[test]
+fn injetar_exp_conta_o_consumido_ate_no_teto() {
+    let precisa = |_nivel: i16| 100u32;
+    let mut d = DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado: Daimon::novo(&[]), sujo: false };
+    // Dono de nível 1: o fator é 1 e o Daimon para em 99 de 100.
+    let (consumida, subiu) = d.inserir_exp(500, 1, 1, precisa);
+    assert_eq!((consumida, subiu, d.estado.exp, d.estado.nivel), (99, false, 99, 1));
+    // De novo, já no teto: o original recusa (`GetLvlupExp <= exp + 1`).
+    assert_eq!(d.inserir_exp(500, 1, 1, precisa), (0, false));
+}

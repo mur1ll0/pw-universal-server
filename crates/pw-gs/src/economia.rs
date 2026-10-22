@@ -322,6 +322,14 @@ impl Bolsa {
     }
 
     /// `item_list::DecAmount` num slot só. Devolve quanto saiu.
+    /// B345 — troca o conteúdo (octetos) do item de um slot, marcando-o para gravar.
+    pub fn trocar_octetos(&mut self, slot: usize, octetos: Vec<u8>) -> bool {
+        let Some(Some(i)) = self.slots.get_mut(slot) else { return false };
+        i.octets = octetos;
+        self.alterados.insert(slot);
+        true
+    }
+
     pub fn tirar_do_slot(&mut self, slot: usize, n: u32) -> u32 {
         let Some(Some(i)) = self.slots.get_mut(slot) else { return 0 };
         let saiu = i.count.min(n);

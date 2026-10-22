@@ -61,6 +61,7 @@ use tracing::{debug, info, trace, warn};
 mod armazem;
 mod organizar_bolsa;
 mod criacao_pelo_painel;
+mod daimon;
 mod daimon_editado;
 mod gm;
 mod habilidades;
@@ -1818,6 +1819,9 @@ impl BusServer {
             ids::PET_CTRL => self.ordem_ao_mascote(roleid, &cmd.payload).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::DUEL_REQUEST | ids::DUEL_REPLY => self.comando_de_duelo(roleid, cmd.id, &cmd.payload, envio).await,
+            ids::ELF_ADD_ATTRIBUTE | ids::ELF_ADD_GENIUS | ids::ELF_PLAYER_INSERT_EXP | ids::ELF_EQUIP_ITEM => {
+                self.comando_do_daimon(roleid, cmd.id, &cmd.payload, envio).await
+            }
             ids::TEAM_AGREE_INVITE => self.aceitar_grupo(roleid, &cmd.payload).await,
             ids::TEAM_REJECT_INVITE => self.recusar_grupo(roleid).await,
             ids::TEAM_LEAVE_PARTY => self.deixar_grupo(roleid).await,
@@ -4827,6 +4831,8 @@ impl BusServer {
             servico::FURAR => self.furar(roleid, c, envio).await,
             servico::RESTAURAR_PET => self.restaurar_mascote_em_ovo(roleid, c, envio).await,
             servico::TROCAR_ROSTO => self.iniciar_troca_de_rosto(roleid, c, envio).await,
+            servico::APRENDER_HABILIDADE_DE_DAIMON => self.aprender_habilidade_de_daimon(roleid, c).await,
+            servico::ESQUECER_HABILIDADE_DE_DAIMON => self.esquecer_habilidade_de_daimon(roleid, c).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");

@@ -79,6 +79,10 @@ pub mod servico {
     pub const REFINAR: i32 = 35;
     /// `make_slot_executor` (47, `serviceprovider.cpp:8768`; `GP_NPCSEV_MAKE_SLOT`). Só no 1.5.5.
     pub const FURAR: i32 = 47;
+    /// B345 — `GP_NPCSEV_GOBLINSKILL_LEARN` (50) / `GP_NPCSEV_GOBLINSKILL_DEL` (51): aprender e esquecer
+    /// habilidade do Daimon (`SERVICE_INSERTER(elf_learn/forget_skill_*, 50/51)`, `serviceprovider.cpp:8771-8772`).
+    pub const APRENDER_HABILIDADE_DE_DAIMON: i32 = 50;
+    pub const ESQUECER_HABILIDADE_DE_DAIMON: i32 = 51;
 }
 
 /// O envelope do comando, com o corpo ainda por interpretar.
