@@ -276,6 +276,23 @@ impl Contexto<'_> {
         self.p.money - antes
     }
 
+    /// B357 — `FirstAcquireItem` (`player.cpp:15348-15364`): carta obtida liga o bit `show_order` da coleção
+    /// (`< GENERALCARD_MAX_COLLECTION` 512) e avisa `ADD_GENERALCARD_COLLECTION` (380) — sempre, mesmo já ligado.
+    pub fn marcar_na_colecao(&mut self, tid: u32) {
+        let Some(ordem) = self.dados.cartas_de_general.cartas.get(&tid).map(|c| c.ordem_na_colecao) else { return };
+        if !(0..512).contains(&ordem) {
+            return;
+        }
+        let (byte, bit) = (ordem as usize >> 3, ordem as u8 & 7);
+        if byte >= self.p.colecao_de_cartas.len() {
+            self.p.colecao_de_cartas.resize(byte + 1, 0);
+        }
+        self.p.colecao_de_cartas[byte] |= 1 << bit;
+        if let Some(p) = self.sub.add_generalcard_collection(ordem as u32) {
+            self.para_mim.push(p.data);
+        }
+    }
+
     pub fn gastar_dinheiro(&mut self, n: i64) -> bool {
         if n < 0 || self.p.money < n {
             return false;
@@ -348,6 +365,7 @@ impl Jogador for Contexto<'_> {
             return;
         };
         let _ = validade;
+        self.marcar_na_colecao(tid);
         self.para_mim.push(
             self.sub
                 .task_deliver_item(
@@ -612,6 +630,8 @@ struct Gravacao {
     lideranca: Option<i32>,
     /// B354 — o ex-cônjuge, quando houve divórcio.
     divorcio: Option<i32>,
+    /// B357 — a coleção de cartas, quando mudou.
+    colecao: Option<Vec<u8>>,
 }
 
 /// Edição de personagem pelo painel (E5, B179).
@@ -1323,6 +1343,7 @@ impl BusServer {
             let jaula_antes = p.vagas_na_jaula;
             let lideranca_antes = p.lideranca;
             let conjuge_antes = p.conjuge;
+            let colecao_antes = p.colecao_de_cartas.clone();
             let estado_antes=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula));
             let listas_antes=p.missoes.blocos();
@@ -1382,12 +1403,14 @@ impl BusServer {
                 jaula: (p.vagas_na_jaula != jaula_antes).then_some(p.vagas_na_jaula),
                 lideranca: (p.lideranca != lideranca_antes).then_some(p.lideranca),
                 divorcio: (conjuge_antes != 0 && p.conjuge == 0).then_some(conjuge_antes),
+                colecao: (p.colecao_de_cartas != colecao_antes).then(|| p.colecao_de_cartas.clone()),
             };
             let deve_gravar=estado_antes!=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula))
                 || listas_antes!=gravacao.listas
                 || gravacao.lideranca.is_some()
-                || gravacao.divorcio.is_some();
+                || gravacao.divorcio.is_some()
+                || gravacao.colecao.is_some();
             let ficha = (mudou || subiu_de_nivel).then(|| {
                 (
                     self.ficha_propria(p),
@@ -1511,6 +1534,11 @@ impl BusServer {
             if let Some(v) = g.lideranca {
                 if let Err(e) = repo.gravar_lideranca(g.roleid, v).await {
                     warn!("mundo: não consegui gravar a liderança de {}: {e}", g.roleid);
+                }
+            }
+            if let Some(bits) = &g.colecao {
+                if let Err(e) = repo.gravar_colecao_de_cartas(g.roleid, bits).await {
+                    warn!("mundo: não consegui gravar a coleção de cartas de {}: {e}", g.roleid);
                 }
             }
             if let Some(ex) = g.divorcio {
@@ -2638,6 +2666,7 @@ impl BusServer {
             // o gasto fica gravado; sem octetos vale o total do `elements.data`.
             // Daimon no slot 23 (`EQUIP_INDEX_ELF`, `gs/item.h:219`): o estado dele vive no
             // bloco do item, e é dele que sai a experiência (B75).
+            let daimon_antes = p.daimon.as_ref().map(|d| d.item_id);
             p.daimon = itens
                 .iter()
                 .find(|i| i.slot == SLOT_DO_DAIMON)
@@ -2653,6 +2682,11 @@ impl BusServer {
                         sujo: item.octets.is_empty(),
                     })
                 });
+            // B355 — `elf_item::OnTakeOut` → `ClearCurElfVigor` (`item_elf.cpp:402-410`): tirar (ou trocar) o Daimon
+            // zera o vigor.
+            if p.daimon.as_ref().map(|d| d.item_id) != daimon_antes {
+                p.vigor_do_daimon = 0.0;
+            }
             p.auto_hp = None;
             p.auto_mp = None;
             for item in &itens {
@@ -3253,6 +3287,7 @@ impl BusServer {
                         .data,
                 );
                 ctx.bolsa.tirar_do_slot(slot_da_caixa, 1);
+                ctx.marcar_na_colecao(id);
                 Ok((id, lideranca))
             })
             .await;
@@ -4518,4 +4553,41 @@ impl BusServer {
     pub(super) fn erro_de_recarga() -> Vec<u8> {
         S2CGamedataSend::error_message(erro_s2c::HABILIDADE_EM_RECARGA).data
     }
+}
+
+/// B357 — renascer carta (serviço 89, `generalcard_rebirth_service_executor`, `serviceprovider.cpp:7980-8015`)
+/// `{u8 major_inv_idx; u8 minor_inv_idx}` → `PlayerGeneralCardRebirth` (`player.cpp:24656-24682`): as duas cartas da
+/// bolsa do mesmo tipo; a principal no nível máximo, com menos de 2 renascimentos e tantos quanto a outra
+/// (`CheckRebirthCondition`, `item_generalcard.cpp:226-231`); a outra sai (`DROP_TYPE_TAKEOUT`) e a principal volta ao
+/// nível 1, experiência 0, um renascimento a mais (`DoRebirth`), com a ficha nova.
+pub(crate) fn renascer_carta(ctx: &mut Contexto, principal: usize, outra: usize) -> Result<(), i32> {
+    /// `ERR_ITEM_NOT_IN_INVENTORY`, `ERR_GENERALCARD_REBIRTH_CONDITION` (contados do `ERR_SUCCESS`).
+    const FORA_DA_BOLSA: i32 = 5;
+    const SEM_CONDICAO: i32 = 181;
+    use pw_data_loader::cartas_de_general::EssenciaDaCarta;
+    if principal == outra {
+        return Err(FORA_DA_BOLSA);
+    }
+    let (Some(a), Some(b)) = (ctx.bolsa.item_no_slot(principal).cloned(), ctx.bolsa.item_no_slot(outra).cloned()) else {
+        return Err(FORA_DA_BOLSA);
+    };
+    if a.item_id != b.item_id || !ctx.dados.cartas_de_general.cartas.contains_key(&a.item_id) {
+        return Err(FORA_DA_BOLSA);
+    }
+    let (Some(mut ea), Some(eb)) = (EssenciaDaCarta::ler(&a.octets), EssenciaDaCarta::ler(&b.octets)) else {
+        return Err(FORA_DA_BOLSA);
+    };
+    if ea.nivel < ea.nivel_maximo || ea.renascimentos >= 2 || ea.renascimentos != eb.renascimentos {
+        return Err(SEM_CONDICAO);
+    }
+    ctx.para_mim.push(ctx.sub.player_drop_item(0, outra as u8, 1, b.item_id as i32, 2).data);
+    ctx.bolsa.tirar_do_slot(outra, 1);
+    ea.nivel = 1;
+    ea.exp = 0;
+    ea.renascimentos += 1;
+    let octetos = ea.octetos();
+    ctx.bolsa.trocar_octetos(principal, octetos.clone());
+    ctx.mudou = true;
+    ctx.para_mim.push(S2CGamedataSend::item_info(0, principal as u8, a.item_id as i32, 0, 0, 1, &octetos, None).data);
+    Ok(())
 }

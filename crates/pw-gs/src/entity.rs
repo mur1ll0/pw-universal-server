@@ -302,6 +302,9 @@ pub struct PlayerEntity {
     /// (`UpdateElfVigor`: `100 + vitalidade final`, `1 + energia final × 0,02` por segundo, `player.cpp:21671-21678`,
     /// `item_elf.h:19-20`), vai a 0 na morte (`player.cpp:14111-14115`) e é o que a habilidade do Daimon gasta.
     pub vigor_do_daimon: f32,
+    /// B357 — a coleção das Cartas de General (`_generalcard_collection`, `abase::bitmap<512>`): o bit `show_order`
+    /// de cada carta já obtida, em bytes que crescem até o último bit ligado (`staticmap.h:381-397`).
+    pub colecao_de_cartas: Vec<u8>,
     /// Quando cada recarga de amuleto vence, em segundos de batimento
     /// (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP` 25, `gs/cooldowncfg.h:62-90`).
     pub recarga_do_auto_hp_s: i32,
@@ -1713,6 +1716,7 @@ impl PlayerEntity {
             auto_mp: None,
             daimon: None,
             vigor_do_daimon: 0.0,
+            colecao_de_cartas: Vec::new(),
             recarga_do_auto_hp_s: 0,
             recarga_do_auto_mp_s: 0,
             npc_em_conversa: None,

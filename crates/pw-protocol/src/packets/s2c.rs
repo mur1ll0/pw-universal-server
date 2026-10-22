@@ -2538,6 +2538,24 @@ impl S2CGamedataSend {
         stream.write_u8(u8::from(perdeu));
         Self { data: stream.into_bytes().to_vec() }
     }
+    /// B357 — `GENERALCARD_COLLECTION_DATA` (379) `{unsigned int count; char state[count]}` (`cmd_generalcard_collection_data`,
+    /// `EC_GPDataType.h:4834-4848`): o `abase::bitmap` da coleção no `SendAllData` (`player.cpp:13768-13770`).
+    pub fn generalcard_collection_data(bits: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(379);
+        stream.write_u32_le(bits.len() as u32);
+        for b in bits {
+            stream.write_u8(*b);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B357 — `ADD_GENERALCARD_COLLECTION` (380) `{unsigned int show_order}`.
+    pub fn add_generalcard_collection(indice: u32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(380);
+        stream.write_u32_le(indice);
+        Self { data: stream.into_bytes().to_vec() }
+    }
     /// B355 — `ELF_VIGOR` (262) `{int vigor; int max_vigor; int vigor_gen}` (`cmd_elf_vigor`; `query_elf_vigor`,
     /// `player.cpp:3576-3582`: o ganho vai × 100 arredondado).
     pub fn elf_vigor(vigor: i32, maximo: i32, ganho_x100: i32) -> Self {

@@ -58,6 +58,20 @@ pub struct CartaDeGeneral {
     pub por_nivel: AtributosDaCarta,
     /// `swallow_exp` — a experiência que a carta dá ao ser devorada.
     pub exp_ao_devorar: i32,
+    /// B357 — `addon[4]`: os efeitos extras da carta (`set_addon_manager::LoadTemplate`, `item/set_addon.cpp:95-130`),
+    /// ativos com ela no lugar do tipo dela (`OnActivate`, `item_generalcard.cpp:113-119`).
+    pub efeitos: Vec<u32>,
+    /// B357 — `show_order`: o índice na coleção (`FirstAcquireItem`, `player.cpp:15348-15364`).
+    pub ordem_na_colecao: i32,
+}
+
+/// B357 — um conjunto de cartas (`POKER_SUITE_ESSENCE` → `generalcard_set`, `item/generalcard_set_man.cpp:5-30`):
+/// quantas cartas tem e o reforço (`promote_ratio`) de cada carta quando o conjunto está completo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConjuntoDeCartas {
+    pub id: u32,
+    pub total: usize,
+    pub reforco: f32,
 }
 
 /// Os atributos de uma carta (`generalcard_extend`, `gs/item/item_generalcard.h:29-39`).
@@ -163,7 +177,16 @@ impl CartaDeGeneral {
     /// `poker_adjust[coluna]` da classe: no lugar do tipo da carta, os atributos dela; fora, o extra da coluna × a
     /// razão da qualidade. Cada valor `(int)(x × ajuste + 0,5)`.
     pub fn reforco(&self, ess: &EssenciaDaCarta, coluna: usize, ajuste_da_classe: f32) -> ReforcoDaCarta {
+        self.reforco_com_conjunto(ess, coluna, ajuste_da_classe, None)
+    }
+
+    /// B357 — [`Self::reforco`] com o conjunto completo (`IsSecActive`): o ajuste vai × `1 + promote_ratio`
+    /// (`adjust *= 1.f + GetSecActiveParam<float>()`, `item_generalcard.cpp:95`), antes do renascimento.
+    pub fn reforco_com_conjunto(&self, ess: &EssenciaDaCarta, coluna: usize, ajuste_da_classe: f32, conjunto: Option<f32>) -> ReforcoDaCarta {
         let mut ajuste = ajuste_da_classe;
+        if let Some(r) = conjunto {
+            ajuste *= 1.0 + r;
+        }
         if ess.renascimentos > 0 {
             ajuste *= 1.0 + REFORCO_DO_RENASCIMENTO[(ess.renascimentos as usize).min(2)];
         }
@@ -227,6 +250,8 @@ pub struct CartasDeGeneral {
     pub ajuste_da_qualidade: Vec<f32>,
     /// `poker_adjust[6]` por classe (`character_class_id` → os seis lugares).
     pub ajuste_da_classe: HashMap<i32, [f32; 6]>,
+    /// B357 — o conjunto de cada carta (`generalcard_set_manager`).
+    pub conjuntos: HashMap<u32, ConjuntoDeCartas>,
 }
 
 impl CartasDeGeneral {
@@ -355,11 +380,21 @@ pub fn carregar(elements: &GenericElementsData) -> CartasDeGeneral {
                         vigor: i(r, "inc_vigour"),
                     },
                     exp_ao_devorar: i(r, "swallow_exp"),
+                    efeitos: (1..=4).map(|k| i(r, &format!("addon_{k}"))).filter(|a| *a > 0).map(|a| a as u32).collect(),
+                    ordem_na_colecao: i(r, "show_order"),
                 },
             ))
         })
         .collect();
-    CartasDeGeneral { caixas, cartas, exp_da_caixa, curva, ajuste_da_qualidade, ajuste_da_classe }
+    let mut conjuntos = HashMap::new();
+    for r in elements.get("POKER_SUITE_ESSENCE") {
+        let lista: Vec<u32> = (1..=6).map(|k| i(r, &format!("list_{k}"))).filter(|c| *c > 0).map(|c| c as u32).collect();
+        let c = ConjuntoDeCartas { id: i(r, "ID") as u32, total: lista.len(), reforco: f(r, "promote_ratio") };
+        for carta in lista {
+            conjuntos.entry(carta).or_insert(c);
+        }
+    }
+    CartasDeGeneral { caixas, cartas, exp_da_caixa, curva, ajuste_da_qualidade, ajuste_da_classe, conjuntos }
 }
 
 #[cfg(test)]

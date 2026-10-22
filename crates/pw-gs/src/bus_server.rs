@@ -62,6 +62,7 @@ mod armazem;
 mod organizar_bolsa;
 mod criacao_pelo_painel;
 mod casamento;
+mod renascer_carta;
 mod daimon;
 mod daimon_editado;
 mod gm;
@@ -1693,6 +1694,7 @@ impl BusServer {
         jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
         jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
         jogador.lideranca = repo.lideranca(roleid).await.unwrap_or(0);
+        jogador.colecao_de_cartas = repo.colecao_de_cartas(roleid).await.unwrap_or_default();
         jogador.conjuge = repo.conjuge(roleid).await.unwrap_or(0);
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
@@ -5024,6 +5026,10 @@ impl BusServer {
             servico::APRENDER_HABILIDADE_DE_DAIMON => self.aprender_habilidade_de_daimon(roleid, c).await,
             servico::ESQUECER_HABILIDADE_DE_DAIMON => self.esquecer_habilidade_de_daimon(roleid, c).await,
             servico::RESERVAR_CASAMENTO => self.servico_de_reserva(roleid, c).await,
+            servico::REFINAR_DAIMON => self.refinar_daimon(roleid, c).await,
+            servico::TRANSFERIR_REFINO_DE_DAIMON => self.transferir_refino_do_daimon(roleid, c).await,
+            servico::DECOMPOR_DAIMON => self.decompor_daimon(roleid, c).await,
+            servico::RENASCER_CARTA => self.renascer_carta(roleid, c).await,
             servico::CONVITE_DE_CASAMENTO => self.servico_de_convite(roleid, c).await,
 
             outro => {
@@ -5552,6 +5558,11 @@ impl BusServer {
         // B346 — `player_leadership(_leadership, 0)` no `SendAllData` (`player.cpp:13766`); só 1.5.5.
         let lideranca = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.lideranca).unwrap_or(0);
         if let Some(p) = self.sub.player_leadership(lideranca, 0) {
+            self.responder(roleid, p.data, envio).await;
+        }
+        // B357 — `generalcard_collection_data` no `SendAllData` (`player.cpp:13768-13770`).
+        let colecao = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.colecao_de_cartas.clone()).unwrap_or_default();
+        if let Some(p) = self.sub.generalcard_collection_data(&colecao) {
             self.responder(roleid, p.data, envio).await;
         }
 

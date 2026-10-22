@@ -17033,3 +17033,27 @@ comparação lado a lado.
     - Ver em jogo (1.5.5): com um Daimon vestido que saiba uma habilidade de ataque, esperar a barra de vigor encher e
       usar a habilidade num monstro — o Daimon solta o efeito, o monstro perde vida, a barra de vigor cai e a
       resistência do Daimon desce na ficha.
+
+356. **Sessão 2026-10-22: Daimon — refino, transferência e decomposição.**
+
+    - `bus_server/daimon.rs`: `refinar` (as tabelas do `item_elf.cpp`), `exp_da_decomposicao`, serviços 52/53/54 com o NPC
+      certo (`ServicosDoNpc::refino_de_daimon`/`decompor_daimon`); a conjuração só com habilidade ativa (`CheckActiveSkill`);
+      tirar ou trocar o Daimon zera o vigor.
+    - Provas: `testes_do_refino` **2/2** (resultados pelas tabelas e a conta da decomposição), `conjurar_habilidade_do_daimon_no_
+      monstro` **1/1**.
+    - Ver em jogo (1.5.5): no NPC de refino de Daimon, refinar um Daimon da bolsa com o bilhete 23547 — do 0 ao 1 sempre sobe
+      (a ficha mostra +1); no NPC de decomposição, decompor um Daimon — some e aparece a pílula 23544.
+
+357. **Sessão 2026-10-22: Cartas de General — conjunto, efeitos, renascer, coleção.**
+
+    - `pw_data_loader::cartas_de_general`: `ConjuntoDeCartas` (`POKER_SUITE_ESSENCE`), `efeitos` e `ordem_na_colecao` da carta,
+      `reforco_com_conjunto`. `pw_gs::cartas_de_general::marcar_conjuntos` e os efeitos extras no `somar_cartas`.
+    - Renascer carta (serviço 89, `bus_server/renascer_carta.rs` + `jogo::renascer_carta`). Coleção:
+      `PlayerEntity::colecao_de_cartas`, `characters.generalcard_collection` (script `2026_10_22_colecao_de_cartas.sql`, aplicado
+      no `public` e no `test`), `Contexto::marcar_na_colecao` (caixa e prêmio de missão), S2C 379/380 (só 1.5.5).
+    - Provas: `testes_do_conjunto` **1/1**, `renascer_carta_e_colecao_gravada` **1/1** (181 com renascimentos diferentes; a
+      principal no nível 1 renascida; a coleção gravada volta no 379), `abrir_a_caixa_de_cartas…` **1/1** (agora com o 380),
+      `subcomandos_s2c_contra_o_ir` **5/5**.
+    - Ver em jogo (1.5.5): abrir uma caixa de cartas — a janela de coleção marca a carta; vestir as cartas de um conjunto
+      completo nos lugares certos — os atributos sobem além da soma das cartas; renascer duas cartas iguais no nível máximo
+      no NPC — sobra uma, nível 1, renascida.

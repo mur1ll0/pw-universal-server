@@ -7,9 +7,13 @@
 //!   vigor, pelo [`pw_data_loader::cartas_de_general::CartaDeGeneral::reforco`].
 //! - **Devorar** (C2S 170 `SWALLOW_GENERALCARD`): `gplayer_imp::PlayerSwallowGeneralCard` (`gs/player.cpp:24684-24745`).
 //!
-//! **Não é igual:** o nível é o atual, não o histórico (`GetHistoricalMaxLevel`); conjuntos de cartas, efeitos extras
-//! (`set_addon_manager`) e o `IsSecActive` não estão portados; devorar só da bolsa (o armazém de cartas,
-//! `IL_TRASH_BOX4`, não existe aqui).
+//! - **Conjunto** (B357, `gplayer_imp::RefreshEquipment`, `gs/player.cpp:8409-8459`): as cartas ativas **no lugar do
+//!   tipo delas** contam para o conjunto (`POKER_SUITE_ESSENCE`); completo, as primeiras `total` (na ordem dos
+//!   slots) ficam com o `IsSecActive` e somam × `1 + promote_ratio`. **Efeitos extras** (`addon[4]` da carta, B357):
+//!   ativos com a carta no lugar do tipo dela.
+//!
+//! **Não é igual:** o nível é o atual, não o histórico (`GetHistoricalMaxLevel`); devorar só da bolsa (o armazém de
+//! cartas, `IL_TRASH_BOX4`, não existe aqui).
 
 use crate::entity::Equipamento;
 use pw_data_loader::cartas_de_general::EssenciaDaCarta;
@@ -25,6 +29,8 @@ pub struct CartaAtiva {
     pub slot: u16,
     pub item_id: u32,
     pub essencia: EssenciaDaCarta,
+    /// B357 — o `promote_ratio` do conjunto, quando ele está completo e esta carta conta (`IsSecActive`).
+    pub conjunto: Option<f32>,
 }
 
 /// As cartas vestidas que ativam, na ordem dos slots, e a liderança que ocupam.
@@ -43,9 +49,43 @@ pub fn cartas_ativas(itens: &[pw_core::ItemRecord], dados: &GameDataManager, niv
             continue;
         }
         ocupada += essencia.lideranca_exigida;
-        ativas.push(CartaAtiva { slot: i.slot, item_id: i.item_id, essencia });
+        ativas.push(CartaAtiva { slot: i.slot, item_id: i.item_id, essencia, conjunto: None });
     }
+    marcar_conjuntos(&mut ativas, dados);
     (ativas, ocupada)
+}
+
+/// B357 — `RefreshEquipment` (`gs/player.cpp:8409-8459`): conta, por conjunto, as cartas ativas no lugar do tipo delas
+/// (`IsGeneralCardMatchPos`); com a conta no total o conjunto ativa, e as primeiras `total` cartas dele (na ordem dos
+/// slots) ficam com o reforço.
+pub fn marcar_conjuntos(ativas: &mut [CartaAtiva], dados: &GameDataManager) {
+    let c = &dados.cartas_de_general;
+    let mut conta: std::collections::HashMap<u32, (usize, bool)> = Default::default();
+    let no_lugar = |a: &CartaAtiva| (a.slot - PRIMEIRO_SLOT) as i32 == a.essencia.tipo;
+    for a in ativas.iter() {
+        let Some(s) = c.conjuntos.get(&a.item_id) else { continue };
+        if !no_lugar(a) {
+            continue;
+        }
+        let x = conta.entry(s.id).or_insert((0, false));
+        x.0 += 1;
+        if x.0 >= s.total {
+            x.1 = true;
+            x.0 = s.total;
+        }
+    }
+    for a in ativas.iter_mut() {
+        a.conjunto = None;
+        let Some(s) = c.conjuntos.get(&a.item_id) else { continue };
+        if !no_lugar(a) {
+            continue;
+        }
+        let x = conta.entry(s.id).or_insert((0, false));
+        if x.1 && x.0 > 0 {
+            a.conjunto = Some(s.reforco);
+            x.0 -= 1;
+        }
+    }
 }
 
 /// Soma as cartas ativas ao equipamento (`_en_point.max_hp/damage/magic_dmg/defense/resistance`, `_vigour_en`).
@@ -54,7 +94,17 @@ pub fn somar_cartas(e: &mut Equipamento, ativas: &[CartaAtiva], dados: &GameData
     for a in ativas {
         let Some(carta) = c.cartas.get(&a.item_id) else { continue };
         let coluna = (a.slot - PRIMEIRO_SLOT) as usize;
-        let r = carta.reforco(&a.essencia, coluna, c.ajuste(classe, coluna));
+        let r = carta.reforco_com_conjunto(&a.essencia, coluna, c.ajuste(classe, coluna), a.conjunto);
+        // B357 — `_extra_addon`: os efeitos extras, só no lugar do tipo da carta (`item_generalcard.cpp:113-119`).
+        if coluna as i32 == a.essencia.tipo {
+            for id in &carta.efeitos {
+                if let Some((d, args)) = dados.addons.por_id.get(id).and_then(|d| d.valor_do_id().map(|args| (d, args))) {
+                    if !e.addons.somar(&d.tratador, &args) {
+                        e.addons_sem_porte.push(*id);
+                    }
+                }
+            }
+        }
         e.vida += r.vida;
         // O `Equipamento` guarda um dano só para o baixo e o alto (o dos acessórios); na carta os dois são iguais.
         e.dano += r.dano_baixo;
@@ -142,4 +192,33 @@ pub fn exp_a_devorar(dados: &GameDataManager, vestida: &EssenciaDaCarta, tid: u3
         return Err(ERRO_EXP_DA_CARTA);
     }
     Ok(exp)
+}
+
+#[cfg(test)]
+mod testes_do_conjunto {
+    use super::*;
+    use pw_data_loader::cartas_de_general::ConjuntoDeCartas;
+
+    fn ativa(slot: u16, item_id: u32, tipo: i32) -> CartaAtiva {
+        let essencia = EssenciaDaCarta { tipo, ..Default::default() };
+        CartaAtiva { slot, item_id, essencia, conjunto: None }
+    }
+
+    /// B357 — `RefreshEquipment`: só as cartas no lugar do tipo contam; com as duas do conjunto de 2, as duas ganham
+    /// o reforço; a terceira igual não (o contador já desceu); a fora do lugar não conta.
+    #[test]
+    fn o_conjunto_completo_reforca_as_primeiras_no_lugar() {
+        let mut dados = GameDataManager::new();
+        let s = ConjuntoDeCartas { id: 7, total: 2, reforco: 0.25 };
+        for c in [10, 11] {
+            dados.cartas_de_general.conjuntos.insert(c, s);
+        }
+        let mut cartas = vec![ativa(32, 10, 0), ativa(33, 11, 1), ativa(34, 10, 2)];
+        marcar_conjuntos(&mut cartas, &dados);
+        assert_eq!(cartas.iter().map(|c| c.conjunto).collect::<Vec<_>>(), vec![Some(0.25), Some(0.25), None]);
+        // A segunda fora do lugar (tipo 3 no slot 33): o conjunto não fecha.
+        let mut cartas = vec![ativa(32, 10, 0), ativa(33, 11, 3)];
+        marcar_conjuntos(&mut cartas, &dados);
+        assert!(cartas.iter().all(|c| c.conjunto.is_none()));
+    }
 }

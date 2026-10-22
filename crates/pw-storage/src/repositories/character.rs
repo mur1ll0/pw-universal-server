@@ -816,6 +816,25 @@ impl CharacterRepository {
         Ok(())
     }
 
+    /// B357 — a coleção das Cartas de General (`characters.generalcard_collection`, o `abase::bitmap<512>`).
+    pub async fn colecao_de_cartas(&self, role_id: RoleId) -> Result<Vec<u8>> {
+        let v: Option<Vec<u8>> = sqlx::query_scalar("SELECT generalcard_collection FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(v.unwrap_or_default())
+    }
+
+    /// B357 — grava a coleção das Cartas de General.
+    pub async fn gravar_colecao_de_cartas(&self, role_id: RoleId, bits: &[u8]) -> Result<()> {
+        sqlx::query("UPDATE characters SET generalcard_collection = $2 WHERE id = $1")
+            .bind(role_id)
+            .bind(bits)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     /// B346 — a liderança (`characters.leadership`; `pInfo->leadership`, `gs/userlogin.cpp:94`).
     pub async fn lideranca(&self, role_id: RoleId) -> Result<i32> {
         let v: Option<i32> = sqlx::query_scalar("SELECT leadership FROM characters WHERE id = $1")

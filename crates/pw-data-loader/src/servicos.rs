@@ -50,6 +50,12 @@ pub struct ServicosDoNpc {
     /// B354 — `combined_services & 0x4000000` → `service_wedding_book` e `service_wedding_invite`
     /// (`npcgenerator.cpp:1030-1034`), serviços 62 e 63.
     pub casamento: bool,
+    /// B356 — `combined_services & 0x100000` → `service_elf_refine` e `_refine_transmit` (serviços 52/53) e
+    /// `& 0x200000` → `service_elf_decompose` (54) (`npcgenerator.cpp:1006-1013`).
+    pub refino_de_daimon: bool,
+    pub decompor_daimon: bool,
+    /// B357 — `combined_services2 & 0x2000` → `service_generalcard_rebirth` (serviço 89, `npcgenerator.cpp:1198-1201`).
+    pub renascer_carta: bool,
     /// `NPC_RESETPROP_SERVICE.prop_entry[15]` — restauração de atributos, serviço 33
     /// ([`EntradaDeRestauracao`]).
     pub restauracao_de_atributos: Vec<EntradaDeRestauracao>,
@@ -153,6 +159,9 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 habilidades_de_daimon: lista(ensinos.get(&i(npc, "id_goblin_skill_service")), "id_skills_"),
                 esquecer_habilidade_de_daimon: i(npc, "combined_services") & 0x80000 != 0,
                 casamento: i(npc, "combined_services") & 0x4000000 != 0,
+                refino_de_daimon: i(npc, "combined_services") & 0x100000 != 0,
+                decompor_daimon: i(npc, "combined_services") & 0x200000 != 0,
+                renascer_carta: i(npc, "combined_services2") & 0x2000 != 0,
                 restauracao_de_atributos: restauracao(restauracoes.get(&i(npc, "id_resetprop_service"))),
                 incrustar: i(npc, "id_install_service") != 0,
                 remover_pedras: i(npc, "id_uninstall_service") != 0,

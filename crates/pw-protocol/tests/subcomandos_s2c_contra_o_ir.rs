@@ -229,6 +229,8 @@ const INTENCAO: &[(&str, &str)] = &[
     ("exit_instance", "EXIT_INSTANCE"),
     ("wedding_book_list", "WEDDING_BOOK_LIST"),
     ("elf_vigor", "ELF_VIGOR"),
+    ("generalcard_collection_data", "GENERALCARD_COLLECTION_DATA"),
+    ("add_generalcard_collection", "ADD_GENERALCARD_COLLECTION"),
     ("elf_stamina", "ELF_STAMINA"),
     ("cast_elf_skill", "CAST_ELF_SKILL"),
     ("wedding_book_success", "WEDDING_BOOK_SUCCESS"),

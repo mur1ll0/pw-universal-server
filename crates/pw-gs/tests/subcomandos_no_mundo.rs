@@ -6238,8 +6238,10 @@ async fn abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa() {
     .await
     .unwrap();
 
-    // HOST_OBTAIN_ITEM (99) com a carta, HOST_USE_ITEM (91) com a caixa, UNFREEZE (181).
-    let r = receber(&mut link, 3).await;
+    // HOST_OBTAIN_ITEM (99) com a carta, ADD_GENERALCARD_COLLECTION (380, B357: `FirstAcquireItem`,
+    // `item_generalcard_dice.cpp:36`), HOST_USE_ITEM (91) com a caixa, UNFREEZE (181).
+    let r = receber(&mut link, 4).await;
+    assert!(r.iter().any(|v| cmd_de(v) == 380), "sem ADD_GENERALCARD_COLLECTION (380): a coleção não marcou a carta");
     let obtido = r
         .iter()
         .find(|v| cmd_de(v) == 99)
@@ -10856,6 +10858,9 @@ async fn conjurar_habilidade_do_daimon_no_monstro() {
         let mut estado = pw_gs::entity::Daimon::novo(&[]);
         estado.habilidades = vec![(1004, 3)];
         estado.vigor = 20_000;
+        // A 1004 no nível 3 pede o Daimon no 15 e gênios 1 no metal e 1 no fogo (`1001015`, `IsElfSkillActive`).
+        estado.nivel = 20;
+        estado.genios = [1, 0, 0, 1, 0];
         p.daimon = Some(pw_gs::entity::DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado, sujo: false });
         p.vigor_do_daimon = 100.0;
     }
@@ -10884,4 +10889,59 @@ async fn conjurar_habilidade_do_daimon_no_monstro() {
     link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: conjurar }).await.unwrap();
     let e = esperar_comando(&mut link, 25).await;
     assert_eq!(i32_em(&e, 2), 128, "vigor 10 < 32");
+}
+
+/// B357 — renascer carta (serviço 89): duas cartas iguais no nível máximo, a outra sai e a principal volta ao nível 1
+/// com um renascimento; renascimentos diferentes recusam com `ERR_GENERALCARD_REBIRTH_CONDITION` (181). E a coleção
+/// gravada volta na entrada (`GENERALCARD_COLLECTION_DATA`, 379).
+#[tokio::test]
+async fn renascer_carta_e_colecao_gravada() {
+    let (mundo, addr, roleid, _) = cenario!();
+    const CARTA: u32 = 88012;
+    let repo = mundo.read().await.char_repo.clone();
+    repo.gravar_colecao_de_cartas(roleid, &[0, 0b100]).await.unwrap();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: subcomando(ids::GET_ALL_DATA, &[1, 1, 1]) })
+        .await
+        .unwrap();
+    let col = esperar_comando(&mut link, 379).await;
+    assert_eq!(&col[2..], &[2, 0, 0, 0, 0, 0b100], "a coleção gravada volta na entrada");
+    {
+        let mut m = mundo.write().await;
+        let dm = Arc::make_mut(&mut m.data_manager);
+        dm.cartas_de_general.cartas.insert(
+            CARTA,
+            pw_data_loader::cartas_de_general::CartaDeGeneral { tipo: 1, qualidade: 2, nivel_maximo: 40, ..Default::default() },
+        );
+        let mut s = dm.servicos_de_npc.get(&TEMPLATE_DO_NPC).cloned().unwrap_or_default();
+        s.renascer_carta = true;
+        dm.servicos_de_npc.insert(TEMPLATE_DO_NPC, s);
+    }
+    let essencia = |nivel: i32, renasc: i32| -> Vec<u8> {
+        [1, 2, 10, 15, 40, nivel, 0, renasc].iter().flat_map(|v: &i32| v.to_le_bytes()).collect()
+    };
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    for (slot, oct) in [(0u16, essencia(40, 0)), (1, essencia(40, 0)), (2, essencia(40, 1))] {
+        let mut i = peca(roleid, pw_core::ContainerType::Inventory, slot, CARTA as i32, 0, 0);
+        i.octets = oct;
+        itens.upsert_item(&i).await.unwrap();
+    }
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().npc_em_conversa = Some(NPC);
+    let servir = |a: u8, b: u8| {
+        let mut c = 89i32.to_le_bytes().to_vec();
+        c.extend_from_slice(&2u32.to_le_bytes());
+        c.extend_from_slice(&[a, b]);
+        subcomando(ids::SEVNPC_SERVE, &c)
+    };
+    // 0 e 2: renascimentos diferentes.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: servir(0, 2) }).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 181);
+    // 0 e 1: renasce.
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: servir(0, 1) }).await.unwrap();
+    let _ = esperar_comando(&mut link, 40).await; // OWN_ITEM_INFO da principal
+    let bolsa = itens.list_by_container(roleid, pw_core::ContainerType::Inventory).await.unwrap();
+    assert!(!bolsa.iter().any(|i| i.slot == 1), "a outra carta saiu");
+    let e = pw_data_loader::cartas_de_general::EssenciaDaCarta::ler(&bolsa.iter().find(|i| i.slot == 0).unwrap().octets).unwrap();
+    assert_eq!((e.nivel, e.exp, e.renascimentos), (1, 0, 1));
 }

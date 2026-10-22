@@ -503,6 +503,14 @@ impl WorldProtocol for V126Protocol {
         None
     }
 
+    fn generalcard_collection_data(&self, _bits: &[u8]) -> Option<S2CGamedataSend> {
+        None
+    }
+
+    fn add_generalcard_collection(&self, _indice: u32) -> Option<S2CGamedataSend> {
+        None
+    }
+
     fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
         // O validador do cliente rejeita ids > 260 (VA 0x584618).
         None

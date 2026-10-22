@@ -91,6 +91,7 @@ fn feiticeira_nivel_1() -> PlayerEntity {
         auto_hp: None,
         daimon: None,
         vigor_do_daimon: 0.0,
+        colecao_de_cartas: Vec::new(),
         auto_mp: None,
         recarga_do_auto_hp_s: 0,
         recarga_do_auto_mp_s: 0,

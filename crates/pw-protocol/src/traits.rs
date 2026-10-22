@@ -242,6 +242,14 @@ pub trait WorldProtocol: Send + Sync {
         Some(S2CGamedataSend::player_leadership(total, mais))
     }
 
+    /// B357 — a coleção das Cartas de General (379/380); o 1.2.6 não tem.
+    fn generalcard_collection_data(&self, bits: &[u8]) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::generalcard_collection_data(bits))
+    }
+    fn add_generalcard_collection(&self, indice: u32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::add_generalcard_collection(indice))
+    }
+
     /// ELF_EXP (283): clientes anteriores ao comando podem omitir a notificação.
     fn elf_exp(&self, exp: i32) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::elf_exp(exp))

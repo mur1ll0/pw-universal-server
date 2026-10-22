@@ -85,6 +85,12 @@ pub mod servico {
     pub const ESQUECER_HABILIDADE_DE_DAIMON: i32 = 51;
     /// B354 — `wedding_book` e `wedding_invite` (`serviceprovider.cpp:8783-8784`).
     pub const RESERVAR_CASAMENTO: i32 = 62;
+    /// B356 — `elf_refine`, `elf_refine_transmit`, `elf_decompose` (`serviceprovider.cpp:8774-8776`).
+    pub const REFINAR_DAIMON: i32 = 52;
+    pub const TRANSFERIR_REFINO_DE_DAIMON: i32 = 53;
+    pub const DECOMPOR_DAIMON: i32 = 54;
+    /// B357 — `generalcard_rebirth` (`serviceprovider.cpp:8810`).
+    pub const RENASCER_CARTA: i32 = 89;
     pub const CONVITE_DE_CASAMENTO: i32 = 63;
 }
 

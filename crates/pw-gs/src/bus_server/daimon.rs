@@ -478,6 +478,28 @@ fn preparar_habilidade_do_daimon(
         return Err(CONJURAR_EM_RECARGA);
     }
     let h = mundo.data_manager.habilidades.get(habilidade as u32).cloned().ok_or(CONJURAR_FALHOU)?;
+    // `CheckActiveSkill` (`item_elf.cpp:412-433`) → `IsElfSkillActive` (`skillwrapper.cpp:1608-1640`): só valem as
+    // habilidades com o requisito (`GetRequiredLevel` como máscara de nível e gênios) cumprido, até as vagas.
+    {
+        let iniciais = mundo.data_manager.atributos_iniciais_do_daimon(d.item_id).unwrap_or([0; 4]);
+        let a = d.estado.atuais(iniciais, |id| mundo.data_manager.equipamento_de_daimon(id));
+        let ativas: Vec<u16> = d
+            .estado
+            .habilidades
+            .iter()
+            .filter(|(id, n)| {
+                mundo.data_manager.habilidades.get(*id as u32).is_some_and(|x| {
+                    x.cls == Some(258)
+                        && requisito_de_daimon_cumprido(x.nivel_exigido(*n as i32).unwrap_or(0), d.estado.nivel, a.genios)
+                })
+            })
+            .map(|(id, _)| *id)
+            .take(a.vagas)
+            .collect();
+        if !ativas.contains(&(habilidade as u16)) {
+            return Err(CONJURAR_FALHOU);
+        }
+    }
     if h.cls != Some(258) || h.time_type != Some(1) || h.tipo == Some(TIPO_PASSIVA) {
         return Err(CONJURAR_FALHOU);
     }
@@ -562,5 +584,333 @@ mod testes_da_conjuracao {
         assert!(calcular_habilidade_do_daimon(&calculo("1000"), 1, &HashMap::new()).is_none(), "sem a força do Daimon não avalia");
         assert_eq!(resistencia_pedida(200_000, 1), 200);
         assert_eq!(resistencia_pedida(15_015, 3), 45);
+    }
+}
+
+// ---- B356: refino, transferência de refino e decomposição do Daimon (serviços 52, 53 e 54) ----
+
+/// `MAX_ELF_REFINE_LEVEL` (`gs/item/item_elf.h:26`).
+pub(crate) const REFINO_MAXIMO: usize = 36;
+/// `ELF_REFINE_TICKET0..3_ID`, `ELF_EXPPILL_ID`, `ELF_REFINE_TRANSMIT_TICKET_ID` (`gs/item.h:21-29`).
+pub(crate) const BILHETES_DE_REFINO: [u32; 4] = [23547, 23548, 23549, 23550];
+pub(crate) const PILULA_DE_EXP: u32 = 23544;
+pub(crate) const PEDRA_DE_TRANSFERENCIA: u32 = 23551;
+/// `ELF_DECOMPOSE_EXP_LOSS` (`item_elf.h:25`).
+const PERDA_NA_DECOMPOSICAO: f64 = 0.1;
+/// `COOLDOWN_INDEX_REFINE` (22º de `cooldowncfg.h`) e `REFINE_COOLDOWN_TIME` (1 s, `:21`).
+const RECARGA_DO_REFINO: i32 = 22;
+const RECARGA_DO_REFINO_MS: u64 = 1000;
+/// `ELF_REFINE`, `ELF_DECOMPOSE` do `enum // elf cmd` (`common/protocol.h:946-958`).
+const RESULTADO_REFINO: i32 = 3;
+const RESULTADO_DECOMPOSICAO: i32 = 4;
+/// `DROP_TYPE_USE`, `DROP_TYPE_DECOMPOSE` (`common/protocol.h:927-941`).
+const DROP_USO: u8 = 11;
+const DROP_DECOMPOSICAO: u8 = 8;
+
+mod erro_do_refino {
+    pub const EM_RECARGA: i32 = 54;
+    pub const SEM_MATERIAL_DE_TRANSFERENCIA: i32 = 105;
+    pub const NAO_REFINA: i32 = 119;
+    pub const TRANSFERENCIA: i32 = 120;
+    pub const DE_TROCAVEL_PARA_NAO: i32 = 121;
+    pub const DECOMPOR: i32 = 122;
+    pub const DECOMPOR_NAO_TROCAVEL: i32 = 123;
+    pub const DECOMPOR_SEM_EXP: i32 = 124;
+}
+
+/// As tabelas do refino do Daimon (`gs/item/item_elf.cpp:53-82`), índice = nível **alvo**.
+const SUCESSO_BILHETE0: [f32; REFINO_MAXIMO + 1] = [
+    0.0, 1.0, 0.4, 0.315789474, 0.338983051, 0.377358491, 0.417754569, 0.463208685, 0.510769231, 0.55, 0.55, 0.55, 0.55,
+    0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55, 0.55,
+    0.55, 0.55, 0.55, 0.55, 0.55,
+];
+const SUCESSO_BILHETE1: [f32; REFINO_MAXIMO + 1] = [
+    0.0, 1.0, 0.6, 0.368421053, 0.355932203, 0.383647799, 0.420365535, 0.464414958, 0.511384615, 0.557001027,
+    0.60032861, 0.640836732, 0.678052261, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7,
+    0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7,
+];
+const SUCESSO_BILHETE2: [f32; REFINO_MAXIMO + 1] = [
+    0.0, 1.0, 0.6, 0.333333333, 0.296296296, 0.3, 0.314814815, 0.337313433, 0.360708535, 0.381453155, 0.4, 0.4, 0.4,
+    0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4,
+    0.4,
+];
+pub(crate) const MAXIMO_DO_BILHETE3: [i32; REFINO_MAXIMO + 1] = [
+    0, 1, 2, 7, 20, 50, 112, 223, 398, 648, 974, 1366, 1806, 2271, 2739, 3191, 3612, 3993, 4331, 4623, 4873, 5084, 5260,
+    5405, 5525, 5623, 5702, 5767, 5819, 5861, 5895, 5923, 5945, 5962, 5977, 5988, 5997,
+];
+pub(crate) const CUSTO_DA_TRANSFERENCIA: [i32; REFINO_MAXIMO + 1] = [
+    0, 1, 2, 7, 20, 50, 110, 220, 390, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200,
+    1250, 1300, 1350, 1400, 1450, 1500, 1550, 1600, 1650, 1700, 1750, 1800, 1850,
+];
+
+/// O resultado do `elf_item::ElfRefine` (`item_elf.cpp:606-670`): `REFINE_SUCCESS` (0), `REFINE_FAILED_LEVEL_0` (1,
+/// fica), `_1` (2, cai um), `_2` (3, volta a 0) — o número é o que vai no `ELF_CMD_RESULT`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResultadoDoRefino {
+    Subiu,
+    Ficou,
+    CaiuUm,
+    Zerou,
+}
+
+/// `elf_item::ElfRefine`: as chances de `{sucesso, fica, cai um, zera}` pelo bilhete (`refine_failed_type`,
+/// `item_elf.cpp:100-106`): bilhete 0 e 1 zeram na falha, o 2 cai um, o 3 fica (chance = quantidade / máximo do nível).
+/// `sorteio` em [0, 1) é o do `abase::RandSelect`. Devolve o resultado e muda o `refino`.
+pub(crate) fn refinar(refino: &mut i16, bilhete: u32, quantidade: i32, sorteio: f32) -> Option<ResultadoDoRefino> {
+    if *refino < 0 || *refino as usize >= REFINO_MAXIMO {
+        return None;
+    }
+    let alvo = *refino as usize + 1;
+    let mut prob = [0f32; 4];
+    match BILHETES_DE_REFINO.iter().position(|b| *b == bilhete)? {
+        0 => (prob[0], prob[3]) = (SUCESSO_BILHETE0[alvo], 1.0 - SUCESSO_BILHETE0[alvo]),
+        1 => (prob[0], prob[3]) = (SUCESSO_BILHETE1[alvo], 1.0 - SUCESSO_BILHETE1[alvo]),
+        2 => (prob[0], prob[2]) = (SUCESSO_BILHETE2[alvo], 1.0 - SUCESSO_BILHETE2[alvo]),
+        _ => {
+            let p = quantidade as f32 / MAXIMO_DO_BILHETE3[alvo] as f32;
+            (prob[0], prob[1]) = (p, 1.0 - p);
+        }
+    }
+    let prob = prob.map(|p| p.clamp(0.0, 1.0));
+    let mut acc = 0.0;
+    let mut escolhido = 3;
+    for (i, p) in prob.iter().enumerate() {
+        acc += p;
+        if sorteio < acc {
+            escolhido = i;
+            break;
+        }
+    }
+    Some(match escolhido {
+        0 => {
+            *refino += 1;
+            ResultadoDoRefino::Subiu
+        }
+        1 => ResultadoDoRefino::Ficou,
+        2 => {
+            if *refino > 0 {
+                *refino -= 1;
+            }
+            ResultadoDoRefino::CaiuUm
+        }
+        _ => {
+            *refino = 0;
+            ResultadoDoRefino::Zerou
+        }
+    })
+}
+
+/// `elf_item::GetDecomposeElfExp` (`item_elf.cpp:891-909`): de cada nível abaixo do atual, `GetLvlupExp(0, i) ×
+/// exp_factor × 0,1 / fator`, com `fator = const[i] / const[nível]` (`GetExpObtainFactor`, `elf_exp_loss_constant[k]
+/// = min(k, 100)`), mais `exp × 0,1`; teto 4.200.000.000.
+pub(crate) fn exp_da_decomposicao(nivel: i16, exp: u32, fator_de_exp: f32, exp_do_nivel: impl Fn(i16) -> u32) -> u32 {
+    let constante = |k: i16| (k.clamp(1, 150) as f64).min(100.0);
+    let mut total = 0.0f64;
+    for i in 1..nivel {
+        let do_nivel = (exp_do_nivel(i) as f64 * fator_de_exp as f64) as u32 as f64;
+        let fator = if nivel <= i { 1.0 } else { constante(i) / constante(nivel) };
+        total += do_nivel * PERDA_NA_DECOMPOSICAO / fator;
+    }
+    total += exp as f64 * PERDA_NA_DECOMPOSICAO;
+    if total > 4.2e9 {
+        4_200_000_000
+    } else {
+        total as u32
+    }
+}
+
+fn refinar_no_contexto(ctx: &mut Contexto, slot_daimon: usize, slot_bilhete: usize, quantidade: i16, sorteio: f32) {
+    if slot_daimon >= ctx.bolsa.slots.len() || slot_bilhete >= ctx.bolsa.slots.len() {
+        return erro_ao_cliente(ctx, erro::FATAL);
+    }
+    let Some((item_id, mut d)) = daimon_da_bolsa(ctx, slot_daimon) else {
+        return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+    };
+    if d.refino < 0 || d.refino as usize >= REFINO_MAXIMO {
+        return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+    }
+    let Some(b) = ctx.bolsa.item_no_slot(slot_bilhete).map(|i| (i.item_id, i.count)) else {
+        return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+    };
+    let (bilhete, tem) = b;
+    let quantidade = if BILHETES_DE_REFINO[..3].contains(&bilhete) && tem >= 1 {
+        1
+    } else if bilhete == BILHETES_DE_REFINO[3] && quantidade > 0 {
+        let q = (quantidade as i32).min(MAXIMO_DO_BILHETE3[d.refino as usize + 1]);
+        if ctx.bolsa.contar(bilhete) < q as u32 {
+            return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+        }
+        q
+    } else {
+        return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+    };
+    let original = d.refino;
+    let Some(r) = refinar(&mut d.refino, bilhete, quantidade, sorteio) else {
+        return erro_ao_cliente(ctx, erro_do_refino::NAO_REFINA);
+    };
+    if d.refino != original {
+        gravar_na_bolsa(ctx, slot_daimon, item_id, &d);
+    }
+    for (slot, n) in ctx.bolsa.tirar(bilhete, quantidade as u32) {
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, bilhete as i32, DROP_USO).data);
+    }
+    ctx.mudou = true;
+    let codigo = match r {
+        ResultadoDoRefino::Subiu => 0,
+        ResultadoDoRefino::Ficou => 1,
+        ResultadoDoRefino::CaiuUm => 2,
+        ResultadoDoRefino::Zerou => 3,
+    };
+    ctx.para_mim.push(S2CGamedataSend::elf_cmd_result(RESULTADO_REFINO, item_id as i32, codigo, original as i32).data);
+}
+
+fn transferir_no_contexto(ctx: &mut Contexto, origem: usize, destino: usize) {
+    if origem == destino || origem >= ctx.bolsa.slots.len() || destino >= ctx.bolsa.slots.len() {
+        return erro_ao_cliente(ctx, erro::FATAL);
+    }
+    let (Some((id_o, mut o)), Some((id_d, mut d))) = (daimon_da_bolsa(ctx, origem), daimon_da_bolsa(ctx, destino)) else {
+        return erro_ao_cliente(ctx, erro_do_refino::TRANSFERENCIA);
+    };
+    // `secure_status`: `status_value < 0` é negociável (`item_elf.cpp:255-260`).
+    if o.status >= 0 && d.status < 0 {
+        return erro_ao_cliente(ctx, erro_do_refino::DE_TROCAVEL_PARA_NAO);
+    }
+    let (no, nd) = (o.refino, d.refino);
+    if no <= 0 || nd < 0 || no as usize > REFINO_MAXIMO || nd as usize > REFINO_MAXIMO || nd >= no {
+        return erro_ao_cliente(ctx, erro_do_refino::TRANSFERENCIA);
+    }
+    let custo = CUSTO_DA_TRANSFERENCIA[no as usize] as u32;
+    if ctx.bolsa.contar(PEDRA_DE_TRANSFERENCIA) < custo {
+        return erro_ao_cliente(ctx, erro_do_refino::SEM_MATERIAL_DE_TRANSFERENCIA);
+    }
+    o.refino = 0;
+    d.refino = no;
+    for (slot, n) in ctx.bolsa.tirar(PEDRA_DE_TRANSFERENCIA, custo) {
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, PEDRA_DE_TRANSFERENCIA as i32, DROP_USO).data);
+    }
+    gravar_na_bolsa(ctx, origem, id_o, &o);
+    gravar_na_bolsa(ctx, destino, id_d, &d);
+}
+
+fn decompor_no_contexto(ctx: &mut Contexto, slot: usize) {
+    if slot >= ctx.bolsa.slots.len() {
+        return erro_ao_cliente(ctx, erro::FATAL);
+    }
+    let Some((item_id, d)) = daimon_da_bolsa(ctx, slot) else {
+        return erro_ao_cliente(ctx, erro_do_refino::DECOMPOR);
+    };
+    if d.nivel > 40 && d.status >= 0 {
+        return erro_ao_cliente(ctx, erro_do_refino::DECOMPOR_NAO_TROCAVEL);
+    }
+    let fator = ctx.dados.dados_do_daimon(item_id).map(|(f, _)| f).unwrap_or(1.0);
+    let tabela = &ctx.dados.progressao;
+    let exp = exp_da_decomposicao(d.nivel, d.exp, fator, |n| tabela.exp_para_subir(n as i32).clamp(0, u32::MAX as i64) as u32);
+    if exp == 0 || d.nivel <= 0 {
+        return erro_ao_cliente(ctx, erro_do_refino::DECOMPOR_SEM_EXP);
+    }
+    ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, 1, item_id as i32, DROP_DECOMPOSICAO).data);
+    ctx.bolsa.tirar_do_slot(slot, 1);
+    // `*(unsigned int*)item_content = exp; *((int*)item_content + 1) = exp_level` (`player.cpp:22462-22463`).
+    let mut conteudo = exp.to_le_bytes().to_vec();
+    conteudo.extend_from_slice(&(d.nivel as i32).to_le_bytes());
+    match ctx.bolsa.guardar_equipamento(PILULA_DE_EXP, &conteudo, ctx.dados) {
+        Some(e) => {
+            ctx.para_mim.push(ctx.sub.obtain_item(PILULA_DE_EXP as i32, 0, 1, e.no_slot, 0, e.slot as u8).data);
+            ctx.para_mim.push(S2CGamedataSend::elf_cmd_result(RESULTADO_DECOMPOSICAO, PILULA_DE_EXP as i32, d.nivel as i32, exp as i32).data);
+        }
+        None => erro_ao_cliente(ctx, erro_do_refino::DECOMPOR),
+    }
+    ctx.mudou = true;
+}
+
+impl BusServer {
+    /// Serviço 52 (`elf_refine_executor`, `serviceprovider.cpp:5182-5232`) `{u8 inv_idx_elf; u8 inv_idx_ticket; i16
+    /// ticket_cnt}`: recarga 22 (1 s, `ERR_OBJECT_IS_COOLING`), depois `gplayer_imp::ElfRefine` (`player.cpp:
+    /// 22272-22361`) no Daimon da bolsa. NPC com `combined_services & 0x100000`.
+    pub(super) async fn refinar_daimon(&self, roleid: i32, c: &[u8]) {
+        if c.len() != 4 {
+            return;
+        }
+        if !self.npc_em_conversa(roleid).await.is_some_and(|(_, s)| s.refino_de_daimon) {
+            return;
+        }
+        let em_recarga = {
+            let mut mundo = self.world.write().await;
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            let agora = std::time::Instant::now();
+            if p.recargas.get(&RECARGA_DO_REFINO).is_some_and(|ate| *ate > agora) {
+                true
+            } else {
+                p.recargas.insert(RECARGA_DO_REFINO, agora + std::time::Duration::from_millis(RECARGA_DO_REFINO_MS));
+                false
+            }
+        };
+        if em_recarga {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(erro_do_refino::EM_RECARGA).data).await;
+            return;
+        }
+        let (slot, bilhete, quantidade) = (c[0] as usize, c[1] as usize, i16_em(c, 2));
+        let sorteio = rand::random::<f32>();
+        self.com_contexto(roleid, |ctx| refinar_no_contexto(ctx, slot, bilhete, quantidade, sorteio)).await;
+    }
+
+    /// Serviço 53 (`elf_refine_transmit_executor`) `{u8 src_index; u8 dest_index}` → `ElfRefineTransmit`
+    /// (`player.cpp:22363-22430`): o refino vai do Daimon de origem ao de destino, pago em Pedra (`23551`).
+    pub(super) async fn transferir_refino_do_daimon(&self, roleid: i32, c: &[u8]) {
+        if c.len() != 2 {
+            return;
+        }
+        if !self.npc_em_conversa(roleid).await.is_some_and(|(_, s)| s.refino_de_daimon) {
+            return;
+        }
+        let (origem, destino) = (c[0] as usize, c[1] as usize);
+        self.com_contexto(roleid, |ctx| transferir_no_contexto(ctx, origem, destino)).await;
+    }
+
+    /// Serviço 54 (`elf_decompose_executor`, `serviceprovider.cpp:5290-5322`) `{u8 inv_index}` → `ElfDecompose`
+    /// (`player.cpp:22432-22480`): o Daimon da bolsa vira a pílula de experiência 23544 com `{exp, nível}`.
+    pub(super) async fn decompor_daimon(&self, roleid: i32, c: &[u8]) {
+        if c.len() != 1 {
+            return;
+        }
+        if !self.npc_em_conversa(roleid).await.is_some_and(|(_, s)| s.decompor_daimon) {
+            return;
+        }
+        let slot = c[0] as usize;
+        self.com_contexto(roleid, |ctx| decompor_no_contexto(ctx, slot)).await;
+    }
+}
+
+#[cfg(test)]
+mod testes_do_refino {
+    use super::*;
+
+    /// `ElfRefine`: bilhete 0 na falha zera; 2 cai um; 3 fica e a chance é a quantidade pelo máximo.
+    #[test]
+    fn refino_pelas_tabelas_do_original() {
+        let mut r = 0i16;
+        assert_eq!(refinar(&mut r, 23547, 1, 0.99), Some(ResultadoDoRefino::Subiu), "do 0 ao 1 é certo");
+        assert_eq!(r, 1);
+        assert_eq!(refinar(&mut r, 23547, 1, 0.39), Some(ResultadoDoRefino::Subiu));
+        assert_eq!(r, 2);
+        assert_eq!(refinar(&mut r, 23547, 1, 0.5), Some(ResultadoDoRefino::Zerou), "0,316 de chance ao 3");
+        assert_eq!(r, 0);
+        r = 5;
+        assert_eq!(refinar(&mut r, 23549, 1, 0.9), Some(ResultadoDoRefino::CaiuUm));
+        assert_eq!(r, 4);
+        assert_eq!(refinar(&mut r, 23550, 25, 0.49), Some(ResultadoDoRefino::Subiu), "25 de 50 ao 5");
+        assert_eq!(refinar(&mut r, 23550, 56, 0.6), Some(ResultadoDoRefino::Ficou), "56 de 112 ao 6");
+        assert_eq!(r, 5);
+        let mut topo = REFINO_MAXIMO as i16;
+        assert_eq!(refinar(&mut topo, 23547, 1, 0.0), None);
+        assert_eq!(refinar(&mut r, 12345, 1, 0.0), None, "não é bilhete");
+    }
+
+    /// `GetDecomposeElfExp`: nível 3 com curva 100/200 e fator 1: `100 × 0,1 / (1/3) + 200 × 0,1 / (2/3) + 50 × 0,1`.
+    #[test]
+    fn exp_da_decomposicao_pela_conta_do_original() {
+        let curva = |n: i16| [0u32, 100, 200, 300][n as usize];
+        assert_eq!(exp_da_decomposicao(3, 50, 1.0, curva), 30 + 30 + 5);
+        assert_eq!(exp_da_decomposicao(1, 0, 1.0, curva), 0);
     }
 }
