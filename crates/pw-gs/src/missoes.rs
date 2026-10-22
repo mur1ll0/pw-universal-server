@@ -692,6 +692,8 @@ pub trait Jogador {
     /// `ReceiveTaskExp` — um de cada vez, como `DeliverExperience`/`DeliverSP`.
     fn dar_exp(&mut self, exp: u32, sp: u32);
     fn dar_reputacao(&mut self, r: i32);
+    /// B346 — `AddLeaderShip` → `gplayer_imp::IncLeadership` (`player_imp.h:3277-3281`).
+    fn dar_lideranca(&mut self, _v: i32) {}
     /// `SetCurPeriod` (`task/taskman.cpp:251-254`) → `gplayer_imp::SetSecLevel`: o **nível de
     /// cultivo** novo, que o prêmio `m_ulNewPeriod` da missão define
     /// (`Task/TaskProcess.cpp:1284`). Quem implementa avisa o cliente com
@@ -1743,6 +1745,10 @@ impl<'a, J: Jogador> Motor<'a, J> {
             self.j.definir_teto_de_chi(p.teto_de_chi);
         }
         // `if (pAward->m_ulPetInventorySize) pTask->SetPetInventorySize(...)` (`TaskProcess.cpp:1292`).
+        // `if (pAward->m_iLeaderShip) pTask->AddLeaderShip(...)` (`TaskProcess.cpp:1310`).
+        if p.lideranca != 0 {
+            self.j.dar_lideranca(p.lideranca);
+        }
         if p.vagas_na_jaula != 0 {
             self.j.ampliar_jaula(p.vagas_na_jaula);
         }

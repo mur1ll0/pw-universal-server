@@ -149,6 +149,8 @@ pub mod ids {
     /// `{int region_index; int target_tag}`, mandado ao pisar numa caixa de transporte do
     /// `region.sev` (`EC_World.cpp:2360-2373`). B208.
     pub const ENTER_INSTANCE: u16 = 86;
+    /// B346 — `swallow_generalcard { u8 equip_idx; u8 is_inv; u8 inv_idx; u32 count }` (9 B com o cabeçalho).
+    pub const SWALLOW_GENERALCARD: u16 = 170;
     /// B345 — `elf_add_attribute { short str, agi, vit, eng }` (10 B com o cabeçalho).
     pub const ELF_ADD_ATTRIBUTE: u16 = 111;
     /// B345 — `elf_add_genius { short genius[5] }` (12 B).

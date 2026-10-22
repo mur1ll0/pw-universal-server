@@ -740,9 +740,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     habilidade do Daimon (o catálogo não tem o dano das 96, que dependem de `GetElfstr`), o vigor,
     as pílulas, a decomposição, o refino, o estado de segurança e o bônus sorteado de 10 em 10 níveis. **O ganho
     truncar para zero com o Daimon muito abaixo do dono é do original** (B76), não é defeito.
-12. **Cartas de General (B95, só a caixa):** abrir a caixa (`POKER_DICE_ESSENCE`) dá a carta
-    com o bloco certo. Falta o sistema: equipar a carta, liderança, os atributos que ela dá,
-    subir de nível, devorar (`swallow_exp`) e renascer.
+12. **Cartas de General (B95 a caixa, B346 o resto):** abrir a caixa dá a carta; **liderança**
+    (gravada, ganha em missão, mandada na entrada), **vestir** com nível e liderança, os
+    **atributos** da carta no lugar dela (ou o extra da coluna fora dele) e **devorar** para subir de
+    nível (B346). Faltam conjuntos e efeitos extras, renascer, a coleção e o armazém de cartas.
 11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
     (B126/B127, spec 05 §4.1); **feitos em 2026-10-21:** invocar monstro (B336), `max_move_range`
     (B337), tocar ação (B338), contar jogadores (B339), trocar de caminho (B341), invocar NPC/mina,
@@ -1348,6 +1349,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 343 | 10-21 | Política: invocar NPC e mina, histórico (dados únicos em memória) e entregar missão |
 | 344 | 10-21 | Duelo; golpe normal em jogador; ajuste de PvP (× 0,25) e morte por PvP |
 | 345 | 10-21 | Daimon: atributos, gênios, injetar EXP, vestir peça, aprender e esquecer habilidade |
+| 346 | 10-21 | Cartas de General: liderança, vestir, atributos e devorar |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

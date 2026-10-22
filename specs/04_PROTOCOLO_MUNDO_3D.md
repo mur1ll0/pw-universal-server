@@ -271,6 +271,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 22 | `SET_STATUS_POINT` → `ADD_STATUS_POINT` (51) | 54 | `GATHER_MATERIAL` → `PLAYER_GATHER_START/STOP` (126/127), `HOST_OBTAIN_ITEM` (99) |
 | 3 | `NORMAL_ATTACK` → sessão (`HOST_START_ATTACK` 84 … `HOST_STOPATTACK` 23) | 51 | `CONTINUE_ACTION` — solta a carga da habilidade |
 | 27, 28, 29 | `TEAM_INVITE`, `_AGREE_`, `_REJECT_` | 85 | `SWITCH_FASHION_MODE` |
+| 170 | `SWALLOW_GENERALCARD` `{u8 equip_idx; u8 is_inv; u8 inv_idx; u32 count}` (9 B; tamanho errado é ignorado, como no original) → `BusServer::devorar_carta` (B346) | | |
 | 111–114 | `ELF_ADD_ATTRIBUTE` `{short×4}`, `ELF_ADD_GENIUS` `{short[5]}`, `ELF_PLAYER_INSERT_EXP` `{u32 exp; char use_sp}`, `ELF_EQUIP_ITEM` `{u8 index_inv}` (tamanho exato, senão `ERR_FATAL_ERR`) → `bus_server/daimon.rs` (B345). 115–117 `falta` | | |
 | 92, 93 | `DUEL_REQUEST` `{int target}`, `DUEL_REPLY` `{int who; int param}` (tamanho exato, senão `ERR_FATAL_ERR`) → `crate::duelo` (B344; saíram do `gateway.rs`, que começava o duelo na hora) | | |
 | 86 | `ENTER_INSTANCE` (= `REGION_TRANSPORT` do servidor) `{i32 indice, i32 destino}` → `bus_server/portal.rs` (B208) | | |

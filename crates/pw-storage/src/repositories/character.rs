@@ -798,6 +798,24 @@ impl CharacterRepository {
         Ok(())
     }
 
+    /// B346 — a liderança (`characters.leadership`; `pInfo->leadership`, `gs/userlogin.cpp:94`).
+    pub async fn lideranca(&self, role_id: RoleId) -> Result<i32> {
+        let v: Option<i32> = sqlx::query_scalar("SELECT leadership FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(v.unwrap_or(0))
+    }
+
+    pub async fn gravar_lideranca(&self, role_id: RoleId, valor: i32) -> Result<()> {
+        sqlx::query("UPDATE characters SET leadership = $2 WHERE id = $1")
+            .bind(role_id)
+            .bind(valor)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     /// O dinheiro do armazém (`characters.storehouse_money`, B147).
     pub async fn dinheiro_do_armazem(&self, role_id: RoleId) -> Result<i64> {
         let v: Option<i64> = sqlx::query_scalar("SELECT storehouse_money FROM characters WHERE id = $1")

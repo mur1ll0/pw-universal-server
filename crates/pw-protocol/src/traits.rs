@@ -226,6 +226,11 @@ pub trait WorldProtocol: Send + Sync {
         Some(S2CGamedataSend::plant_pet_hp_notify(id, hp_factor, hp, mp_factor, mp))
     }
 
+    /// B346 — PLAYER_LEADERSHIP (378) `{int leadership_total; int leadership_added}`.
+    fn player_leadership(&self, total: i32, mais: i32) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::player_leadership(total, mais))
+    }
+
     /// ELF_EXP (283): clientes anteriores ao comando podem omitir a notificação.
     fn elf_exp(&self, exp: i32) -> Option<S2CGamedataSend> {
         Some(S2CGamedataSend::elf_exp(exp))

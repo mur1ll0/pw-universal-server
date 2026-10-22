@@ -199,6 +199,10 @@ pub struct PlayerEntity {
     /// (`petman.cpp:1276`), só cresce pelo prêmio de missão até [`MAXIMO_DE_VAGAS_NA_JAULA`]
     /// (`SetAvailPetSlot`, `petman.h:170-176`). Gravada em `characters.pet_slots` (B153).
     pub vagas_na_jaula: u32,
+    /// B346 — `_leadership` (`player_imp.h:1647`): a liderança, gravada (`characters.leadership`, o
+    /// `pInfo->leadership` do `userlogin.cpp:94`) e ganha em missão (`m_iLeaderShip` → `IncLeadership`). A ocupada
+    /// pelas cartas vestidas (`_leadership_occupied`) é recontada no recálculo do equipamento.
+    pub lideranca: i32,
     /// `_basic.reputation` (sem sistema de reputação ainda, vem zerada do banco).
     pub reputacao: i32,
     /// `_combat_timer`, em segundos: atacar põe 15 (`MAX_COMBAT_TIME`, `DoAttack`,
@@ -1685,6 +1689,7 @@ impl PlayerEntity {
             // Quem preenche é `BusServer::colocar_no_mundo`, que tem o repositório.
             pontos_de_atributo: 0,
             vagas_na_jaula: 1,
+            lideranca: 0,
             reputacao: p.reputation,
             combate_s: 0,
             contador_hp: 0,

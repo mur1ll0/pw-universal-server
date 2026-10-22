@@ -487,6 +487,11 @@ impl WorldProtocol for V126Protocol {
         None
     }
 
+    /// B346 — sem cartas nem liderança no 1.2.6, e o cliente recusa id > 260.
+    fn player_leadership(&self, _total: i32, _mais: i32) -> Option<S2CGamedataSend> {
+        None
+    }
+
     fn elf_exp(&self, _exp: i32) -> Option<S2CGamedataSend> {
         // O validador do cliente rejeita ids > 260 (VA 0x584618).
         None

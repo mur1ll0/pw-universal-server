@@ -6201,6 +6201,7 @@ async fn abrir_a_caixa_de_cartas_da_uma_carta_e_gasta_a_caixa() {
                 nivel_exigido: 15,
                 lideranca: (10, 20),
                 nivel_maximo: 40,
+                ..Default::default()
             },
         );
     }

@@ -1597,6 +1597,7 @@ impl BusServer {
         }
         jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
         jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
+        jogador.lideranca = repo.lideranca(roleid).await.unwrap_or(0);
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
                 jogador.missoes = crate::missoes::ListasDeMissao::de_blocos(
@@ -1819,6 +1820,7 @@ impl BusServer {
             ids::PET_CTRL => self.ordem_ao_mascote(roleid, &cmd.payload).await,
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::DUEL_REQUEST | ids::DUEL_REPLY => self.comando_de_duelo(roleid, cmd.id, &cmd.payload, envio).await,
+            ids::SWALLOW_GENERALCARD => self.devorar_carta(roleid, &cmd.payload, envio).await,
             ids::ELF_ADD_ATTRIBUTE | ids::ELF_ADD_GENIUS | ids::ELF_PLAYER_INSERT_EXP | ids::ELF_EQUIP_ITEM => {
                 self.comando_do_daimon(roleid, cmd.id, &cmd.payload, envio).await
             }
@@ -2550,6 +2552,64 @@ impl BusServer {
         {
             debug!("mundo: {alvo} não está neste servidor de mundo");
         }
+    }
+
+    /// B346 — `C2S::SWALLOW_GENERALCARD` (170) `{u8 equip_idx; u8 is_inv; u8 inv_idx; u32 count}`
+    /// (`playercmd.cpp:4158-4169` → `PlayerSwallowGeneralCard`, `player.cpp:24684-24745`): tamanho errado é ignorado;
+    /// erro vai como `ERROR_MESSAGE`. A carta vestida ganha a experiência (sobe de nível, a ficha do item volta) e o
+    /// devorado sai da bolsa (`PLAYER_DROP_ITEM` tipo 2). Só da bolsa: `is_inv` 0 (armazém de cartas) é recusado.
+    async fn devorar_carta(&self, roleid: i32, c: &[u8], envio: &EnvioAoCliente) {
+        use crate::cartas_de_general as cg;
+        if c.len() != 7 {
+            return;
+        }
+        let (slot, da_bolsa, idx, quantidade) = (c[0] as u16, c[1] != 0, c[2] as u16, u32::from_le_bytes([c[3], c[4], c[5], c[6]]));
+        let erro = |e: i32| S2CGamedataSend::error_message(e).data;
+        if !(cg::PRIMEIRO_SLOT..=cg::ULTIMO_SLOT).contains(&slot) || !da_bolsa {
+            self.responder(roleid, erro(cg::ERRO_FORA_DA_BOLSA), envio).await;
+            return;
+        }
+        let itens = self.itens().await;
+        let (Ok(Some(mut vestida)), Ok(Some(comida))) = (
+            itens.get_item_by_slot(roleid, ContainerType::Equipment, slot).await,
+            itens.get_item_by_slot(roleid, ContainerType::Inventory, idx).await,
+        ) else {
+            self.responder(roleid, erro(cg::ERRO_FORA_DA_BOLSA), envio).await;
+            return;
+        };
+        if quantidade == 0 || comida.count < quantidade {
+            self.responder(roleid, erro(cg::ERRO_FORA_DA_BOLSA), envio).await;
+            return;
+        }
+        let dados = Arc::clone(&self.world.read().await.data_manager);
+        let Some(mut ess) = pw_data_loader::cartas_de_general::EssenciaDaCarta::ler(&vestida.octets) else {
+            self.responder(roleid, erro(cg::ERRO_FORA_DA_BOLSA), envio).await;
+            return;
+        };
+        let exp = match cg::exp_a_devorar(&dados, &ess, comida.item_id, &comida.octets, quantidade) {
+            Ok(e) => e,
+            Err(e) => {
+                self.responder(roleid, erro(e), envio).await;
+                return;
+            }
+        };
+        dados.cartas_de_general.inserir_exp(&mut ess, exp, false);
+        let mut octetos = ess.octetos();
+        octetos.extend_from_slice(vestida.octets.get(32..).unwrap_or(&[]));
+        vestida.octets = octetos;
+        if let Err(e) = itens.upsert_item(&vestida).await {
+            warn!("mundo: não consegui gravar a carta de {roleid}: {e}");
+            return;
+        }
+        if let Err(e) = itens.consume_item(roleid, ContainerType::Inventory, idx, quantidade).await {
+            warn!("mundo: a carta de {roleid} cresceu mas o devorado não saiu da bolsa: {e}");
+        }
+        info!("mundo: {roleid} devorou {quantidade} × {} na carta do slot {slot}: +{exp} → nível {}", comida.item_id, ess.nivel);
+        let pacote = ContainerType::Equipment.pacote_do_cliente().unwrap_or(1);
+        self.responder(roleid, S2CGamedataSend::item_info(pacote, slot as u8, vestida.item_id as i32, 0, 0, 1, &vestida.octets, None).data, envio).await;
+        self.recalcular_equipamento(roleid, true).await;
+        let bolsa = ContainerType::Inventory.pacote_do_cliente().unwrap_or(0);
+        self.responder(roleid, self.sub.player_drop_item(bolsa, idx as u8, quantidade, comida.item_id as i32, 2).data, envio).await;
     }
 
     /// B344 — `C2S::DUEL_REQUEST` (92) e `DUEL_REPLY` (93) (`playercmd.cpp:3073-3118`): tamanho exato senão
@@ -5357,6 +5417,11 @@ impl BusServer {
             envio,
         )
         .await;
+        // B346 — `player_leadership(_leadership, 0)` no `SendAllData` (`player.cpp:13766`); só 1.5.5.
+        let lideranca = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.lideranca).unwrap_or(0);
+        if let Some(p) = self.sub.player_leadership(lideranca, 0) {
+            self.responder(roleid, p.data, envio).await;
+        }
 
         let mut pets_buf = Vec::new();
         for p in &pets_corral {
@@ -6082,6 +6147,16 @@ impl BusServer {
         };
         if dados.cabe_no_slot(item.item_id, idx_corpo as usize) == Some(false) {
             return Some("posicao_invalida");
+        }
+        // B346 — `generalcard_item::VerifyRequirement` (`item_generalcard.cpp:68-74`): nível e liderança livre.
+        if dados.cartas_de_general.cartas.contains_key(&item.item_id) {
+            let lideranca = self.world.read().await.players.get(&(roleid as i64)).map(|p| p.lideranca).unwrap_or(0);
+            let vestidos = itens.list_by_container(roleid, ContainerType::Equipment).await.unwrap_or_default();
+            if !crate::cartas_de_general::pode_vestir(&vestidos, &dados, &item.octets, idx_corpo as u16, nivel, lideranca) {
+                info!("mundo: {roleid} sem nível ou liderança para a carta {} (liderança {lideranca})", item.item_id);
+                return Some("requisito");
+            }
+            return None;
         }
         // B202 — `CheckEquipDynSkillByIndex` (`EQUIP_MASK64_DYNSKILL_ALL` 0x18000000, slots 27 e
         // 28, `gs/item.h:188`, `:223-224`): o mesmo item não vai aos dois (`player.cpp:8158-8168`).

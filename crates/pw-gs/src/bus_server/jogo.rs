@@ -385,6 +385,13 @@ impl Jogador for Contexto<'_> {
         self.para_mim
             .push(S2CGamedataSend::task_deliver_exp(exp as i32, sp as i32).data);
     }
+    fn dar_lideranca(&mut self, v: i32) {
+        self.p.lideranca = self.p.lideranca.wrapping_add(v);
+        self.mudou = true;
+        if let Some(p) = self.sub.player_leadership(self.p.lideranca, v) {
+            self.para_mim.push(p.data);
+        }
+    }
     fn dar_reputacao(&mut self, r: i32) {
         self.p.reputacao += r;
         self.mudou = true;
@@ -540,6 +547,8 @@ struct Gravacao {
     listas: [Vec<u8>; 5],
     /// As vagas da jaula, quando mudaram nesta operação (B153).
     jaula: Option<u32>,
+    /// B346 — a liderança, quando mudou.
+    lideranca: Option<i32>,
 }
 
 /// Edição de personagem pelo painel (E5, B179).
@@ -1247,6 +1256,7 @@ impl BusServer {
             let gm = autorizacao_gm.is_some();
             let dinheiro_antes = p.money;
             let jaula_antes = p.vagas_na_jaula;
+            let lideranca_antes = p.lideranca;
             let estado_antes=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula));
             let listas_antes=p.missoes.blocos();
@@ -1302,10 +1312,12 @@ impl BusServer {
                 atributos: (p.strength, p.agility, p.vitality, p.energy),
                 listas: p.missoes.blocos(),
                 jaula: (p.vagas_na_jaula != jaula_antes).then_some(p.vagas_na_jaula),
+                lideranca: (p.lideranca != lideranca_antes).then_some(p.lideranca),
             };
             let deve_gravar=estado_antes!=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula))
-                || listas_antes!=gravacao.listas;
+                || listas_antes!=gravacao.listas
+                || gravacao.lideranca.is_some();
             let ficha = (mudou || subiu_de_nivel).then(|| {
                 (
                     self.ficha_propria(p),
@@ -1425,6 +1437,11 @@ impl BusServer {
                 .await
             {
                 warn!("mundo: não consegui gravar o estado de {}: {e}", g.roleid);
+            }
+            if let Some(v) = g.lideranca {
+                if let Err(e) = repo.gravar_lideranca(g.roleid, v).await {
+                    warn!("mundo: não consegui gravar a liderança de {}: {e}", g.roleid);
+                }
             }
             if let Some(vagas) = g.jaula {
                 if let Err(e) = repo.gravar_vagas_da_jaula(g.roleid, vagas).await {
@@ -2591,6 +2608,10 @@ impl BusServer {
                 );
             }
             let base = Some(&dados.base_das_classes).filter(|b| !b.is_empty());
+            // B346 — as Cartas de General vestidas que ativam (nível e liderança) somam o `GeneralCardEnhance`.
+            let mut e = e;
+            let (cartas, _ocupada) = crate::cartas_de_general::cartas_ativas(&itens, &dados, p.level, p.lideranca);
+            crate::cartas_de_general::somar_cartas(&mut e, &cartas, &dados, p.cls as i32);
             // B203: as passivas de arma dependem da arma que entra agora.
             let asas = e.item_de_voo.is_some_and(|id| dados.asas.contains_key(&id));
             p.passivas_comuns = crate::efeitos::passivas_comuns(

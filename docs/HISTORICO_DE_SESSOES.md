@@ -16909,3 +16909,19 @@ comparação lado a lado.
     - Ver em jogo (1.5.5): com o Daimon vestido, distribuir pontos de atributo e de gênio na janela dele; arrastar uma
       peça de Daimon para ele (some da bolsa, aparece nele); no NPC que ensina habilidade de Daimon, aprender com o
       Daimon na bolsa (SP desconta). Overlay: silêncio.
+
+346. **Sessão 2026-10-21: Cartas de General.**
+
+    - Liderança: `characters.leadership` (`scripts/2026_10_21_lideranca.sql`, aplicado no banco local, `public` e
+      `test`), `PlayerEntity::lideranca`, prêmio de missão `m_iLeaderShip` no deslocamento 261 do `AWARD_DATA` v129
+      (`TaskReward::lideranca` → `Jogador::dar_lideranca`), `PLAYER_LEADERSHIP` (378) na entrada e ao ganhar (só 1.5.5).
+    - `pw_data_loader::cartas_de_general`: atributos base/por nível, `swallow_exp`, curva `POKER_LEVELEXP_CONFIG`,
+      `poker_adjust` da classe, `reforco` (`OnActivate`), `inserir_exp`, `exp_acumulada`.
+    - `crate::cartas_de_general` (pw-gs): cartas ativas e liderança ocupada, soma no `Equipamento` (no recálculo),
+      requisito para vestir (`motivo_para_nao_vestir`) e o devorar (`BusServer::devorar_carta`, C2S 170).
+    - Provas: `cartas_de_general` (loader) **4/4**, `cartas_de_general` (pw-gs, `realm_155`: 227 cartas, 9 missões com
+      liderança) **1/1**.
+    - Ver em jogo (1.5.5): fazer a missão 30826 (dá 10 de liderança) — a janela de cartas mostra a liderança; vestir
+      uma carta que peça até 10 (sobe vida/dano/defesa na ficha); uma segunda que passe do total é recusada com
+      "não pode equipar". Arrastar uma carta de qualidade igual ou menor para devorar: a vestida ganha experiência e
+      sobe de nível; a devorada some da bolsa.

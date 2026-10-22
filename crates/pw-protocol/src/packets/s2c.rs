@@ -3454,8 +3454,8 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
-    /// `PLAYER_LEADERSHIP` (378) — pontos de liderança do jogador (sistema de facção) e a
-    /// variação desde o último aviso.
+    /// `PLAYER_LEADERSHIP` (378) `{int leadership_total; int leadership_added}` — a liderança das Cartas de General
+    /// e quanto entrou agora (`gplayer_dispatcher::player_leadership`, `gs/player.cpp:6682-6688`; B346).
     pub fn player_leadership(leadership: i32, inc_leadership: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(378);

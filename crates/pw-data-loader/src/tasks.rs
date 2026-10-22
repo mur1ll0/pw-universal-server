@@ -181,6 +181,9 @@ pub struct TaskReward {
     pub multiplica: bool,
     pub tipo_do_multiplicador: i32,
     pub multiplicador: i32,
+    /// B346 — `m_iLeaderShip` (só v129; `AddLeaderShip`, `TaskProcess.cpp:1310`).
+    #[serde(default)]
+    pub lideranca: i32,
 }
 
 impl TaskReward {
@@ -647,6 +650,9 @@ mod v129 {
         pub const EXP_CNT: usize = 213;
         pub const TASK_CHAR_CNT: usize = 225;
         pub const TITLE_NUM: usize = 253;
+        /// B346 — `m_iLeaderShip`: depois de `m_ulTitleNum` (253) e do ponteiro `m_pTitleAward` (257), no
+        /// `AWARD_DATA` empacotado (`TaskTempl.h:1230-1232`, `#pragma pack(1)` na `:221`).
+        pub const LIDERANCA: usize = 261;
     }
 }
 
@@ -895,6 +901,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         multiplica: a[p::MULTIPLICA] != 0,
         tipo_do_multiplicador: u32_em(a, p::TIPO_DO_MULTIPLICADOR) as i32,
         multiplicador: u32_em(a, p::MULTIPLICADOR) as i32,
+        lideranca: u32_em(a, p::LIDERANCA) as i32,
     })
 }
 
