@@ -28,7 +28,15 @@
         "lowjump",
         "commondata"
       ],
-      "altura_maxima": 90.0
+      "altura_maxima": 90.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1837.935,
+          219.618,
+          1204.463
+        ]
+      }
     },
     {
       "world_id": 102,
@@ -43,7 +51,15 @@
         "height-limit",
         "profit-time"
       ],
-      "altura_maxima": 245.0
+      "altura_maxima": 245.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1788.0,
+          286.0,
+          2147.0
+        ]
+      }
     },
     {
       "world_id": 105,
@@ -59,7 +75,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 105,
+        "pos": [
+          -176.102,
+          333.283,
+          146.36
+        ]
+      }
     },
     {
       "world_id": 106,
@@ -75,7 +99,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 106,
+        "pos": [
+          -385.643,
+          334.408,
+          327.777
+        ]
+      }
     },
     {
       "world_id": 107,
@@ -91,7 +123,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 107,
+        "pos": [
+          -198.891,
+          333.0,
+          87.2788
+        ]
+      }
     },
     {
       "world_id": 108,
@@ -107,7 +147,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 108,
+        "pos": [
+          -24.6444,
+          332.637,
+          -71.0062
+        ]
+      }
     },
     {
       "world_id": 109,
@@ -122,7 +170,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 109,
+        "pos": [
+          446.279,
+          332.745,
+          177.541
+        ]
+      }
     },
     {
       "world_id": 110,
@@ -138,7 +194,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 110,
+        "pos": [
+          7.32576,
+          332.558,
+          223.994
+        ]
+      }
     },
     {
       "world_id": 111,
@@ -153,7 +217,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 111,
+        "pos": [
+          -96.3219,
+          307.383,
+          126.313
+        ]
+      }
     },
     {
       "world_id": 112,
@@ -197,7 +269,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 114,
+        "pos": [
+          -252.617,
+          337.245,
+          200.764
+        ]
+      }
     },
     {
       "world_id": 115,
@@ -214,7 +294,15 @@
       ],
       "altura_maxima": 341.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 115,
+        "pos": [
+          -255.435,
+          332.701,
+          394.975
+        ]
+      }
     },
     {
       "world_id": 116,
@@ -230,7 +318,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 116,
+        "pos": [
+          -175.349,
+          256.104,
+          -437.671
+        ]
+      }
     },
     {
       "world_id": 117,
@@ -246,7 +342,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 117,
+        "pos": [
+          -179.73,
+          257.264,
+          446.24
+        ]
+      }
     },
     {
       "world_id": 118,
@@ -259,7 +363,15 @@
         "use-save-point",
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1838.089,
+          219.618,
+          1202.187
+        ]
+      }
     },
     {
       "world_id": 119,
@@ -283,7 +395,15 @@
         "clear-ap",
         "use-save-point"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1849.142,
+          219.618,
+          1206.922
+        ]
+      }
     },
     {
       "world_id": 121,
@@ -405,7 +525,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          476.661,
+          266.002,
+          3294.183
+        ]
+      }
     },
     {
       "world_id": 129,
@@ -477,7 +605,16 @@
         "commondata",
         "use-save-point"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1224.0,
+          223.0,
+          1051.0
+        ]
+      },
+      "casamento": true
     },
     {
       "world_id": 135,
@@ -522,7 +659,15 @@
       ],
       "altura_maxima": 380.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1719.43,
+          219.618,
+          981.559
+        ]
+      }
     },
     {
       "world_id": 139,
@@ -686,7 +831,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 100,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1860.0,
+          235.0,
+          704.0
+        ]
+      }
     },
     {
       "world_id": 149,
@@ -819,7 +972,15 @@
         "noduel",
         "no-market"
       ],
-      "altura_maxima": 5.0
+      "altura_maxima": 5.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1463.0,
+          222.0,
+          1197.0
+        ]
+      }
     },
     {
       "world_id": 171,
@@ -861,7 +1022,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 2,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 121,
+        "pos": [
+          341.951,
+          429.911,
+          -782.181
+        ]
+      }
     },
     {
       "world_id": 173,
@@ -883,7 +1052,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 2,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 121,
+        "pos": [
+          341.951,
+          429.911,
+          -782.181
+        ]
+      }
     },
     {
       "world_id": 174,
@@ -905,7 +1082,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 2,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 121,
+        "pos": [
+          341.951,
+          429.911,
+          -782.181
+        ]
+      }
     },
     {
       "world_id": 175,
@@ -927,7 +1112,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 2,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 121,
+        "pos": [
+          341.951,
+          429.911,
+          -782.181
+        ]
+      }
     },
     {
       "world_id": 176,
@@ -1037,7 +1230,15 @@
         "commondata",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          476.661,
+          266.002,
+          3294.183
+        ]
+      }
     },
     {
       "world_id": 202,
@@ -1049,7 +1250,15 @@
         "allow-root",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          -1517.775,
+          254.129,
+          891.905
+        ]
+      }
     },
     {
       "world_id": 203,
@@ -1061,7 +1270,15 @@
         "allow-root",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          -611.847,
+          218.987,
+          -1162.208
+        ]
+      }
     },
     {
       "world_id": 204,
@@ -1076,7 +1293,15 @@
         "use-save-point",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          1311.0,
+          223.0,
+          801.0
+        ]
+      }
     },
     {
       "world_id": 211,
@@ -1103,7 +1328,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 15,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          -2391.0,
+          527.0,
+          -2174.0
+        ]
+      }
     },
     {
       "world_id": 214,
@@ -1121,7 +1354,15 @@
       ],
       "altura_maxima": 0.0,
       "por_copia": 6,
-      "paralelo": false
+      "paralelo": false,
+      "ponto_de_salvar": {
+        "mapa": 1,
+        "pos": [
+          -2391.0,
+          527.0,
+          -2174.0
+        ]
+      }
     },
     {
       "world_id": 230,

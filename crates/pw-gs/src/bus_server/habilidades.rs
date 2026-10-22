@@ -198,7 +198,7 @@ fn odio_da_habilidade(h: &pw_data_loader::habilidades::HabilidadeDoServidor, niv
         .unwrap_or(0) as i64
 }
 
-fn vars_do_jogador(p: &PlayerEntity) -> HashMap<&'static str, f64> {
+pub(super) fn vars_do_jogador(p: &PlayerEntity) -> HashMap<&'static str, f64> {
     HashMap::from([
         ("Maxhp", p.max_hp as f64),
         ("Maxmp", p.max_mp as f64),
@@ -310,6 +310,22 @@ impl BusServer {
         carga: f32,
         envio: &EnvioAoCliente,
     ) -> bool {
+        self.aplicar_habilidade_com(roleid, skill_id, alvo, nivel, carga, envio, None).await
+    }
+
+    /// [`Self::aplicar_habilidade`] com o golpe já calculado (B355: a habilidade do Daimon, cujo dano vem do
+    /// `Calculate` com os atributos dele, não da arma).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn aplicar_habilidade_com(
+        &self,
+        roleid: i32,
+        skill_id: i32,
+        alvo: i64,
+        nivel: i32,
+        carga: f32,
+        envio: &EnvioAoCliente,
+        golpe_pronto: Option<crate::combat::Golpe>,
+    ) -> bool {
         let (h, conjurador, dados) = {
             let mundo = self.world.read().await;
             let Some(h) = mundo
@@ -327,7 +343,7 @@ impl BusServer {
         };
         let tipo = h.tipo.unwrap_or(0);
         let area = h.tipo_de_area.unwrap_or(AREA_PONTO);
-        let tem_dano = tipo == TIPO_ATAQUE && h.dano.is_some();
+        let tem_dano = tipo == TIPO_ATAQUE && (h.dano.is_some() || golpe_pronto.is_some());
         let roteiro_no_alvo = h
             .no_alvo
             .clone()
@@ -372,11 +388,10 @@ impl BusServer {
         }
 
         // O golpe, calculado uma vez para todos os alvos.
-        let mut golpe = match h
-            .dano
-            .as_ref()
-            .and_then(|d| CombatEngine::golpe_de_habilidade(&conjurador, d, nivel, carga))
-        {
+        let pronto = golpe_pronto.is_some();
+        let mut golpe = match golpe_pronto.or_else(|| {
+            h.dano.as_ref().and_then(|d| CombatEngine::golpe_de_habilidade(&conjurador, d, nivel, carga))
+        }) {
             Some(g) => g,
             None => {
                 let mut g = CombatEngine::golpe_de_jogador(&conjurador);
@@ -388,7 +403,7 @@ impl BusServer {
         // B226 — o amuleto de dano entrou no `GeneratePhysicDamage`/`GenerateMaigicDamage2` do
         // golpe (`actobject.h:1430`, `:1455`): uma carga por habilidade, e a marca nos resultados.
         let marca_do_amuleto = match h.dano.as_ref() {
-            Some(d) if conjurador.reforco_do_amuleto(d.base == "magico") > 0 => {
+            Some(d) if !pronto && conjurador.reforco_do_amuleto(d.base == "magico") > 0 => {
                 self.gastar_amuleto(roleid).await;
                 if d.base == "magico" { combat::marca::AMULETO_MAGICO } else { combat::marca::AMULETO_FISICO }
             }

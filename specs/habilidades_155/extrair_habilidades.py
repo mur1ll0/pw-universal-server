@@ -391,6 +391,10 @@ def extrair(caminho):
     # o `SkillWrapper::EventChange` (`skillwrapper.cpp:589-610`) as aplica ao entrar na forma de
     # classe e as desfaz ao sair — as da raposa, 323 e 324 (B122).
     h["eventflag"] = escalar(texto, "eventflag") or 0
+    if h["cls"] == 258:
+        c = corpo(texto, "float GetMpcost")
+        m = re.search(r"return\s+(.+?)\s*;", c or "", re.S)
+        h["daimon"] = {"calculo": calculo_do_daimon(texto), "vigor": expressao(m.group(1)) if m else None}
     if h["eventflag"] == EVENT_CHANGE:
         h["ao_mudar_de_forma"] = roteiro(texto, "TakeEffect")
     elif h["eventflag"] in (EVENT_RESET, EVENT_WIELD, EVENT_ENTER):
@@ -398,6 +402,37 @@ def extrair(caminho):
         # `EventEnter` (por mundo), `skillwrapper.cpp:612-730`, aplicadas na entrada (`:1261-1264`).
         h["efeito_passivo"] = roteiro(texto, "TakeEffect")
     return h
+
+
+def calculo_do_daimon(texto):
+    """B355 — habilidade de Daimon (`cls == 258`): o `Calculate` do 1º estado como `[quem, setter, expressão]` — o custo
+    (`SetDecelfmp` vigor, `SetDecelfap` resistência), o dano (`SetDamage`/`Set<escola>damage` com os atributos do
+    Daimon: `P_Elfstr`, `P_Elfagi`, `P_Elflevel`...) e o `SetPerform`. O `RunElfSkill` só roda o estado 0
+    (`InstantRun`, `skill.h:750-755`). `None` se o corpo tiver controle de fluxo ou expressão que não se lê."""
+    ordem = re.findall(r"statestub\.push_back\s*\(\s*new\s+(State\d+)\s*\(\s*\)\s*\)", texto)
+    if not ordem:
+        return None
+    i = texto.find(f"class {ordem[0]}:")
+    if i < 0:
+        i = texto.find(f"class {ordem[0]} :")
+    calc = corpo(texto[i:], "void Calculate") if i >= 0 else None
+    if calc is None or re.search(r"(if|for|while|switch)", calc):
+        return None
+    passos = []
+    for s in calc.split(";"):
+        s = " ".join(s.split()).strip("{} ")
+        if "//" in s:
+            s = re.sub(r"//.*?(?=skill\s*->|$)", "", s).strip()
+        if not s:
+            continue
+        m = _SETTER.match(s)
+        if not m:
+            return None
+        e = expressao(m.group(3))
+        if e is None:
+            return None
+        passos.append([{"GetVictim": "V", "GetPlayer": "P", None: "S"}[m.group(1)], m.group(2), e])
+    return passos
 
 
 EVENT_CHANGE = 4  # `cskill/skill/skill.h`, `EVENT_CHANGE`

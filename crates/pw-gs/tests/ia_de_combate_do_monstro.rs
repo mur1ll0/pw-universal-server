@@ -93,6 +93,7 @@ fn jogador(pos: Vector3) -> PlayerEntity {
         crc_equipamento: 0,
         auto_hp: None,
         daimon: None,
+        vigor_do_daimon: 0.0,
         auto_mp: None,
         recarga_do_auto_hp_s: 0,
         recarga_do_auto_mp_s: 0,

@@ -30,6 +30,23 @@ pub struct LimitesDoMapa {
     /// B349 — `parallelworld_server = 1`: mundo paralelo (cópias por lotação, não por chave).
     #[serde(default)]
     pub paralelo: bool,
+    /// B354 — `save_point = tag,x,y,z` do `gs.conf` (`world_manager::GetSavePoint`).
+    #[serde(default)]
+    pub ponto_de_salvar: Option<PontoDeSalvar>,
+    /// B354 — `wedding_server = 1`: o mapa da cerimônia de casamento.
+    #[serde(default)]
+    pub casamento: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct PontoDeSalvar {
+    pub mapa: i32,
+    pub pos: [f32; 3],
+}
+
+/// B354 — o mapa da cerimônia (`wedding_server = 1`).
+pub fn mapa_do_casamento(c: CatalogoDeLimites) -> Option<i32> {
+    catalogo(c).iter().find(|m| m.casamento).map(|m| m.world_id)
 }
 
 #[derive(Debug, Deserialize)]

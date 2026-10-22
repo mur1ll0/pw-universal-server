@@ -87,6 +87,8 @@ pub enum EventoDoMundo {
     /// Vida ou mana do jogador mudaram sozinhas (regeneração): o `SELF_INFO_00` é o que o
     /// original manda quando o `_refresh_state` liga (`GenHPandMP`, `actobject.h:2167`).
     EstadoMudou { roleid: RoleId },
+    /// B355 — o vigor do Daimon mudou (`refresh_vigor` → `ELF_VIGOR`, `playerctrl.cpp:162-168`).
+    VigorDoDaimon { roleid: RoleId },
     /// A mana acabou no voo de asas e o filtro de voo saiu (`angel_wing_fly_filter::Heartbeat`
     /// → `_is_deleted`, `gs/fly_filter.cpp:42-48`): o jogador pousa.
     PousouSemMana { roleid: RoleId },
@@ -2017,6 +2019,31 @@ impl WorldInstance {
         }
     }
 
+    /// B355 — o máximo e o ganho por segundo do vigor do Daimon vestido (`UpdateElfVigor`).
+    pub fn limites_do_vigor(&self, p: &PlayerEntity) -> Option<(f32, f32)> {
+        let d = p.daimon.as_ref()?;
+        let dados = &self.data_manager;
+        let iniciais = dados.atributos_iniciais_do_daimon(d.item_id).unwrap_or([0; 4]);
+        let a = d.estado.atuais(iniciais, |id| dados.equipamento_de_daimon(id));
+        Some(crate::entity::limites_do_vigor(&a))
+    }
+
+    /// B355 — `gplayer_imp::OnHeartbeat` (`player.cpp:9184-9194`): fora da morte, o vigor do Daimon vestido sobe o
+    /// ganho, até o máximo. Devolve quem mudou.
+    fn batimento_do_vigor_do_daimon(&mut self) -> Vec<RoleId> {
+        let ids: Vec<RoleId> = self.players.values().filter(|p| p.daimon.is_some() && p.hp > 0).map(|p| p.role_id).collect();
+        let mut mudaram = Vec::new();
+        for id in ids {
+            let Some((maximo, ganho)) = self.players.get(&(id as i64)).and_then(|p| self.limites_do_vigor(p)) else { continue };
+            let Some(p) = self.players.get_mut(&(id as i64)) else { continue };
+            if p.vigor_do_daimon < maximo {
+                p.vigor_do_daimon = (p.vigor_do_daimon + ganho).min(maximo);
+                mudaram.push(id);
+            }
+        }
+        mudaram
+    }
+
     pub fn membros_do_grupo(&self, quem: RoleId) -> Vec<RoleId> {
         self.grupo_de
             .get(&quem)
@@ -3239,6 +3266,9 @@ impl WorldInstance {
                 p.pvp_espera_s = (p.pvp_espera_s - 1).max(0);
             }
             self.batimento_dos_duelos();
+            for roleid in self.batimento_do_vigor_do_daimon() {
+                self.emitir(EventoDoMundo::VigorDoDaimon { roleid });
+            }
             for ev in self.gastar_mana_do_voo() {
                 self.emitir(ev);
             }

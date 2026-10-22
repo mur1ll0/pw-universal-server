@@ -441,6 +441,18 @@ impl Jogador for Contexto<'_> {
             self.para_mim.push(p.data);
         }
     }
+    /// B354 — `PlayerTaskInterface::Divorce` (`taskman.cpp:640-647`): `SetSpouse(0)` e `player_change_spouse` a quem
+    /// vê; o banco (`GMSV::SetCouple(id, cônjuge, 0)` → `RPC_PUTSPOUSE`) é gravado depois, para os dois.
+    fn divorciar(&mut self) {
+        if self.p.conjuge == 0 {
+            return;
+        }
+        self.p.conjuge = 0;
+        self.mudou = true;
+        let aviso = S2CGamedataSend::player_change_spouse(self.p.role_id, 0).data;
+        self.para_mim.push(aviso.clone());
+        self.para_todos.push(aviso);
+    }
     fn dar_reputacao(&mut self, r: i32) {
         self.p.reputacao += r;
         self.mudou = true;
@@ -598,6 +610,8 @@ struct Gravacao {
     jaula: Option<u32>,
     /// B346 — a liderança, quando mudou.
     lideranca: Option<i32>,
+    /// B354 — o ex-cônjuge, quando houve divórcio.
+    divorcio: Option<i32>,
 }
 
 /// Edição de personagem pelo painel (E5, B179).
@@ -1308,6 +1322,7 @@ impl BusServer {
             let dinheiro_antes = p.money;
             let jaula_antes = p.vagas_na_jaula;
             let lideranca_antes = p.lideranca;
+            let conjuge_antes = p.conjuge;
             let estado_antes=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula));
             let listas_antes=p.missoes.blocos();
@@ -1366,11 +1381,13 @@ impl BusServer {
                 listas: p.missoes.blocos(),
                 jaula: (p.vagas_na_jaula != jaula_antes).then_some(p.vagas_na_jaula),
                 lideranca: (p.lideranca != lideranca_antes).then_some(p.lideranca),
+                divorcio: (conjuge_antes != 0 && p.conjuge == 0).then_some(conjuge_antes),
             };
             let deve_gravar=estado_antes!=((p.level,p.cultivation,p.exp,p.sp,p.hp,p.mp,p.money,p.position),
                 (p.strength,p.agility,p.vitality,p.energy,p.pontos_de_atributo,p.vagas_na_jaula))
                 || listas_antes!=gravacao.listas
-                || gravacao.lideranca.is_some();
+                || gravacao.lideranca.is_some()
+                || gravacao.divorcio.is_some();
             let ficha = (mudou || subiu_de_nivel).then(|| {
                 (
                     self.ficha_propria(p),
@@ -1495,6 +1512,14 @@ impl BusServer {
                 if let Err(e) = repo.gravar_lideranca(g.roleid, v).await {
                     warn!("mundo: não consegui gravar a liderança de {}: {e}", g.roleid);
                 }
+            }
+            if let Some(ex) = g.divorcio {
+                for quem in [g.roleid, ex] {
+                    if let Err(e) = repo.gravar_conjuge(quem, 0).await {
+                        warn!("mundo: não consegui gravar o divórcio de {quem}: {e}");
+                    }
+                }
+                info!("mundo: {} e {ex} se divorciaram", g.roleid);
             }
             if let Some(vagas) = g.jaula {
                 if let Err(e) = repo.gravar_vagas_da_jaula(g.roleid, vagas).await {

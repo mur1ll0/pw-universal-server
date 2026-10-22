@@ -724,6 +724,8 @@ pub trait Jogador {
     }
     /// B346 — `AddLeaderShip` → `gplayer_imp::IncLeadership` (`player_imp.h:3277-3281`).
     fn dar_lideranca(&mut self, _v: i32) {}
+    /// B354 — `PlayerTaskInterface::Divorce` (`taskman.cpp:640-647`): casado, o cônjuge vai a 0.
+    fn divorciar(&mut self) {}
     /// `SetCurPeriod` (`task/taskman.cpp:251-254`) → `gplayer_imp::SetSecLevel`: o **nível de
     /// cultivo** novo, que o prêmio `m_ulNewPeriod` da missão define
     /// (`Task/TaskProcess.cpp:1284`). Quem implementa avisa o cliente com
@@ -1804,6 +1806,10 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if p.lideranca != 0 {
             self.j.dar_lideranca(p.lideranca);
         }
+        // `if (pAward->m_bDivorce) pTask->Divorce()` (`TaskProcess.cpp:1313-1314`).
+        if p.divorcio {
+            self.j.divorciar();
+        }
         if p.vagas_na_jaula != 0 {
             self.j.ampliar_jaula(p.vagas_na_jaula);
         }
@@ -2750,6 +2756,7 @@ mod tests {
 
     impl Jogador for JogadorDeTeste {
         fn conjuge(&self) -> u32 { self.conjuge }
+        fn divorciar(&mut self) { self.conjuge = 0; }
         fn global(&self, k: i32) -> i32 { self.globais.get(&k).copied().unwrap_or(0) }
         fn pq_estampa(&self, _: u32) -> u32 { self.pq.0 }
         fn pq_etapa(&self, _: u32) -> u32 { self.pq.1 }
@@ -2836,6 +2843,7 @@ mod tests {
         t.rewards.money = 7;
         let mut so_conjuge = modelo(51);
         so_conjuge.conjuge = true;
+        so_conjuge.rewards.divorcio = true;
         let d = dados(vec![t, so_conjuge]);
         let membro = |id: u32| MembroDaEquipe { id, nivel: 1, classe: 0, masculino: true, mundo: 1, pos: [0.0; 3] };
         // Sozinho: `ILLEGAL_MEM` (20).
@@ -2856,6 +2864,10 @@ mod tests {
         let mut nova = ListasDeMissao::default();
         assert_eq!(Motor { tarefas: &d, listas: &mut nova, j: &mut j, eu: 1 }.aceitar(50, 0, true), erro::MEMBRO_INVALIDO);
         assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(51, 0, true), 0);
+        // B354 — o prêmio com `m_bDivorce` desfaz o casamento.
+        let idx = l.ativa.indice(51).expect("51 ativa");
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.entregar_premio(idx, -1));
+        assert_eq!(j.conjuge, 0);
     }
 
     fn dados(ts: Vec<TaskTemplate>) -> TasksData {

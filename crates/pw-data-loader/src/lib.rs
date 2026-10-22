@@ -7,6 +7,7 @@ pub mod armaduras;
 pub mod armas;
 pub mod cartas;
 pub mod cartas_de_general;
+pub mod casamento;
 pub mod classes;
 pub mod dyn_tasks;
 pub mod collision;

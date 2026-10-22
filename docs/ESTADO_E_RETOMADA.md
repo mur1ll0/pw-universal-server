@@ -697,7 +697,7 @@ O pedido do Murillo no B44: combate básico inteiro, experiência, alma, moedas,
 habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
 
 1. **Missões — o que o motor ainda recusa ou ignora** (spec 05 §10): torre (o **casamento**
-   pela missão foi feito no B347, faltam divórcio e a cerimônia; a **PQ** e as **variáveis globais** nas
+   pela missão foi feito no B347, o divórcio e a cerimônia no B354; a **PQ** e as **variáveis globais** nas
    missões, no B348),
    força, variáveis globais. Facção recusa sempre (não há sistema de facção). Feitos: invocação,
    falha por morte (B157), coleta com missão (B67), abate em equipe, sucesso/falha da equipe e
@@ -1362,6 +1362,8 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 351 | 10-22 | Suíte completa: 1.194/0 |
 | 352 | 10-22 | PQ: empate na colocação pela ordem do `hash_map` do abase |
 | 353 | 10-22 | Masmorra: expulsão de quem sai do grupo (60 s) e renovação da cópia vencida |
+| 354 | 10-22 | Casamento: divórcio pelo prêmio e a cerimônia (agenda, serviços 62/63, convite, cena) |
+| 355 | 10-22 | Daimon: vigor e conjurar habilidade (as 96 com o cálculo no catálogo) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

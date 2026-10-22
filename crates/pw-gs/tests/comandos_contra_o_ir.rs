@@ -427,11 +427,13 @@ fn os_ids_dos_comandos_sao_os_do_ir() {
         ("ELF_ADD_GENIUS", pw_gs::comandos::ids::ELF_ADD_GENIUS),
         ("ELF_PLAYER_INSERT_EXP", pw_gs::comandos::ids::ELF_PLAYER_INSERT_EXP),
         ("ELF_EQUIP_ITEM", pw_gs::comandos::ids::ELF_EQUIP_ITEM),
+        ("CAST_ELF_SKILL", pw_gs::comandos::ids::CAST_ELF_SKILL),
         ("SWALLOW_GENERALCARD", pw_gs::comandos::ids::SWALLOW_GENERALCARD),
         ("TEAM_AGREE_INVITE", pw_gs::comandos::ids::TEAM_AGREE_INVITE),
         ("TEAM_REJECT_INVITE", pw_gs::comandos::ids::TEAM_REJECT_INVITE),
         ("TEAM_LEAVE_PARTY", pw_gs::comandos::ids::TEAM_LEAVE_PARTY),
         ("SEVNPC_HELLO", pw_gs::comandos::ids::SEVNPC_HELLO),
+        ("SEVNPC_GET_CONTENT", pw_gs::comandos::ids::SEVNPC_GET_CONTENT),
         ("TASK_NOTIFY", pw_gs::comandos::ids::TASK_NOTIFY),
     ] {
         assert_eq!(id_de(nome), id as i64, "{nome}");

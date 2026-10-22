@@ -32,6 +32,13 @@ pub fn json_do_servidor(versao: &str) -> Option<&'static str> {
     }
 }
 
+/// B355 — o que a habilidade de Daimon calcula (`extrair_habilidades.py`, `calculo_do_daimon`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DaimonDaHabilidade {
+    pub calculo: Option<Vec<(String, String, String)>>,
+    pub vigor: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HabilidadeDoServidor {
     pub id: u32,
@@ -48,6 +55,9 @@ pub struct HabilidadeDoServidor {
     /// (`cskill/skill/skill.cpp:125`).
     #[serde(default)]
     pub apcost: Option<i32>,
+    /// `attr` do stub: o `attack_attr` do golpe (`msg.attack_attr = GetAttr()`, `playerwrapper.cpp:269`); 1 é físico.
+    #[serde(default)]
+    pub attr: Option<i32>,
     /// `apgain`: o chi que a habilidade **dá**. Na execução, o original aplica a diferença de
     /// uma vez: `int ap = GetApgain() - GetApcost(); if (ap) ModifyAP(ap)`
     /// (`cskill/skill/playerwrapper.cpp:170-177`).
@@ -127,6 +137,10 @@ pub struct HabilidadeDoServidor {
     pub no_alvo: Option<Vec<(String, String, String)>>,
     #[serde(default)]
     pub em_si: Option<Vec<(String, String, String)>>,
+    /// B355 — habilidade de Daimon (`cls` 258): o `Calculate` do estado 0 (custo de vigor `Decelfmp` e de
+    /// resistência `Decelfap`, o dano com os atributos do Daimon) e o `GetMpcost` (o vigor que precisa ter).
+    #[serde(default)]
+    pub daimon: Option<DaimonDaHabilidade>,
     /// `eventflag` do stub (`cskill/skill/skill.h:235`); 4 = `EVENT_CHANGE`.
     #[serde(default)]
     pub eventflag: Option<i32>,
@@ -439,6 +453,8 @@ mod tests {
             pre_skills: vec![],
             mp: None,
             apcost: None,
+            attr: None,
+            daimon: None,
             apgain: None,
             is_movingcast: None,
             allow_forms: None,

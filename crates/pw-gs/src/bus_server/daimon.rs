@@ -2,9 +2,9 @@
 //! nos NPCs, aprender e esquecer habilidade. Porte de `gplayer_imp::Elf*` (`gs/player.cpp:21856-22270`) sobre as
 //! regras do `elf_item` (`gs/item/item_elf.cpp`). Só o 1.5.5 tem Daimon.
 //!
-//! **Não é igual / `falta`:** conjurar habilidade do Daimon (`CAST_ELF_SKILL`, 116: o catálogo não tem o dano —
-//! os stubs usam `GetElfstr`/`GetElflevel`, que o extrator não avaliou), o estado de segurança (115), recarregar
-//! (117), vigor e resistência do Daimon, o bônus de atributo sorteado por nível, refino, decomposição, destruir
+//! B355: conjurar habilidade do Daimon (`CAST_ELF_SKILL`, 116) e o vigor.
+//!
+//! **Não é igual / `falta`:** o estado de segurança (115), recarregar (117), o bônus de atributo sorteado por nível, refino, decomposição, destruir
 //! peça e os serviços 48/49 (devolver pontos).
 
 use super::*;
@@ -319,4 +319,248 @@ fn esquecer(ctx: &mut Contexto, slot: usize, habilidade: u16, niveis: i16) {
     }
     gravar_na_bolsa(ctx, slot, item_id, &d);
     ctx.para_mim.push(S2CGamedataSend::elf_cmd_result(resultado::ESQUECER, item_id as i32, habilidade as i32, niveis as i32).data);
+}
+
+/// B355 — `ERR_CAST_ELF_SKILL_FAILED`/`_IN_COOLDOWN` (`common/protocol.h`, contados do `ERR_SUCCESS`).
+const CONJURAR_FALHOU: i32 = 128;
+const CONJURAR_EM_RECARGA: i32 = 131;
+/// `COOLDOWN_INDEX_CAST_ELF_SKILL` (30º de `gs/cooldowncfg.h`) e `CAST_ELF_SKILL_COOLDOWN_TIME` (1 s, `:23`).
+const RECARGA_DE_CONJURAR: i32 = 30;
+const RECARGA_DE_CONJURAR_MS: u64 = 1000;
+/// `COOLINGID_BEGIN`.
+const INICIO_DAS_RECARGAS: i32 = 1024;
+/// `TYPE_PASSIVE`.
+const TIPO_PASSIVA: i32 = 5;
+
+/// O que o `Calculate` da habilidade de Daimon decidiu.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct CalculoDoDaimon {
+    pub vigor: i32,
+    pub resistencia: i32,
+    pub fisico: i32,
+    pub magico: [i32; 5],
+}
+
+/// B355 — avalia o `Calculate` da habilidade de Daimon (`[quem, setter, expressão]` do catálogo) com as variáveis
+/// do jogador e do Daimon (`P_Elfstr` = força final × `ELFSTR_ADJ_IN_SKILL_ATTACK` 1.0, `P_Elfagi` idem,
+/// `P_Elfvit`, `P_Elfeng`, `P_Elflevel`, `P_Elfmp` = o vigor, `playerwrapper.cpp:2669-2697`). Os setters do jogador
+/// são `SetDecelfmp`/`SetDecelfap` (`playerwrapper.h:130-131`); os da habilidade, `SetDamage` e `Set<escola>damage`.
+/// `None` se alguma expressão não se deixar avaliar.
+pub(crate) fn calcular_habilidade_do_daimon(
+    passos: &[(String, String, String)],
+    nivel: i32,
+    jogador: &HashMap<&'static str, f64>,
+) -> Option<CalculoDoDaimon> {
+    let vars = |n: &str| -> Option<f64> {
+        if n == "L" {
+            return Some(nivel as f64);
+        }
+        if let Some(x) = n.strip_prefix("P_") {
+            return jogador.get(x).copied();
+        }
+        match n {
+            "S_T0" | "S_T1" | "S_T2" => Some(0.0),
+            _ => None,
+        }
+    };
+    let mut c = CalculoDoDaimon::default();
+    for (quem, setter, expr) in passos {
+        let v = pw_data_loader::expr::avaliar(expr, &vars)?;
+        match (quem.as_str(), setter.as_str()) {
+            ("P", "Decelfmp") => c.vigor = v as i32,
+            ("P", "Decelfap") => c.resistencia = v as i32,
+            ("P", "Perform") => {}
+            ("S", "Damage") => c.fisico = v as i32,
+            ("S", "Golddamage") => c.magico[0] = v as i32,
+            ("S", "Wooddamage") => c.magico[1] = v as i32,
+            ("S", "Waterdamage") => c.magico[2] = v as i32,
+            ("S", "Firedamage") => c.magico[3] = v as i32,
+            ("S", "Earthdamage") => c.magico[4] = v as i32,
+            _ => return None,
+        }
+    }
+    Some(c)
+}
+
+/// `ElfCondition`: resistência pedida, `apcost / 1000 + apcost % 1000 × (nível − 1)` (`skill.cpp:174-176`).
+pub(crate) fn resistencia_pedida(apcost: i32, nivel: i32) -> i32 {
+    apcost / 1000 + apcost % 1000 * (nivel - 1)
+}
+
+impl BusServer {
+    /// C2S `CAST_ELF_SKILL` (116) `{u16 skill_id; u8 force_attack; u8 target_count; int targets[]}` (`playercmd.cpp:
+    /// 3478-3494`) → `gplayer_imp::CastElfSkill` (`player.cpp:22045-22100`) → `SkillWrapper::RunElfSkill`
+    /// (`cskill/skill/skillwrapper.cpp:1638-1666`): o Daimon vestido tem a habilidade; nem a recarga comum (30, 1 s)
+    /// nem a dela; instantânea (`time_type` 1) de `cls` 258; o `ElfCondition` (não passiva, vigor ≥ `GetMpcost`,
+    /// resistência ≥ a pedida, não montado, alvo ao alcance + 1 m); o estado 0 roda (`InstantRun`): gasta vigor e
+    /// resistência, calcula o dano com os atributos do Daimon e ataca/amaldiçoa/abençoa como a habilidade do jogador
+    /// (`SetPerform`). Sucesso: as duas recargas e `CAST_ELF_SKILL` (269) a quem vê. Falha: `ERR_CAST_ELF_SKILL_*`.
+    /// **Não é igual:** golpe de habilidade de Daimon em **jogador** (PvP) não sai; terra/ar/água e `itemcost` não são
+    /// conferidos; o `_elf_en` (realce de atributo por efeito) é 0.
+    pub(super) async fn conjurar_habilidade_do_daimon(&self, roleid: i32, c: &[u8], envio: &EnvioAoCliente) {
+        if c.len() < 4 || c.len() != 4 + 4 * c[3] as usize {
+            self.responder(roleid, S2CGamedataSend::error_message(erro::FATAL).data, envio).await;
+            return;
+        }
+        let habilidade = u16::from_le_bytes([c[0], c[1]]) as i32;
+        let alvos: Vec<i32> =
+            (0..c[3] as usize).map(|i| i32::from_le_bytes(c[4 + 4 * i..8 + 4 * i].try_into().unwrap())).collect();
+        let preparo = {
+            let mundo = self.world.read().await;
+            let Some(p) = mundo.players.get(&(roleid as i64)) else { return };
+            preparar_habilidade_do_daimon(&mundo, p, habilidade, &alvos)
+        };
+        let (nivel, calc, golpe, alvo, recarga_ms) = match preparo {
+            Ok(x) => x,
+            Err(codigo) => {
+                debug!("mundo: {roleid} não conjurou a habilidade de Daimon {habilidade} (erro {codigo})");
+                self.responder(roleid, S2CGamedataSend::error_message(codigo).data, envio).await;
+                return;
+            }
+        };
+        // O estado 0: gasta vigor e resistência (`OI_DrainElfVigor`/`OI_DrainElfStamina`, `player.cpp:22594-22616`).
+        let (vigor, maximo, ganho, resistencia) = {
+            let mut mundo = self.world.write().await;
+            let limites = mundo.players.get(&(roleid as i64)).and_then(|p| mundo.limites_do_vigor(p)).unwrap_or((0.0, 0.0));
+            let Some(p) = mundo.players.get_mut(&(roleid as i64)) else { return };
+            p.vigor_do_daimon -= (calc.vigor as f32).min(p.vigor_do_daimon.floor()).max(0.0);
+            let agora = std::time::Instant::now();
+            p.recargas.insert(RECARGA_DE_CONJURAR, agora + std::time::Duration::from_millis(RECARGA_DE_CONJURAR_MS));
+            if recarga_ms > 0 {
+                p.recargas.insert(habilidade + INICIO_DAS_RECARGAS, agora + std::time::Duration::from_millis(recarga_ms as u64));
+            }
+            let vigor = p.vigor_do_daimon as i32;
+            let Some(d) = p.daimon.as_mut() else { return };
+            d.estado.vigor -= calc.resistencia.clamp(0, d.estado.vigor.max(0));
+            d.sujo = true;
+            (vigor, limites.0 as i32, (limites.1 * 100.0 + 0.5) as i32, d.estado.vigor)
+        };
+        self.responder(roleid, S2CGamedataSend::elf_vigor(vigor, maximo, ganho).data, envio).await;
+        self.responder(roleid, S2CGamedataSend::elf_stamina(resistencia).data, envio).await;
+        self.responder(roleid, S2CGamedataSend::set_cooldown(RECARGA_DE_CONJURAR, RECARGA_DE_CONJURAR_MS as i32).data, envio).await;
+        if recarga_ms > 0 {
+            self.responder(roleid, S2CGamedataSend::set_cooldown(habilidade + INICIO_DAS_RECARGAS, recarga_ms).data, envio).await;
+        }
+        let no_alvo = if alvo == roleid as i64 { 0 } else { alvo as i32 };
+        let aviso = S2CGamedataSend::cast_elf_skill(roleid, no_alvo, habilidade, nivel.clamp(0, 255) as u8).data;
+        self.responder(roleid, aviso.clone(), envio).await;
+        self.transmitir_a_outros(roleid, aviso).await;
+        let aplicou = self.aplicar_habilidade_com(roleid, habilidade, alvo, nivel, 1.0, envio, Some(golpe)).await;
+        info!(
+            "mundo: {roleid} conjurou a habilidade de Daimon {habilidade} (nível {nivel}) em {alvo}: vigor -{}, resistência -{}, dano {}/{:?}{}",
+            calc.vigor,
+            calc.resistencia,
+            calc.fisico,
+            calc.magico,
+            if aplicou { "" } else { " — sem efeito portado (alvo jogador?)" }
+        );
+    }
+}
+
+/// O `RunElfSkill` até o `ElfCondition` e o `Calculate`: `(nível, cálculo, golpe, alvo, recarga)` ou o erro.
+fn preparar_habilidade_do_daimon(
+    mundo: &crate::world::WorldInstance,
+    p: &PlayerEntity,
+    habilidade: i32,
+    alvos: &[i32],
+) -> Result<(i32, CalculoDoDaimon, crate::combat::Golpe, i64, i32), i32> {
+    let d = p.daimon.as_ref().ok_or(CONJURAR_FALHOU)?;
+    let nivel = d
+        .estado
+        .habilidades
+        .iter()
+        .find(|(id, _)| *id as i32 == habilidade)
+        .map(|(_, n)| *n as i32)
+        .ok_or(CONJURAR_FALHOU)?;
+    let agora = std::time::Instant::now();
+    let em_recarga = |i: i32| p.recargas.get(&i).is_some_and(|ate| *ate > agora);
+    if em_recarga(RECARGA_DE_CONJURAR) || em_recarga(habilidade + INICIO_DAS_RECARGAS) {
+        return Err(CONJURAR_EM_RECARGA);
+    }
+    let h = mundo.data_manager.habilidades.get(habilidade as u32).cloned().ok_or(CONJURAR_FALHOU)?;
+    if h.cls != Some(258) || h.time_type != Some(1) || h.tipo == Some(TIPO_PASSIVA) {
+        return Err(CONJURAR_FALHOU);
+    }
+    let dh = h.daimon.clone().ok_or(CONJURAR_FALHOU)?;
+    let iniciais = mundo.data_manager.atributos_iniciais_do_daimon(d.item_id).unwrap_or([0; 4]);
+    let a = d.estado.atuais(iniciais, |id| mundo.data_manager.equipamento_de_daimon(id));
+    let mut vars = super::habilidades::vars_do_jogador(p);
+    vars.insert("Ap", p.ap as f64);
+    vars.insert("Elfstr", a.atributos[0] as f64);
+    vars.insert("Elfagi", a.atributos[1] as f64);
+    vars.insert("Elfvit", a.atributos[2] as f64);
+    vars.insert("Elfeng", a.atributos[3] as f64);
+    vars.insert("Elflevel", d.estado.nivel as f64);
+    vars.insert("Elfmp", p.vigor_do_daimon.floor() as f64);
+    let pede_vigor = dh
+        .vigor
+        .as_deref()
+        .and_then(|e| {
+            pw_data_loader::expr::avaliar(e, &|n| {
+                if n == "L" {
+                    Some(nivel as f64)
+                } else {
+                    n.strip_prefix("P_").and_then(|x| vars.get(x).copied())
+                }
+            })
+        })
+        .ok_or(CONJURAR_FALHOU)?;
+    // `GetElfmp() < (int)GetMpcost(skill)` e `GetElfap() < apcost/1000 + ...` (`skill.cpp:172-176`).
+    if (p.vigor_do_daimon as i32) < pede_vigor as i32 || d.estado.vigor < resistencia_pedida(h.apcost.unwrap_or(0), nivel) {
+        return Err(CONJURAR_FALHOU);
+    }
+    if p.montaria.is_some() {
+        return Err(CONJURAR_FALHOU);
+    }
+    let calc = calcular_habilidade_do_daimon(dh.calculo.as_deref().ok_or(CONJURAR_FALHOU)?, nivel, &vars).ok_or(CONJURAR_FALHOU)?;
+    // `!(range.IsSelf() || (range.IsSelfBall() && !IsAttack() && !IsCurse()))` → `CheckTarget(1 + GetPraydistance)`.
+    let area = h.tipo_de_area.unwrap_or(0);
+    let alvo = alvos.first().copied().map(|a| a as i64).filter(|a| *a != p.role_id as i64);
+    let de_si = area == 5 || (area == 2 && h.tipo != Some(1) && h.tipo != Some(3));
+    if !de_si {
+        let alcance = h.alcance(nivel, p.attack_range).unwrap_or(0.0) + 1.0;
+        let pos = alvo.and_then(|a| {
+            mundo.players.get(&a).map(|q| q.position).or_else(|| mundo.monsters.get(&a).map(|(m, _)| m.position))
+        });
+        match pos {
+            Some(pos) if pos.distance(&p.position) <= alcance => {}
+            _ => return Err(CONJURAR_FALHOU),
+        }
+    }
+    let mut golpe = CombatEngine::golpe_de_jogador(p);
+    golpe.de_habilidade = true;
+    golpe.dano_fisico = calc.fisico;
+    for (e, v) in calc.magico.iter().enumerate() {
+        // `Set<escola>damage`: `(int)(x × (1.0 + GetInc<escola>()))` (`skill.cpp:899-903`).
+        golpe.dano_magico[e] = (*v as f64 * (1.0 + p.passivas_comuns.elemento[e] as f64)) as i32;
+    }
+    golpe.e_fisico = h.attr == Some(1);
+    golpe.taxa_de_ataque = (golpe.taxa_de_ataque as f32 * h.precisao(nivel)) as i32;
+    let recarga = h.recarga_armada_ms(nivel).unwrap_or(0);
+    Ok((nivel, calc, golpe, alvo.unwrap_or(p.role_id as i64), recarga))
+}
+
+#[cfg(test)]
+mod testes_da_conjuracao {
+    use super::*;
+
+    fn calculo(id: &str) -> Vec<(String, String, String)> {
+        let j: serde_json::Value = serde_json::from_str(pw_data_loader::habilidades::json_do_servidor("1.5.5").unwrap()).unwrap();
+        serde_json::from_value(j["habilidades"][id]["daimon"]["calculo"].clone()).unwrap()
+    }
+
+    /// B355 — o `Calculate` da 1000 (`skill1000.h:39-46`) e da 1004 (fogo + físico), à mão.
+    #[test]
+    fn o_calculo_do_daimon_e_o_do_stub() {
+        let vars = HashMap::from([("Elfstr", 50.0), ("Elflevel", 10.0)]);
+        let c = calcular_habilidade_do_daimon(&calculo("1000"), 1, &vars).unwrap();
+        // vigor 80 − 10 × 0,4; madeira (0,9 × 6) × 1,5 × 9,3 = 75,33; metal (0,1 × 6) × 1,5 × 9,3 = 8,37.
+        assert_eq!(c, CalculoDoDaimon { vigor: 76, resistencia: 200, fisico: 0, magico: [8, 75, 0, 0, 0] });
+        let c = calcular_habilidade_do_daimon(&calculo("1004"), 3, &HashMap::new()).unwrap();
+        // nível 3: 5 + 2 × 13 = 31; fogo 0,6 × 31 × 11 = 204,6; físico 0,4 × 31 × 11 = 136,4; vigor 32; resistência 45.
+        assert_eq!(c, CalculoDoDaimon { vigor: 32, resistencia: 45, fisico: 136, magico: [0, 0, 0, 204, 0] });
+        assert!(calcular_habilidade_do_daimon(&calculo("1000"), 1, &HashMap::new()).is_none(), "sem a força do Daimon não avalia");
+        assert_eq!(resistencia_pedida(200_000, 1), 200);
+        assert_eq!(resistencia_pedida(15_015, 3), 45);
+    }
 }

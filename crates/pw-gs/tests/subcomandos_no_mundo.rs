@@ -10721,3 +10721,167 @@ async fn a_aura_de_maldicao_fere_quem_esta_no_raio() {
     let depois = mundo.read().await.monsters[&MONSTRO].0.hp;
     assert_eq!(antes - depois, 10, "Directhurt 10 da 1795 no nível 1");
 }
+
+/// B354 — a cerimônia de casamento no mapa dela: o noivo (capitão de uma equipe com a noiva, casados) reserva pelo
+/// serviço 62 — os dois ganham o convite com o conteúdo da cerimônia, ele a autorização, e os bilhetes saem —, convida
+/// alguém pelo serviço 63, vê a agenda (C2S 36 → 289) e, com a cerimônia acontecendo, usa o convite e vai à cena.
+#[tokio::test]
+async fn cerimonia_de_casamento_reserva_convite_e_cena() {
+    use pw_gs::casamento::{agenda, na_cena, AgendaDeCasamento, Convite};
+    let Some((mundo, addr, noivo, noiva)) = montar(GameVersion::V1_5_5).await else { return };
+    let cfg = pw_data_loader::casamento::ConfigDeCasamento {
+        sessoes: vec![[10, 0, 11, 0]],
+        cenas: vec![[50.0, 0.0, 60.0], [70.0, 0.0, 80.0]],
+        convites: vec![28444, 28445],
+        ..Default::default()
+    };
+    {
+        let mut m = mundo.write().await;
+        let mut dados = (*m.data_manager).clone();
+        dados.casamento = Some(cfg.clone());
+        let mut s = dados.servicos_de_npc.get(&TEMPLATE_DO_NPC).cloned().unwrap_or_default();
+        s.casamento = true;
+        dados.servicos_de_npc.insert(TEMPLATE_DO_NPC, s);
+        m.data_manager = Arc::new(dados);
+    }
+    let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let utc = chrono::FixedOffset::east_opt(0).unwrap();
+    let (inicio, fim) = {
+        let a = AgendaDeCasamento::nova(&cfg, agora, utc);
+        let w = *a.lista.iter().find(|w| w.inicio > agora + 60 && w.cena == 1).expect("horário futuro");
+        *agenda().lock().unwrap() = Some(a);
+        (w.inicio as i32, w.fim as i32)
+    };
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    for (quem, slot, tid) in [(noivo, 0, 28452), (noiva, 0, 28452), (noivo, 1, 28400)] {
+        let mut i = peca(quem, pw_core::ContainerType::Inventory, slot, tid, 0, 0);
+        i.max_count = 100;
+        itens.upsert_item(&i).await.unwrap();
+    }
+    let mut link = entrar(&mundo, addr, noivo).await;
+    let _link_da_noiva = entrar(&mundo, addr, noiva).await;
+    {
+        let mut m = mundo.write().await;
+        for (a, b) in [(noivo, noiva), (noiva, noivo)] {
+            let p = m.players.get_mut(&(a as i64)).unwrap();
+            p.conjuge = b;
+            p.npc_em_conversa = Some(NPC);
+        }
+        // O mapa da cerimônia (134): o convite só leva à cena nele (`PosInWorld`).
+        m.world_id = 134;
+        assert!(m.convidar_para_grupo(noivo, noiva).is_ok());
+        assert!(m.aceitar_convite(noiva, noivo).is_some());
+    }
+    let servir = |servico: i32, corpo: Vec<i32>| {
+        let mut b = servico.to_le_bytes().to_vec();
+        b.extend_from_slice(&((corpo.len() * 4) as u32).to_le_bytes());
+        for v in corpo {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        subcomando(ids::SEVNPC_SERVE, &b)
+    };
+    // Reserva (tipo 1, cena 1, sem cartão).
+    link.enviar(BusMessage::ClientToGame { roleid: noivo, localsid: LOCALSID, data: servir(62, vec![1, inicio, fim, 1, -1]) })
+        .await
+        .unwrap();
+    let ok = esperar_comando(&mut link, 290).await;
+    assert_eq!(i32_em(&ok, 2), 1, "WEDDING_BOOK_SUCCESS(1)");
+    assert_eq!(
+        agenda().lock().unwrap().as_ref().unwrap().gravar(),
+        vec![[inicio as i64, fim as i64, noivo as i64, noiva as i64, 1, 2]],
+        "reservada para o casal (noivo, noiva) na cena 1"
+    );
+    let convite_de = |lista: &[pw_core::ItemRecord]| lista.iter().find(|i| i.item_id == 28444).and_then(|i| Convite::ler(&i.octets).map(|c| (i.slot, c)));
+    let lista_do_noivo = itens.list_by_container(noivo, pw_core::ContainerType::Inventory).await.unwrap();
+    let (slot_do_convite, c) = convite_de(&lista_do_noivo).expect("o noivo ganhou o convite");
+    assert_eq!(c, Convite { inicio, fim, noivo, noiva, cena: 1, convidado: noivo });
+    assert!(lista_do_noivo.iter().any(|i| i.item_id == 28454), "e a autorização");
+    assert!(!lista_do_noivo.iter().any(|i| i.item_id == 28452), "o bilhete saiu");
+    let lista_da_noiva = itens.list_by_container(noiva, pw_core::ContainerType::Inventory).await.unwrap();
+    assert_eq!(convite_de(&lista_da_noiva).map(|(_, c)| c.convidado), Some(noiva));
+    // Convite para alguém (o id 4242): convite do convidado (28445) com ele dentro, e o bilhete 28400 sai.
+    link.enviar(BusMessage::ClientToGame { roleid: noivo, localsid: LOCALSID, data: servir(63, vec![slot_do_convite as i32, 4242]) })
+        .await
+        .unwrap();
+    let _ = esperar_comando(&mut link, 99).await; // OBTAIN_ITEM
+    let lista_do_noivo = itens.list_by_container(noivo, pw_core::ContainerType::Inventory).await.unwrap();
+    let novo = lista_do_noivo.iter().find(|i| i.item_id == 28445).and_then(|i| Convite::ler(&i.octets)).expect("convite do convidado");
+    assert_eq!((novo.convidado, novo.noivo, novo.noiva), (4242, noivo, noiva));
+    assert!(!lista_do_noivo.iter().any(|i| i.item_id == 28400));
+    // A agenda pelo serviço: 289 com 4 + 22 × entradas.
+    link.enviar(BusMessage::ClientToGame { roleid: noivo, localsid: LOCALSID, data: subcomando(ids::SEVNPC_GET_CONTENT, &62i32.to_le_bytes()) })
+        .await
+        .unwrap();
+    let l = esperar_comando(&mut link, 289).await;
+    assert_eq!(l.len(), 2 + 4 + 22 * i32_em(&l, 2) as usize);
+    // Fora da hora o convite recusa (140); na hora, leva à cena 1 e avisa `ENTER_WEDDING_SCENE`.
+    let usar = {
+        let mut b = vec![0u8, 1];
+        b.extend_from_slice(&slot_do_convite.to_le_bytes());
+        b.extend_from_slice(&28444i32.to_le_bytes());
+        subcomando(ids::USE_ITEM, &b)
+    };
+    link.enviar(BusMessage::ClientToGame { roleid: noivo, localsid: LOCALSID, data: usar.clone() }).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await; // ERROR_MESSAGE
+    assert_eq!(i32_em(&e, 2), 140);
+    agenda().lock().unwrap().as_mut().unwrap().batimento(inicio as i64 + 1);
+    link.enviar(BusMessage::ClientToGame { roleid: noivo, localsid: LOCALSID, data: usar }).await.unwrap();
+    let cena = esperar_comando(&mut link, 327).await;
+    assert_eq!((i32_em(&cena, 2), i32_em(&cena, 6)), (noivo, noiva));
+    assert_eq!(na_cena().lock().unwrap().get(&noivo), Some(&(noivo, noiva, 1)));
+    let pos = mundo.read().await.players.get(&(noivo as i64)).unwrap().position;
+    assert_eq!((pos.x, pos.z), (70.0, 80.0), "a posição da cena 1");
+    *agenda().lock().unwrap() = None;
+}
+
+/// B355 — conjurar a habilidade do Daimon (C2S 116): a 1004 (fogo + físico, nível 3) no monstro — vigor −32,
+/// resistência −45, `CAST_ELF_SKILL` (269), a vida cai, as recargas armam; de novo na hora, `ERR_CAST_ELF_SKILL_IN_
+/// COOLDOWN` (131); sem vigor, `ERR_CAST_ELF_SKILL_FAILED` (128).
+#[tokio::test]
+async fn conjurar_habilidade_do_daimon_no_monstro() {
+    let (mundo, addr, roleid, _) = cenario!();
+    {
+        let mut m = mundo.write().await;
+        let mut dados = (*m.data_manager).clone();
+        dados.habilidades = pw_data_loader::habilidades::TabelaDeHabilidades::de_json(
+            pw_data_loader::habilidades::json_do_servidor("1.5.5").unwrap(),
+        )
+        .unwrap();
+        m.data_manager = Arc::new(dados);
+    }
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        let mut estado = pw_gs::entity::Daimon::novo(&[]);
+        estado.habilidades = vec![(1004, 3)];
+        estado.vigor = 20_000;
+        p.daimon = Some(pw_gs::entity::DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado, sujo: false });
+        p.vigor_do_daimon = 100.0;
+    }
+    let mut corpo = 1004u16.to_le_bytes().to_vec();
+    corpo.extend_from_slice(&[0, 1]);
+    corpo.extend_from_slice(&(MONSTRO as i32).to_le_bytes());
+    let conjurar = subcomando(ids::CAST_ELF_SKILL, &corpo);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: conjurar.clone() }).await.unwrap();
+    let aviso = esperar_comando(&mut link, 269).await;
+    assert_eq!((i32_em(&aviso, 2), i32_em(&aviso, 6), i32_em(&aviso, 10), aviso[14]), (roleid, MONSTRO as i32, 1004, 3));
+    let m = mundo.read().await;
+    let p = m.players.get(&(roleid as i64)).unwrap();
+    assert_eq!(p.vigor_do_daimon, 68.0);
+    assert_eq!(p.daimon.as_ref().unwrap().estado.vigor, 20_000 - 45);
+    assert!(m.monsters.get(&MONSTRO).map_or(true, |(mo, _)| mo.hp < MONSTRO_HP), "o golpe tirou vida");
+    drop(m);
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: conjurar.clone() }).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 131, "em recarga");
+    {
+        let mut m = mundo.write().await;
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.recargas.clear();
+        p.vigor_do_daimon = 10.0;
+    }
+    link.enviar(BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: conjurar }).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 128, "vigor 10 < 32");
+}

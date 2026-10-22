@@ -17003,3 +17003,33 @@ comparação lado a lado.
     - Ver em jogo (1.5.5, dois clientes): os dois em grupo entram na Caverna das Sombras (169); o membro sai do grupo —
       aparece a contagem de saída de 60 s; ao fim, ele vai para a cidade. Repetir e, antes dos 60 s, o líder convida de
       novo: a contagem some.
+
+354. **Sessão 2026-10-22: divórcio e cerimônia de casamento.**
+
+    - Divórcio: `TaskReward::divorcio` (`m_bDivorce`, +83 do prêmio v129; exemplo `missoes_de_divorcio`: só a 9373),
+      `Jogador::divorciar`, gravação dos dois cônjuges a 0 e `PLAYER_CHANGE_SPOUSE(id, 0)`.
+    - Cerimônia: `pw_data_loader::casamento` (`WEDDING_CONFIG` 801, cartões; exemplo `casamento`), `gerar_limites.py`
+      com `ponto_de_salvar` e `casamento` (o 134 do 1.5.5), `pw_gs::casamento` (agenda do `wedding_manager`, convite),
+      `bus_server/casamento.rs` (C2S 36, serviços 62/63, uso do convite), `RoteadorDeMapas::ligar_casamento` (agenda no
+      mapa 134, batimento de 10 s, gravação em `realms.config->'casamento'`, saída da cena), `RealmRepository::
+      casamento`/`gravar_casamento`, `ServicosDoNpc::casamento`, S2C 289/290/327.
+    - Provas: `casamento::testes` **4/4**, `missao_de_casamento` (divórcio), `cerimonia_de_casamento_reserva_convite_e_cena`
+      **1/1** (reserva pelo serviço 62 com os itens de verdade no banco, convite pelo 63, agenda pelo 36 → 289, convite
+      recusado fora da hora com 140 e na hora levando à cena 1 com o 327), conferidor S2C e C2S contra o IR.
+    - Ver em jogo (1.5.5, dois clientes, casados, em grupo, no mapa 134 perto do NPC da cerimônia, cada um com o
+      bilhete 28452): o capitão abre o serviço de reserva — aparece a agenda; reserva um horário — os dois recebem o
+      convite; na hora marcada, usar o convite leva à cena. A missão 9373 desfaz o casamento.
+
+355. **Sessão 2026-10-22: Daimon — vigor e conjurar habilidade.**
+
+    - Extrator: `extrair_habilidades.py` grava `daimon: {calculo, vigor}` das 96 habilidades `cls` 258 (o `Calculate`
+      do estado 0 e o `GetMpcost`); o resto do catálogo saiu idêntico. `HabilidadeDoServidor::daimon` e `attr`.
+    - `PlayerEntity::vigor_do_daimon`, `entity::limites_do_vigor`, `World::limites_do_vigor` e o batimento de 1 s
+      (`EventoDoMundo::VigorDoDaimon` → `ELF_VIGOR`); a morte zera.
+    - `bus_server/daimon.rs`: `conjurar_habilidade_do_daimon` (C2S 116), `calcular_habilidade_do_daimon`,
+      `resistencia_pedida`; `aplicar_habilidade_com` aceita o golpe pronto. S2C 262/264/269.
+    - Provas: `testes_da_conjuracao` **1/1** (1000 e 1004 à mão), `conjurar_habilidade_do_daimon_no_monstro` **1/1** (vigor
+      100→68, resistência −45, 269, vida do monstro cai, 131 em recarga, 128 sem vigor), conferidores S2C/C2S.
+    - Ver em jogo (1.5.5): com um Daimon vestido que saiba uma habilidade de ataque, esperar a barra de vigor encher e
+      usar a habilidade num monstro — o Daimon solta o efeito, o monstro perde vida, a barra de vigor cai e a
+      resistência do Daimon desce na ficha.

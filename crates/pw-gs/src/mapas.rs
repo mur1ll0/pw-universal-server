@@ -452,6 +452,88 @@ impl RoteadorDeMapas {
 
     /// Lê as rates do realm no banco (`realms.double_*_multiplier`). Valor fora dos
     /// limites do painel fica no padrão 1× e vira aviso, em vez de bagunçar a economia.
+    /// B354 — a cerimônia de casamento (`global_world_manager` com `wedding_server = 1`, `global_manager.cpp:241-250`):
+    /// só no 1.5.5, só se este processo serve o mapa da cerimônia (134) e o `WEDDING_CONFIG` 801 é válido. Monta a
+    /// agenda, carrega a gravada (`DBLoad`) e põe o batimento de 10 s (`RunTick`), que grava quando muda e tira da
+    /// cena quem está numa cerimônia que acabou (`wedding_filter::Heartbeat`).
+    pub async fn ligar_casamento(self: &Arc<Self>, realms: pw_storage::RealmRepository, realm: String) {
+        let Some(carga) = self.carga.get() else { return };
+        if carga.versao == pw_protocol::GameVersion::V1_2_6 {
+            return;
+        }
+        let Some(mapa) = pw_data_loader::limites::mapa_do_casamento(pw_data_loader::limites::CatalogoDeLimites::V155) else {
+            return;
+        };
+        if !self.serve(mapa) {
+            info!("casamento: o mapa da cerimônia ({mapa}) não está neste processo — sem agenda");
+            return;
+        }
+        let Some(cfg) = self.dados_vigentes(carga).casamento.clone() else {
+            warn!("casamento: sem WEDDING_CONFIG 801 válido — sem agenda");
+            return;
+        };
+        let agora = chrono::Utc::now().timestamp();
+        let fuso = *chrono::Local::now().offset();
+        let mut agenda = crate::casamento::AgendaDeCasamento::nova(&cfg, agora, fuso);
+        match realms.casamento(&realm).await {
+            Ok(gravadas) => {
+                let perdidas = agenda.carregar(&gravadas);
+                info!("casamento: agenda do mapa {mapa} com {} reservas gravadas ({perdidas} fora da janela)", gravadas.len());
+            }
+            Err(e) => warn!("casamento: não li a agenda gravada: {e}"),
+        }
+        if let Ok(mut a) = crate::casamento::agenda().lock() {
+            *a = Some(agenda);
+        }
+        let este = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut t = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                t.tick().await;
+                este.batimento_do_casamento(&realms, &realm, mapa).await;
+            }
+        });
+    }
+
+    /// B354 — `wedding_manager::RunTick` e `wedding_filter::Heartbeat`.
+    async fn batimento_do_casamento(&self, realms: &pw_storage::RealmRepository, realm: &str, mapa: i32) {
+        let agora = chrono::Utc::now().timestamp();
+        let (gravar, acabou): (Option<Vec<[i64; 6]>>, Vec<i32>) = {
+            let Ok(mut a) = crate::casamento::agenda().lock() else { return };
+            let Some(a) = a.as_mut() else { return };
+            a.batimento(agora);
+            let gravar = std::mem::take(&mut a.suja).then(|| a.gravar());
+            let acabou = match crate::casamento::na_cena().lock() {
+                Ok(mut n) => {
+                    let fora: Vec<i32> = n.iter().filter(|(_, (g, b, c))| !a.em_andamento(*g, *b, *c)).map(|(r, _)| *r).collect();
+                    for r in &fora {
+                        n.remove(r);
+                    }
+                    fora
+                }
+                Err(_) => Vec::new(),
+            };
+            (gravar, acabou)
+        };
+        if let Some(lista) = gravar {
+            if let Err(e) = realms.gravar_casamento(realm, &lista).await {
+                warn!("casamento: não gravei a agenda: {e}");
+            }
+        }
+        // `WAIT_ESCAPE`: o ponto de salvar do mapa (`save_point = 1,1224,223,1051` no 134), ou (0, 300, 0) do mapa 1.
+        let destino = pw_data_loader::limites::do_mapa(pw_data_loader::limites::CatalogoDeLimites::V155, mapa)
+            .and_then(|m| m.ponto_de_salvar)
+            .filter(|p| p.mapa > 0 && p.mapa != mapa)
+            .map(|p| (p.mapa, pw_core::Vector3::new(p.pos[0], p.pos[1], p.pos[2])))
+            .unwrap_or((1, pw_core::Vector3::new(0.0, 300.0, 0.0)));
+        for roleid in acabou {
+            let Some(servidor) = self.mapa_de(roleid).await.filter(|m| *m == mapa).and_then(|m| self.mapa(m)) else { continue };
+            servidor.enviar_ao_jogador(roleid, S2CGamedataSend::enter_wedding_scene(0, 0).data).await;
+            info!("casamento: a cerimônia acabou — {roleid} sai da cena");
+            servidor.transportar(roleid, destino.0, destino.1).await;
+        }
+    }
+
     pub async fn carregar_taxas(&self, realms: &pw_storage::RealmRepository, realm: &str) {
         match realms.get_realm(realm).await {
             Ok(Some(r)) => {

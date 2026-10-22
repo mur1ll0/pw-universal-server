@@ -279,6 +279,8 @@ pub struct GameDataManager {
     pub cartas: crate::cartas::TabelaDeCartas,
     /// Cartas de General: caixas (`POKER_DICE_ESSENCE`) e cartas (`POKER_ESSENCE`).
     pub cartas_de_general: crate::cartas_de_general::CartasDeGeneral,
+    /// B354 — a cerimônia de casamento (`WEDDING_CONFIG` 801 e os cartões).
+    pub casamento: Option<crate::casamento::ConfigDeCasamento>,
     /// Addons: tratador e parâmetros (`EQUIPMENT_ADDON`).
     pub addons: crate::addons::TabelaDeAddons,
     /// O que o drop de equipamento sorteia (`generate_weapon/armor/decoration`).
@@ -560,6 +562,7 @@ impl GameDataManager {
             self.aljavas = crate::armas::carregar_aljavas(g);
             self.cartas = crate::cartas::carregar(g);
             self.cartas_de_general = crate::cartas_de_general::carregar(g);
+            self.casamento = crate::casamento::carregar(g);
             self.addons = crate::addons::TabelaDeAddons::carregar(g);
             self.geracao = crate::addons::carregar_geracao(g);
             self.addons.ligar_familias(&self.geracao);

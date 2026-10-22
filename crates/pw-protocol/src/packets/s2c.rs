@@ -2538,6 +2538,66 @@ impl S2CGamedataSend {
         stream.write_u8(u8::from(perdeu));
         Self { data: stream.into_bytes().to_vec() }
     }
+    /// B355 — `ELF_VIGOR` (262) `{int vigor; int max_vigor; int vigor_gen}` (`cmd_elf_vigor`; `query_elf_vigor`,
+    /// `player.cpp:3576-3582`: o ganho vai × 100 arredondado).
+    pub fn elf_vigor(vigor: i32, maximo: i32, ganho_x100: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(262);
+        stream.write_i32_le(vigor);
+        stream.write_i32_le(maximo);
+        stream.write_i32_le(ganho_x100);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B355 — `ELF_STAMINA` (264) `{int stamina}` (`query_elf_stamina`): a resistência do Daimon vestido.
+    pub fn elf_stamina(resistencia: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(264);
+        stream.write_i32_le(resistencia);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B355 — `CAST_ELF_SKILL` (269; `PLAYER_CAST_ELF_SKILL`) `{int pid; int target; int skill; unsigned char level}` = 13
+    /// (`SendClientElfSkill`, a quem vê, ele incluído).
+    pub fn cast_elf_skill(quem: i32, alvo: i32, habilidade: i32, nivel: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(269);
+        stream.write_i32_le(quem);
+        stream.write_i32_le(alvo);
+        stream.write_i32_le(habilidade);
+        stream.write_u8(nivel);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B354 — `WEDDING_BOOK_LIST` (289) `{int count; {int start_time, end_time, groom, bride, scene; char status;
+    /// char special}[]}` = 4 + 22 × n (`cmd_wedding_book_list`, `EC_GPDataType.h:3880-3893`, `pack(1)`;
+    /// `wedding_manager::SendBookingList`, `weddingmanager.cpp:213-228`). Só 1.5.5.
+    pub fn wedding_book_list(lista: &[([i32; 5], u8, bool)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(289);
+        stream.write_i32_le(lista.len() as i32);
+        for (v, estado, especial) in lista {
+            for x in v {
+                stream.write_i32_le(*x);
+            }
+            stream.write_u8(*estado);
+            stream.write_u8(u8::from(*especial));
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B354 — `WEDDING_BOOK_SUCCESS` (290) `{int type}`: 1 reservou, 2 cancelou (`common/protocol.h`).
+    pub fn wedding_book_success(tipo: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(290);
+        stream.write_i32_le(tipo);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+    /// B354 — `ENTER_WEDDING_SCENE` (327) `{int groom; int bride}`: entrou na cena (`wedding_filter::OnAttach`), ou
+    /// `(0, 0)` ao sair (`OnRelease`).
+    pub fn enter_wedding_scene(noivo: i32, noiva: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(327);
+        stream.write_i32_le(noivo);
+        stream.write_i32_le(noiva);
+        Self { data: stream.into_bytes().to_vec() }
+    }
     /// B353 — `EXIT_INSTANCE` (200; `KICKOUT_INSTANCE` no servidor) `{int idInst; char reason; int iLeftTime}` = 9 B
     /// (`cmd_exit_instance`; `gplayer_dispatcher::kickout_instance`, `gs/player.cpp:5233-5240`): o mapa, a razão
     /// (`KIR_*`, `gs/aei_filter.h:12-24`: 0 cancela, 1 chave não confere, 2 gente demais) e os segundos até sair

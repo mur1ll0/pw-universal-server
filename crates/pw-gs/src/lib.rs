@@ -2,6 +2,7 @@ pub mod ai;
 pub mod administracao;
 pub mod bus_server;
 pub mod cartas_de_general;
+pub mod casamento;
 pub mod comandos;
 pub mod dados_unicos;
 pub mod duelo;

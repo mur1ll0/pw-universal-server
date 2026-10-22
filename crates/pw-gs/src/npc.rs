@@ -83,6 +83,9 @@ pub mod servico {
     /// habilidade do Daimon (`SERVICE_INSERTER(elf_learn/forget_skill_*, 50/51)`, `serviceprovider.cpp:8771-8772`).
     pub const APRENDER_HABILIDADE_DE_DAIMON: i32 = 50;
     pub const ESQUECER_HABILIDADE_DE_DAIMON: i32 = 51;
+    /// B354 — `wedding_book` e `wedding_invite` (`serviceprovider.cpp:8783-8784`).
+    pub const RESERVAR_CASAMENTO: i32 = 62;
+    pub const CONVITE_DE_CASAMENTO: i32 = 63;
 }
 
 /// O envelope do comando, com o corpo ainda por interpretar.

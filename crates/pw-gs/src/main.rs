@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
     roteador.ligar_trocas();
     roteador.carregar_taxas(&contas_admin.realms(), &realm_id).await;
     roteador.carregar_mapas_desligados(&contas_admin.realms(), &realm_id).await;
+    roteador.ligar_casamento(contas_admin.realms(), realm_id.clone()).await;
     if let Ok(processo) = std::env::var("ADMIN_COORDENACAO_ID") {
         // Opcional: sem as tabelas da migração (scripts/2026_10_05_coordenacao_gm.sql)
         // o GS sobe sem coordenação GM em vez de abortar.

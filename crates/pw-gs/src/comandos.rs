@@ -159,6 +159,8 @@ pub mod ids {
     pub const ELF_PLAYER_INSERT_EXP: u16 = 113;
     /// B345 — `elf_equip_item { unsigned char index_inv }` (3 B).
     pub const ELF_EQUIP_ITEM: u16 = 114;
+    /// B355 — `cast_elf_skill` `{u16 skill_id; u8 force_attack; u8 target_count; int targets[]}`.
+    pub const CAST_ELF_SKILL: u16 = 116;
     /// B344 — `SRV::C2S::CMD::duel_request { int target }` (`common/protocol.h`, 6 B com o cabeçalho).
     pub const DUEL_REQUEST: u16 = 92;
     /// B344 — `SRV::C2S::CMD::duel_reply { int who; int param }` (10 B com o cabeçalho).
@@ -232,6 +234,8 @@ pub mod ids {
     /// `SRV::C2S::CMD::service_hello` — abrir diálogo com um NPC. O IR marca este id como
     /// só cabeçalho; está errado, ver [`SevnpcHello`].
     pub const SEVNPC_HELLO: u16 = 35;
+    /// B354 — `SRV::C2S::CMD::service_get_content` `{int service_type}` (`playercmd.cpp:1921-1936`).
+    pub const SEVNPC_GET_CONTENT: u16 = 36;
     /// `SRV::C2S::CMD::task_notify` — o cliente reporta algo ao sistema de missões. O IR
     /// marca este id como só cabeçalho; está errado, ver [`TaskNotify`].
     pub const TASK_NOTIFY: u16 = 49;

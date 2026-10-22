@@ -52,6 +52,13 @@ for nome, s in secoes.items():
     if m.group(1) == "Instance":
         mapas[tag]["por_copia"] = int(s.get("player_per_instance", "0").strip() or 0)
         mapas[tag]["paralelo"] = s.get("parallelworld_server", "0").strip() == "1"
+    # B354 — `save_point = tag,x,y,z` (`worldmanager.cpp:1030-1037`, o `GetSavePoint`) e `wedding_server = 1`
+    # (`global_manager.cpp:241`: o mapa da cerimônia de casamento).
+    sp = [t.strip() for t in s.get("save_point", "").split(",") if t.strip()]
+    if len(sp) == 4:
+        mapas[tag]["ponto_de_salvar"] = {"mapa": int(sp[0]), "pos": [float(x) for x in sp[1:]]}
+    if s.get("wedding_server", "0").strip() == "1":
+        mapas[tag]["casamento"] = True
 
 saida = {
     "fonte": f"gamed/gs.conf do servidor {versao} (chave `limit` e `height_limit` de [World_*]/[Instance_*]); gerado por specs/mapas/gerar_limites.py",

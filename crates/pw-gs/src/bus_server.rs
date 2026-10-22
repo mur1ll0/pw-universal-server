@@ -61,6 +61,7 @@ use tracing::{debug, info, trace, warn};
 mod armazem;
 mod organizar_bolsa;
 mod criacao_pelo_painel;
+mod casamento;
 mod daimon;
 mod daimon_editado;
 mod gm;
@@ -897,6 +898,14 @@ impl BusServer {
                 // Morrer cancela golpe e conjuração (`world.rs`), e com eles o golpe que
                 // esperava a vez (B57).
                 self.golpe_na_fila.write().await.remove(&roleid);
+                // B355 — a morte zera o vigor do Daimon (`player.cpp:14111-14115`).
+                let tinha_daimon = self.world.write().await.players.get_mut(&(roleid as i64)).is_some_and(|p| {
+                    p.vigor_do_daimon = 0.0;
+                    p.daimon.is_some()
+                });
+                if tinha_daimon {
+                    self.avisar_vigor_do_daimon(roleid).await;
+                }
                 // `gactive_imp::Die` (`gs/actobject.cpp:590-606`) tira os filtros
                 // `FILTER_MASK_REMOVE_ON_DEATH` **antes** do `OnDeath` que avisa a morte. O de voo
                 // (`fly_filter.h:10-27`) pousa: `Landing` → `_runner->landing()`
@@ -1067,6 +1076,7 @@ impl BusServer {
             }
 
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
+            EventoDoMundo::VigorDoDaimon { roleid } => self.avisar_vigor_do_daimon(roleid).await,
 
             EventoDoMundo::VidaDoMonstro {
                 id,
@@ -1278,6 +1288,20 @@ impl BusServer {
     ///
     /// Foi um erro meu, de uma etapa anterior: o caminho de saída do mundo nasceu certo na
     /// intenção e errado no comando.
+    /// B355 — `query_elf_vigor` (`player.cpp:3576-3582`): `ELF_VIGOR` com o vigor, o máximo e o ganho × 100.
+    pub(super) async fn avisar_vigor_do_daimon(&self, roleid: i32) {
+        let v = {
+            let mundo = self.world.read().await;
+            mundo
+                .players
+                .get(&(roleid as i64))
+                .and_then(|p| mundo.limites_do_vigor(p).map(|(m, g)| (p.vigor_do_daimon as i32, m as i32, (g * 100.0 + 0.5) as i32)))
+        };
+        if let Some((vigor, maximo, ganho)) = v {
+            self.enviar_ao_jogador(roleid, S2CGamedataSend::elf_vigor(vigor, maximo, ganho).data).await;
+        }
+    }
+
     async fn avisar_vida_propria(&self, roleid: i32) {
         let dados = self.world.read().await.dados_do_proprio(roleid);
         let Some((nivel, nivel2, lutando, hp, max_hp, mp, max_mp, exp, sp, ap, max_ap)) = dados
@@ -1881,6 +1905,7 @@ impl BusServer {
             ids::EMOTE_ACTION => self.emote(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_SERVE => self.servico_de_npc(roleid, &cmd.payload, envio).await,
             ids::SEVNPC_HELLO => self.dizer_ola_ao_npc(roleid, &cmd.payload, envio).await,
+            ids::SEVNPC_GET_CONTENT => self.conteudo_do_servico(roleid, &cmd.payload).await,
             ids::TASK_NOTIFY => self.notificar_tarefa(roleid, &cmd.payload, envio).await,
             ids::CHECK_SECURITY_PASSWD => self.conferir_senha(roleid, &cmd.payload, envio).await,
             ids::ENABLE_PVP_STATE => self.chave_de_pvp(roleid, true, envio).await,
@@ -1893,6 +1918,7 @@ impl BusServer {
             ids::TEAM_INVITE => self.convidar(roleid, &cmd.payload).await,
             ids::DUEL_REQUEST | ids::DUEL_REPLY => self.comando_de_duelo(roleid, cmd.id, &cmd.payload, envio).await,
             ids::SWALLOW_GENERALCARD => self.devorar_carta(roleid, &cmd.payload, envio).await,
+            ids::CAST_ELF_SKILL => self.conjurar_habilidade_do_daimon(roleid, &cmd.payload, envio).await,
             ids::ELF_ADD_ATTRIBUTE | ids::ELF_ADD_GENIUS | ids::ELF_PLAYER_INSERT_EXP | ids::ELF_EQUIP_ITEM => {
                 self.comando_do_daimon(roleid, cmd.id, &cmd.payload, envio).await
             }
@@ -2910,6 +2936,19 @@ impl BusServer {
                 .copied();
             if let Some(comida) = comida {
                 self.alimentar_mascote(roleid, &u, comida, envio).await;
+                return;
+            }
+            // B354 — convite de casamento (`WEDDING_INVITECARD_ESSENCE`): leva à cena da cerimônia.
+            let e_convite = self
+                .world
+                .read()
+                .await
+                .data_manager
+                .casamento
+                .as_ref()
+                .is_some_and(|c| c.convites.contains(&(u.item_id as u32)));
+            if e_convite {
+                self.usar_convite_de_casamento(roleid, &u, &guardado.octets).await;
                 return;
             }
             // Caixa de Cartas de General (`POKER_DICE_ESSENCE`): sorteia uma carta e se gasta.
@@ -4984,6 +5023,8 @@ impl BusServer {
             servico::TROCAR_ROSTO => self.iniciar_troca_de_rosto(roleid, c, envio).await,
             servico::APRENDER_HABILIDADE_DE_DAIMON => self.aprender_habilidade_de_daimon(roleid, c).await,
             servico::ESQUECER_HABILIDADE_DE_DAIMON => self.esquecer_habilidade_de_daimon(roleid, c).await,
+            servico::RESERVAR_CASAMENTO => self.servico_de_reserva(roleid, c).await,
+            servico::CONVITE_DE_CASAMENTO => self.servico_de_convite(roleid, c).await,
 
             outro => {
                 debug!("mundo: {roleid} pediu o serviço de NPC {outro}, ainda não tratado");

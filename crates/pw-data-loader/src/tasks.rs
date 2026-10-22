@@ -233,6 +233,9 @@ pub struct TaskReward {
     /// B346 — `m_iLeaderShip` (só v129; `AddLeaderShip`, `TaskProcess.cpp:1310`).
     #[serde(default)]
     pub lideranca: i32,
+    /// B354 — `m_bDivorce` (só v129; `pTask->Divorce()`, `TaskProcess.cpp:1313-1314`).
+    #[serde(default)]
+    pub divorcio: bool,
     /// B348 — `m_lMonsCtrl`/`m_bTrigCtrl` do prêmio (o controlador mexido no fim da etapa da PQ).
     #[serde(default)]
     pub controle_de_monstros: i32,
@@ -746,6 +749,8 @@ mod v129 {
         /// B346 — `m_iLeaderShip`: depois de `m_ulTitleNum` (253) e do ponteiro `m_pTitleAward` (257), no
         /// `AWARD_DATA` empacotado (`TaskTempl.h:1230-1232`, `#pragma pack(1)` na `:221`).
         pub const LIDERANCA: usize = 261;
+        /// B354 — `m_bDivorce` (`specs/tasks_155/award_layout.tsv:22`).
+        pub const DIVORCIO: usize = 83;
         /// B348 — `specs/tasks_155/award_layout.tsv`.
         pub const CONTROLE_DE_MONSTROS: usize = 77;
         pub const DISPARA_CONTROLE: usize = 81;
@@ -1017,6 +1022,7 @@ fn premio(l: &mut Leitor) -> Result<TaskReward> {
         tipo_do_multiplicador: u32_em(a, p::TIPO_DO_MULTIPLICADOR) as i32,
         multiplicador: u32_em(a, p::MULTIPLICADOR) as i32,
         lideranca: u32_em(a, p::LIDERANCA) as i32,
+        divorcio: a[p::DIVORCIO] != 0,
         controle_de_monstros: u32_em(a, p::CONTROLE_DE_MONSTROS) as i32,
         dispara_controle: a[p::DISPARA_CONTROLE] != 0,
         contribuicao_definida: (

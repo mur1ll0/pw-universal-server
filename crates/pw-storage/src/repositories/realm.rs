@@ -121,6 +121,27 @@ impl RealmRepository {
 
     /// Mapas ligados pelo painel além do `WORLD_TAGS` (`config.mapas_ligados`, B183): a
     /// partida do GS também os carrega.
+    /// B354 — a agenda da cerimônia de casamento gravada (`config->'casamento'`): `[início, fim, noivo, noiva, cena,
+    /// estado]` de cada entrada que não está livre (o `DBSave` do `wedding_manager`).
+    pub async fn casamento(&self, realm_id: &str) -> Result<Vec<[i64; 6]>> {
+        let v: Option<serde_json::Value> = sqlx::query_scalar("SELECT config->'casamento' FROM realms WHERE id = $1")
+            .bind(realm_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?
+            .flatten();
+        Ok(v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default())
+    }
+
+    /// B354 — grava a agenda da cerimônia (`DBSave`).
+    pub async fn gravar_casamento(&self, realm_id: &str, lista: &[[i64; 6]]) -> Result<()> {
+        sqlx::query("UPDATE realms SET config = jsonb_set(coalesce(config, '{}'::jsonb), '{casamento}', $2) WHERE id = $1")
+            .bind(realm_id)
+            .bind(serde_json::json!(lista))
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     pub async fn mapas_ligados(&self, realm_id: &str) -> Result<Vec<i32>> {
         let lista: Option<serde_json::Value> = sqlx::query_scalar(
             "SELECT config->'mapas_ligados' FROM realms WHERE id = $1",

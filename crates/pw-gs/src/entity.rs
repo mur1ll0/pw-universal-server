@@ -298,6 +298,10 @@ pub struct PlayerEntity {
     pub auto_mp: Option<AmuletoAtivo>,
     /// O Daimon vestido no slot 23, com o estado que vive no bloco do item.
     pub daimon: Option<DaimonVestido>,
+    /// B355 — o vigor do Daimon (`_cur_elf_info.vigor`, `float`): não é gravado, sobe a cada batimento até o máximo
+    /// (`UpdateElfVigor`: `100 + vitalidade final`, `1 + energia final × 0,02` por segundo, `player.cpp:21671-21678`,
+    /// `item_elf.h:19-20`), vai a 0 na morte (`player.cpp:14111-14115`) e é o que a habilidade do Daimon gasta.
+    pub vigor_do_daimon: f32,
     /// Quando cada recarga de amuleto vence, em segundos de batimento
     /// (`COOLDOWN_INDEX_AUTO_HP` 24 e `AUTO_MP` 25, `gs/cooldowncfg.h:62-90`).
     pub recarga_do_auto_hp_s: i32,
@@ -1708,6 +1712,7 @@ impl PlayerEntity {
             auto_hp: None,
             auto_mp: None,
             daimon: None,
+            vigor_do_daimon: 0.0,
             recarga_do_auto_hp_s: 0,
             recarga_do_auto_mp_s: 0,
             npc_em_conversa: None,
@@ -2148,6 +2153,12 @@ pub struct AtuaisDoDaimon {
 /// B345 — `SkillWrapper::ElfLearnSkill` (`cskill/skill/skillwrapper.cpp:1570-1605`): o `GetRequiredLevel` de uma
 /// habilidade de Daimon é uma máscara — `% 100` o nível do Daimon, e cada dígito acima, da direita para a esquerda,
 /// o mínimo dos gênios 4, 3, 2, 1, 0.
+/// B355 — `UpdateElfVigor` (`player.cpp:21671-21678`): `max_vigor = INITIAL_MAX_VIGOR + final_vitality` e
+/// `vigor_gen = INITIAL_VIGOR_GEN + final_energy × 0,02` (`item_elf.h:19-20`: 100 e 1).
+pub fn limites_do_vigor(a: &AtuaisDoDaimon) -> (f32, f32) {
+    (100.0 + a.atributos[2] as f32, 1.0 + a.atributos[3] as f32 * 0.02)
+}
+
 pub fn requisito_de_daimon_cumprido(mascara: i32, nivel: i16, genios: [i16; 5]) -> bool {
     if (nivel as i32) < mascara % 100 {
         return false;

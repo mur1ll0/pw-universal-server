@@ -47,6 +47,9 @@ pub struct ServicosDoNpc {
     pub habilidades_de_daimon: Vec<u32>,
     /// B345 — `combined_services & 0x80000` → `service_elf_forget_skill` (`npcgenerator.cpp:1001-1004`), serviço 51.
     pub esquecer_habilidade_de_daimon: bool,
+    /// B354 — `combined_services & 0x4000000` → `service_wedding_book` e `service_wedding_invite`
+    /// (`npcgenerator.cpp:1030-1034`), serviços 62 e 63.
+    pub casamento: bool,
     /// `NPC_RESETPROP_SERVICE.prop_entry[15]` — restauração de atributos, serviço 33
     /// ([`EntradaDeRestauracao`]).
     pub restauracao_de_atributos: Vec<EntradaDeRestauracao>,
@@ -149,6 +152,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 habilidades_de_mascote: lista(ensinos_de_mascote.get(&i(npc, "id_petlearnskill_service")), "id_skills_"),
                 habilidades_de_daimon: lista(ensinos.get(&i(npc, "id_goblin_skill_service")), "id_skills_"),
                 esquecer_habilidade_de_daimon: i(npc, "combined_services") & 0x80000 != 0,
+                casamento: i(npc, "combined_services") & 0x4000000 != 0,
                 restauracao_de_atributos: restauracao(restauracoes.get(&i(npc, "id_resetprop_service"))),
                 incrustar: i(npc, "id_install_service") != 0,
                 remover_pedras: i(npc, "id_uninstall_service") != 0,
