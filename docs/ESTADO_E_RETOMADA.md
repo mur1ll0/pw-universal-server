@@ -1359,6 +1359,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 348 | 10-22 | PQ (missão pública) e variáveis globais nas missões |
 | 349 | 10-22 | Masmorra por grupo: uma cópia do mapa por chave (líder ou jogador) |
 | 350 | 10-22 | Troca de mapa entre servidores de mundo (contêineres) pelo link |
+| 351 | 10-22 | Suíte completa: 1.194/0 |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

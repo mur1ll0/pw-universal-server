@@ -16976,3 +16976,6 @@ comparação lado a lado.
       e confirma), `a_troca_de_servidor_faz_ida_e_volta`, `pw-bus` **23/23**, `pw-link` **18/18**, `varios_mapas` **4/4**.
     - Ver em jogo: só com um mapa separado noutro contêiner (`GS_BUS: 1=pw-world-155:29100,161=pw-world-155b:29100` no link
       e `MAPAS_REMOTOS: 161` no mundo do mapa 1). No compose atual nada muda.
+
+351. **Sessão 2026-10-22: suíte completa depois do B343–B350.** `cargo test --workspace --no-fail-fast` com o banco:
+     **1.194 passaram, 0 falharam** (6 ignorados) — 26 a mais que no B342.
