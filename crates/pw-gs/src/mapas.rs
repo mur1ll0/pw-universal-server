@@ -1182,6 +1182,10 @@ impl RoteadorDeMapas {
         }
         match edicao {
             E::Experiencia { .. } => serde_json::json!({"estado":"falha","codigo":"precisa_estar_online"}),
+            E::Daimon(e) => match bus.daimon_offline(roleid, e).await {
+                Ok(antes) => serde_json::json!({"estado":"salvo","presenca":"offline","daimon":e,"antes":antes}),
+                Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),
+            },
             E::DaimonExp(n) => match bus.daimon_exp_offline(roleid, n).await {
                 Ok((antes, depois)) => serde_json::json!({"estado":"salvo","presenca":"offline","nivel_antes":antes,"nivel":depois}),
                 Err(codigo) => serde_json::json!({"estado":"falha","codigo":codigo}),

@@ -64,7 +64,7 @@ mod criacao_pelo_painel;
 mod casamento;
 mod renascer_carta;
 mod daimon;
-mod daimon_editado;
+pub mod daimon_editado;
 mod gm;
 mod habilidades;
 mod jogo;

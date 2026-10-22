@@ -720,7 +720,7 @@ function fecharModal(id) {
   if (id === "modal-item") estado.itemEmEdicao = null;
 }
 const MODAIS_DA_FICHA = ["modal-estatisticas", "modal-item", "modal-criar-item", "modal-busca-habilidade", "modal-habilidade",
-  "modal-busca-mascote", "modal-mascote", "modal-daimon", "modal-missoes", "modal-template-estatisticas", "modal-template-item"];
+  "modal-busca-mascote", "modal-mascote", "modal-daimon", "modal-daimon-atributos", "modal-daimon-habilidades", "modal-missoes", "modal-template-estatisticas", "modal-template-item"];
 
 /* Texto com os códigos de cor do cliente (`^RRGGBB`) pintado; sem código, a cor do painel. */
 function textoPintado(texto, classe = "") {
@@ -860,6 +860,13 @@ const MOTIVOS_EDICAO = {
   atributos_invalidos_ou_personagem_inexistente: "Algum atributo ficaria abaixo do mínimo ou a soma passa do total (ou o personagem não existe).",
   sem_mudanca: "Nada mudaria.",
   sem_daimon: "O personagem não tem Daimon vestido.",
+  atributos_acima_do_total: "Os atributos custam mais que os pontos do Daimon (acima de 40, cada ponto vale dois).",
+  genio_acima_do_limite: "Um gênio passaria de 8 contando as peças do Daimon.",
+  genios_acima_do_total: "A soma dos gênios passa dos pontos de gênio do Daimon.",
+  valor_negativo: "Nenhum valor pode ser negativo.",
+  habilidade_inexistente: "Habilidade que o servidor não conhece.",
+  nao_e_de_daimon: "Essa habilidade não é de Daimon.",
+  sem_vaga: "O Daimon não tem vaga para outra habilidade.",
   mapa_indisponivel: "O mapa de destino não está ligado neste realm.",
   fora_do_mapa: "Essas coordenadas ficam fora do terreno do mapa.",
   altura_obrigatoria: "Este mapa não tem terreno carregado: informe o Y.",
@@ -1662,7 +1669,8 @@ async function carregarDaimon(realm, id) {
   const alvo = elemento("janela-daimon");
   const janela = alvo.closest(".janela");
   if (janela) janela.hidden = false;
-  elemento("abrir-daimon-exp").hidden = true;
+  for (const b of ["abrir-daimon-exp", "abrir-daimon-atributos", "abrir-daimon-habilidades"]) elemento(b).hidden = true;
+  estado.daimon = null;
   alvo.replaceChildren(criar("p", "nota-vazia", "Carregando Daimon…"));
   try {
     const dados = await api(`/api/realms/${encodeURIComponent(realm.id)}/personagens/${id}/daimon`);
@@ -1689,7 +1697,9 @@ async function carregarDaimon(realm, id) {
       linha("pontos", "Pontos de gênio", d.pontos_de_genio), linha("refino", "Refino", d.refino), linha("vitalidade", "Vigor", d.vigor));
     const habilidades = criar("p", "dica", `Habilidades: ${(d.habilidades || []).map((h) => `${h.nome} ${h.nivel}`).join(", ") || "—"}`);
     alvo.replaceChildren(titulo, grade, habilidades);
-    elemento("abrir-daimon-exp").hidden = false;
+    estado.daimon = d;
+    for (const b of ["abrir-daimon-exp", "abrir-daimon-atributos", "abrir-daimon-habilidades"]) elemento(b).hidden = false;
+    if (!elemento("modal-daimon-habilidades").hidden) preencherHabilidadesDoDaimon();
   } catch (erro) {
     alvo.replaceChildren(criar("p", "nota-vazia", `Daimon indisponível: ${erro.message}`));
   }
@@ -1699,6 +1709,87 @@ async function darExpAoDaimon() {
   if (!(n >= 1 && n <= 2000000000)) { alerta("erro", "EXP inválida", "De 1 a 2.000.000.000."); return; }
   const r = await editarPersonagem({ daimon_exp: n }, `Daimon: +${n.toLocaleString("pt-BR")} de EXP`);
   if (r === "aplicado" || r === "salvo") fecharModal("modal-daimon");
+}
+
+/* ---------------- Daimon: atributos e habilidades (B361) ----------------
+   O GS confere as regras do original: atributos pelo custo (acima de 40, dois por ponto) até o total; cada gênio até 8
+   contando as peças, a soma até os pontos de gênio; habilidade só de Daimon, até o máximo dela, nova só com vaga. */
+const DM_ATRIBUTOS = ["forca", "agilidade", "vitalidade", "energia"];
+function custoDosAtributosDoDaimon(valores, limite) {
+  return valores.reduce((t, v) => t + (v > limite ? v + v - limite : v), 0);
+}
+function atualizarCustoDoDaimon() {
+  const d = estado.daimon;
+  if (!d) return;
+  const valores = DM_ATRIBUTOS.map((k) => Math.trunc(Number(elemento(`dm-${k}`).value)) || 0);
+  const genios = [0, 1, 2, 3, 4].map((k) => Math.trunc(Number(elemento(`dm-genio-${k}`).value)) || 0);
+  const custo = custoDosAtributosDoDaimon(valores, d.limite_de_atributo ?? 40);
+  const somaGenios = genios.reduce((a, b) => a + b, 0);
+  elemento("dm-custo").textContent = `Atributos: custo ${custo} de ${d.pontos_livres} pontos · Gênios: ${somaGenios} de ${d.pontos_de_genio}`;
+}
+function abrirAtributosDoDaimon() {
+  const d = estado.daimon;
+  if (!d) return;
+  for (const k of DM_ATRIBUTOS) elemento(`dm-${k}`).value = d[k];
+  (d.genios || []).forEach((g, k) => { elemento(`dm-genio-${k}`).value = g; });
+  atualizarCustoDoDaimon();
+  abrirModal("modal-daimon-atributos");
+}
+async function salvarAtributosDoDaimon() {
+  const atributos = DM_ATRIBUTOS.map((k) => Math.trunc(Number(elemento(`dm-${k}`).value)));
+  const genios = [0, 1, 2, 3, 4].map((k) => Math.trunc(Number(elemento(`dm-genio-${k}`).value)));
+  if ([...atributos, ...genios].some((v) => !(v >= 0))) { alerta("erro", "Valor inválido", "Use números inteiros, a partir de 0."); return; }
+  const r = await editarPersonagem({ daimon: { acao: "atributos", atributos, genios } }, "Daimon: atributos e gênios");
+  if (r === "aplicado" || r === "salvo") fecharModal("modal-daimon-atributos");
+}
+function preencherHabilidadesDoDaimon() {
+  const d = estado.daimon;
+  if (!d) return;
+  const conhecidas = new Map((d.habilidades_de_daimon || []).map((h) => [h.id, h]));
+  elemento("dm-vagas").textContent = `${(d.habilidades || []).length} de ${d.vagas ?? "?"} vagas. Nível 0 esquece.`;
+  const lista = elemento("dm-lista-habilidades");
+  const linhas = (d.habilidades || []).map((h) => {
+    const maximo = conhecidas.get(h.id)?.nivel_maximo || 255;
+    const linha = criar("div", "linha-bloco");
+    const nome = criar("span", "", `${h.nome} (${h.id})`);
+    const nivel = criar("input");
+    Object.assign(nivel, { type: "number", min: 0, max: maximo, step: 1, value: h.nivel });
+    nivel.setAttribute("aria-label", `Nível de ${h.nome}`);
+    const salvar = criar("button", "botao botao-primario", "Definir");
+    salvar.type = "button";
+    salvar.addEventListener("click", () => editarHabilidadeDoDaimon(h.id, Math.trunc(Number(nivel.value)), h.nome));
+    const esquecer = criar("button", "botao botao-secundario", "Esquecer");
+    esquecer.type = "button";
+    esquecer.addEventListener("click", () => editarHabilidadeDoDaimon(h.id, 0, h.nome));
+    linha.append(nome, nivel, salvar, esquecer);
+    return linha;
+  });
+  lista.replaceChildren(...(linhas.length ? linhas : [criar("p", "nota-vazia", "Nenhuma habilidade.")]));
+  const tem = new Set((d.habilidades || []).map((h) => h.id));
+  const opcoes = (d.habilidades_de_daimon || []).filter((h) => !tem.has(h.id)).map((h) => {
+    const o = criar("option", "", `${h.nome} (${h.id}) — até ${h.nivel_maximo}`);
+    o.value = String(h.id);
+    return o;
+  });
+  elemento("dm-nova-habilidade").replaceChildren(...opcoes);
+}
+function abrirHabilidadesDoDaimon() {
+  if (!estado.daimon) return;
+  preencherHabilidadesDoDaimon();
+  abrirModal("modal-daimon-habilidades");
+}
+async function editarHabilidadeDoDaimon(id, nivel, nome) {
+  if (!(nivel >= 0 && nivel <= 255)) { alerta("erro", "Nível inválido", "De 0 a 255 (0 esquece)."); return; }
+  await editarPersonagem({ daimon: { acao: "habilidade", id, nivel } },
+    nivel === 0 ? `Daimon: esquecer ${nome}` : `Daimon: ${nome} no nível ${nivel}`);
+}
+async function ensinarAoDaimon() {
+  const id = Math.trunc(Number(elemento("dm-nova-habilidade").value));
+  const nivel = Math.trunc(Number(elemento("dm-novo-nivel").value));
+  if (!(id > 0)) { alerta("erro", "Escolha uma habilidade", "Selecione a habilidade a ensinar."); return; }
+  const nome = (estado.daimon?.habilidades_de_daimon || []).find((h) => h.id === id)?.nome || `Habilidade ${id}`;
+  if (!(nivel >= 1)) { alerta("erro", "Nível inválido", "A partir de 1."); return; }
+  await editarHabilidadeDoDaimon(id, nivel, nome);
 }
 
 /* ---------------- Mascotes (B197; B216) ----------------
@@ -2112,6 +2203,13 @@ function ligarFichaDoPersonagem() {
 
   elemento("abrir-daimon-exp").addEventListener("click", () => { elemento("daimon-exp").value = ""; abrirModal("modal-daimon"); });
   aoEnviar("form-daimon", darExpAoDaimon);
+  elemento("abrir-daimon-atributos").addEventListener("click", abrirAtributosDoDaimon);
+  elemento("abrir-daimon-habilidades").addEventListener("click", abrirHabilidadesDoDaimon);
+  aoEnviar("form-daimon-atributos", salvarAtributosDoDaimon);
+  aoEnviar("form-daimon-ensinar", ensinarAoDaimon);
+  for (const id of [...DM_ATRIBUTOS.map((k) => `dm-${k}`), ...[0, 1, 2, 3, 4].map((k) => `dm-genio-${k}`)]) {
+    elemento(id).addEventListener("input", atualizarCustoDoDaimon);
+  }
 
   elemento("abrir-missoes").addEventListener("click", () => abrirMissoes());
   for (const botao of document.querySelectorAll?.("[data-aba-missao]") || []) botao.addEventListener("click", () => trocarAbaDeMissao(botao.dataset.abaMissao));

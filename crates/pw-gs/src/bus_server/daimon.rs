@@ -119,7 +119,7 @@ fn atuais_do_vestido(ctx: &Contexto) -> Option<AtuaisDoDaimon> {
 }
 
 /// `PlayerGetItemInfo(IL_EQUIPMENT, EQUIP_INDEX_ELF)`: a ficha do item no corpo.
-fn ficha_do_vestido(ctx: &mut Contexto) {
+pub(super) fn ficha_do_vestido(ctx: &mut Contexto) {
     let Some(d) = ctx.p.daimon.as_mut() else { return };
     d.sujo = true;
     let (item_id, bloco) = (d.item_id, d.estado.bloco());

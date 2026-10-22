@@ -87,6 +87,23 @@ class MascoteDadoPedido(BaseModel):
     ovo: int = Field(ge=1, le=2_147_483_647)
 
 
+class DaimonAtributosPedido(BaseModel):
+    """B361: os pontos distribuídos do Daimon vestido — `[força, agilidade, vitalidade, energia]` e os cinco gênios.
+    As regras (custo acima de 40, total, gênio até 8 com as peças) são do GS."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    acao: Literal["atributos"]
+    atributos: list[Annotated[int, Field(ge=0, le=10_000)]] = Field(min_length=4, max_length=4)
+    genios: list[Annotated[int, Field(ge=0, le=8)]] = Field(min_length=5, max_length=5)
+
+
+class DaimonHabilidadePedida(BaseModel):
+    """B361: a habilidade `id` do Daimon vestido no `nivel` (0 esquece); `cls` 258, nível máximo e vaga no GS."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    acao: Literal["habilidade"]
+    id: int = Field(ge=1, le=65_535)
+    nivel: int = Field(ge=0, le=255)
+
+
 class RemocaoPedida(BaseModel):
     """E6 (B187): tirar do slot; `id` confere o item; sem quantidade = a pilha inteira."""
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -276,6 +293,8 @@ class EdicaoPersonagem(BaseModel):
     missao: Optional[MissaoPedida] = None
     # E6 (B215): EXP a dar ao Daimon vestido (regra do `InsertExp`, no GS).
     daimon_exp: Optional[int] = Field(default=None, ge=1, le=2_000_000_000)
+    # B361: editar os atributos/gênios ou uma habilidade do Daimon vestido.
+    daimon: Optional[Annotated[DaimonAtributosPedido | DaimonHabilidadePedida, Field(discriminator="acao")]] = None
     dar_mascote: Optional[MascoteDadoPedido] = None
     # B320: organizar a bolsa (a conta do botão do cliente 1.5.5, no GS).
     organizar_bolsa: Optional[Literal[True]] = None
@@ -430,7 +449,7 @@ def registrar_contas(app):
         experiencia = bool(pedido.exp or pedido.sp)
         simples = [k for k in ("dinheiro", "pontos", "nivel", "cultivo", "atributos", "redistribuir", "posicao", "item",
                                "remover_item", "mover_item", "editar_item", "habilidade", "mascote", "missao", "daimon_exp",
-                               "dar_mascote", "organizar_bolsa")
+                               "daimon", "dar_mascote", "organizar_bolsa")
                    if getattr(pedido, k) is not None]
         if len(simples) + experiencia != 1:
             raise HTTPException(422, "Informe uma só edição: dinheiro, EXP/SP, pontos, nível, cultivo, atributos ou posição.")
@@ -459,7 +478,7 @@ def registrar_contas(app):
                 if hid not in cliente or nivel < 1 or (maximo and nivel > maximo):
                     raise HTTPException(422, f"Habilidade {hid} desconhecida ou nível {nivel} fora do máximo.")
         if simples in (["posicao"], ["item"], ["remover_item"], ["mover_item"], ["editar_item"], ["habilidade"], ["mascote"], ["missao"],
-                       ["dar_mascote"]):
+                       ["dar_mascote"], ["daimon"]):
             consulta[simples[0]] = getattr(pedido, simples[0]).model_dump(exclude_none=True)
         elif simples:
             consulta[simples[0]] = getattr(pedido, simples[0])

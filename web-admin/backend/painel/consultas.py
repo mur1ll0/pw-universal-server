@@ -150,6 +150,9 @@ def registrar_consultas(app):
                 nomes = {}
             daimon["habilidades"] = [{"id": i, "nivel": n, "nome": nomes.get(i, f"Habilidade {i}")}
                                      for i, n in daimon.get("habilidades", [])]
+            # B361: as habilidades de Daimon que existem (`cls` 258 no catálogo do GS), com nome e nível máximo.
+            daimon["habilidades_de_daimon"] = [{"id": i, "nivel_maximo": m, "nome": nomes.get(i, f"Habilidade {i}")}
+                                               for i, m in daimon.get("habilidades_de_daimon", [])]
         # B218: o 1.2.6 não tem Daimon (o GS diz pelo layout do `elements.data`); a ficha esconde a janela.
         return {"realm_id": realm_id, "daimon": daimon, "existe_na_versao": dados.get("existe_na_versao", True),
                 "origem": (daimon or {}).get("origem", dados.get("origem"))}

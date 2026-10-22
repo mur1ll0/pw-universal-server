@@ -77,6 +77,15 @@ nível, EXP/para subir, atributos, pontos livres, gênios, refino, vigor e habil
 armazém, descer/remover habilidade no 1.2.6, esquecer missão (as duas versões) e cancelar missão no 1.2.6
 (regras na spec 05 §7.11). Continuam só offline: remover e arrastar com equipamento/armazém fora dos pares
 do jogo (B187/B191).
+**B361:** na janela **Daimon**, **Atributos** e **Habilidades** (edição `daimon`, uma por vez):
+`{acao: "atributos", atributos: [força, agilidade, vitalidade, energia], genios: [5]}` define os pontos distribuídos — o
+GS confere o custo (acima de 40 cada ponto vale dois) até os pontos do Daimon, cada gênio até 8 **com as peças** e a
+soma até os pontos de gênio (a validação do `elf_item`, `item_elf.cpp:117`); `{acao: "habilidade", id, nivel}` define o
+nível (0 esquece) — só habilidade de Daimon (`cls` 258), até o máximo dela, e nova só com vaga. Online no Daimon vestido
+em memória (a ficha do item vai ao cliente e o bloco é gravado), offline no bloco do banco. A consulta `daimon` traz
+também os atributos com as peças, as vagas e as habilidades de Daimon que existem (com nome e nível máximo).
+Recusas: `atributos_acima_do_total`, `genio_acima_do_limite`, `genios_acima_do_total`, `valor_negativo`,
+`habilidade_inexistente`, `nao_e_de_daimon`, `nivel_invalido`, `sem_vaga`, `sem_mudanca`, `sem_daimon`.
 **B214:** a busca por texto acha os efeitos de habilidade do item pelo texto do cliente ("Mordaz") ou pelo
 nome da habilidade ("Garra"): na primeira busca de cada realm o painel pede ao GS (`efeitos_para_item`,
 `item_id` 0, sem filtro de família) o valor dos 86 ids do tipo 55 e guarda `{id: (texto, nome)}` em

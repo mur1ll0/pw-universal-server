@@ -17090,3 +17090,20 @@ comparação lado a lado.
       −360 de resistência, 268 ligado e desligado), conferidor S2C **5/5**.
     - Ver em jogo (1.5.5): com um Daimon refinado vestido, clicar com o botão direito nele na janela de equipamento — o
       Daimon brilha, a vida máxima sobe; a resistência do Daimon desce a cada segundo; clicar de novo desliga.
+
+361. **Sessão 2026-10-22: painel — atributos e habilidades do Daimon.**
+
+    - GS: `bus_server/daimon_editado.rs` — `EdicaoDeDaimon` (`atributos` | `habilidade`), `editar_daimon` (as regras do
+      original), `extras_do_painel` (atributos com as peças, vagas, habilidades de Daimon), `daimon_pelo_painel` (online) e
+      `daimon_offline`; `EdicaoDePersonagem::Daimon`, campo `daimon` da consulta `editar_personagem`.
+    - Painel: modelos `DaimonAtributosPedido`/`DaimonHabilidadePedida` (`contas.py`), nomes das habilidades de Daimon na
+      consulta (`consultas.py`), botões **Atributos** e **Habilidades** na janela Daimon com os dois modais (custo ao vivo,
+      lista com definir/esquecer, ensinar).
+    - Provas: `testes_da_edicao` **2/2** (custo acima de 40, total, gênio com as peças; habilidade 1004 até o 10, não-Daimon
+      recusada, esquecer), `daimon_ver_e_dar_exp` **1/1** (a edição chega ao GS e recusa `sem_daimon` online e offline),
+      `test_editar_personagem_valida_antes_do_envio` **1/1** (7 pedidos inválidos com 422, 3 válidos). A suíte do painel no
+      contêiner dá as mesmas 2 falhas e 12 erros com e sem esta mudança (binário `pw-gs` e scripts que não existem no
+      contêiner, dados do cliente ausentes).
+    - Ver no painel (1.5.5): ficha de um personagem com Daimon → janela Daimon → **Atributos**: mudar força para 41 mostra o
+      custo 42; aplicar acima do total recusa com a mensagem; **Habilidades**: ensinar uma, definir nível, esquecer. Em jogo,
+      a ficha do Daimon muda na hora.

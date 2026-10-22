@@ -1370,6 +1370,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 358 | 10-22 | Troca de mapa: o mascote de combate volta no mapa novo (e entre contêineres, com a montaria) |
 | 359 | 10-22 | Grupo: um registro por roteador; trocar de mapa não desfaz o grupo |
 | 360 | 10-22 | Daimon: ligar o efeito do refino (usar o Daimon vestido) |
+| 361 | 10-22 | Painel: editar atributos, gênios e habilidades do Daimon |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

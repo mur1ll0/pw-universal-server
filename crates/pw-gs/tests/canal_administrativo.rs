@@ -1793,11 +1793,20 @@ async fn daimon_ver_e_dar_exp() {
     assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
     let r = c.pedir_com_id(&c.realm, &id("zero"), c.conta, dar(0)).await;
     assert_eq!(r["dados"]["codigo"], "edicao_invalida", "{r}");
+    // B361 — editar atributos e habilidade do Daimon: sem Daimon vestido, `sem_daimon` (offline e, abaixo, online).
+    let editar = |d: serde_json::Value| json!({"tipo":"editar_personagem","personagem_id":c.personagem,"daimon":d});
+    let atributos = json!({"acao":"atributos","atributos":[1,0,0,0],"genios":[0,0,0,0,0]});
+    let r = c.pedir_com_id(&c.realm, &id("attr-off"), c.conta, editar(atributos.clone())).await;
+    assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("hab-off"), c.conta, editar(json!({"acao":"habilidade","id":1004,"nivel":1}))).await;
+    assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
     let bus = c.entrar().await;
     c.esperar_presenca("online").await;
     let r = c.pedir(&c.realm, json!({"tipo":"daimon","personagem_id":c.personagem})).await;
     assert_eq!((r["dados"]["daimon"].is_null(), r["dados"]["existe_na_versao"].as_bool()), (true, Some(false)), "{r}");
     let r = c.pedir_com_id(&c.realm, &id("on"), c.conta, dar(1000)).await;
+    assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
+    let r = c.pedir_com_id(&c.realm, &id("attr-on"), c.conta, editar(atributos)).await;
     assert_eq!(r["dados"]["codigo"], "sem_daimon", "{r}");
     drop(bus);
     c.esperar_presenca("ausente").await;

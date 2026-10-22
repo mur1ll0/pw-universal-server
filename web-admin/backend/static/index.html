@@ -203,7 +203,7 @@
             </section>
             <section class="janela" data-janela="daimon">
               <header class="barra-janela"><h3><span class="ico" data-icone="brilho"></span>Daimon</h3>
-                <div class="acoes-janela"><button id="abrir-daimon-exp" type="button" class="botao-barra" hidden><span class="ico" data-icone="exp"></span>Dar EXP</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-daimon-atributos" type="button" class="botao-barra" hidden><span class="ico" data-icone="forca"></span>Atributos</button><button id="abrir-daimon-habilidades" type="button" class="botao-barra" hidden><span class="ico" data-icone="livro"></span>Habilidades</button><button id="abrir-daimon-exp" type="button" class="botao-barra" hidden><span class="ico" data-icone="exp"></span>Dar EXP</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-daimon" class="ficha-daimon"></div></div>
             </section>
             <section class="janela" data-janela="missoes">
@@ -957,6 +957,57 @@
         </div>
         <footer class="modal-rodape"><span></span><button type="submit" class="botao botao-primario">Dar EXP</button></footer>
       </form>
+    </div>
+
+    <!-- B361: atributos e gênios do Daimon -->
+    <div id="modal-daimon-atributos" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-daimon-atributos" hidden>
+      <form id="form-daimon-atributos" class="modal-caixa modal-media">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="forca"></span>
+          <div class="modal-titulos"><h2 id="titulo-daimon-atributos">Atributos do Daimon</h2><p class="dica">Os pontos distribuídos. Acima de 40, cada ponto custa dois; cada gênio vai até 8 contando as peças.</p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <div class="grade-quatro">
+            <label class="campo-icone"><span class="ico" data-icone="forca"></span><span>Força</span><input id="dm-forca" type="number" min="0" max="10000" step="1" required></label>
+            <label class="campo-icone"><span class="ico" data-icone="agilidade"></span><span>Agilidade</span><input id="dm-agilidade" type="number" min="0" max="10000" step="1" required></label>
+            <label class="campo-icone"><span class="ico" data-icone="vitalidade"></span><span>Vitalidade</span><input id="dm-vitalidade" type="number" min="0" max="10000" step="1" required></label>
+            <label class="campo-icone"><span class="ico" data-icone="energia"></span><span>Energia</span><input id="dm-energia" type="number" min="0" max="10000" step="1" required></label>
+          </div>
+          <h4><span class="ico" data-icone="brilho"></span>Gênios</h4>
+          <div class="grade-quatro">
+            <label class="campo-icone"><span>Metal</span><input id="dm-genio-0" type="number" min="0" max="8" step="1" required></label>
+            <label class="campo-icone"><span>Madeira</span><input id="dm-genio-1" type="number" min="0" max="8" step="1" required></label>
+            <label class="campo-icone"><span>Água</span><input id="dm-genio-2" type="number" min="0" max="8" step="1" required></label>
+            <label class="campo-icone"><span>Fogo</span><input id="dm-genio-3" type="number" min="0" max="8" step="1" required></label>
+            <label class="campo-icone"><span>Terra</span><input id="dm-genio-4" type="number" min="0" max="8" step="1" required></label>
+          </div>
+          <p id="dm-custo" class="dica"></p>
+        </div>
+        <footer class="modal-rodape"><span></span><button type="submit" class="botao botao-primario">Aplicar</button></footer>
+      </form>
+    </div>
+
+    <!-- B361: habilidades do Daimon -->
+    <div id="modal-daimon-habilidades" class="modal" role="dialog" aria-modal="true" aria-labelledby="titulo-daimon-habilidades" hidden>
+      <div class="modal-caixa modal-media">
+        <header class="modal-topo">
+          <span class="ico-titulo" data-icone="livro"></span>
+          <div class="modal-titulos"><h2 id="titulo-daimon-habilidades">Habilidades do Daimon</h2><p id="dm-vagas" class="dica"></p></div>
+          <button type="button" class="botao-icone fechar-modal" aria-label="Fechar">✕</button>
+        </header>
+        <div class="modal-corpo">
+          <div id="dm-lista-habilidades" class="lista-edicao"></div>
+          <form id="form-daimon-ensinar" class="bloco-edicao bloco-largo">
+            <h4><span class="ico" data-icone="mais"></span>Ensinar habilidade</h4>
+            <div class="linha-bloco">
+              <select id="dm-nova-habilidade" aria-label="Habilidade de Daimon"></select>
+              <input id="dm-novo-nivel" type="number" min="1" max="255" step="1" value="1" aria-label="Nível">
+              <button type="submit" class="botao botao-primario">Ensinar</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
 
     <!-- Missões (B198; B216: modal com busca nas ativas e concluídas, e dar missão) -->

@@ -1082,6 +1082,14 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                          {"missao": {"acao": "dar", "id": 1, "x": 1}}, {"missao": {"acao": "dar", "id": 1}, "pontos": 1},
                          # B215: EXP do Daimon de 1 a 2·10⁹, uma edição só.
                          {"daimon_exp": 0}, {"daimon_exp": 2_000_000_001}, {"daimon_exp": 10, "pontos": 1},
+                         # B361: Daimon — ação conhecida, 4 atributos e 5 gênios (0–8), habilidade 1–65 535, uma edição só.
+                         {"daimon": {"acao": "atributos", "atributos": [1, 2, 3], "genios": [0, 0, 0, 0, 0]}},
+                         {"daimon": {"acao": "atributos", "atributos": [1, 2, 3, 4], "genios": [9, 0, 0, 0, 0]}},
+                         {"daimon": {"acao": "atributos", "atributos": [-1, 0, 0, 0], "genios": [0, 0, 0, 0, 0]}},
+                         {"daimon": {"acao": "habilidade", "id": 0, "nivel": 1}},
+                         {"daimon": {"acao": "aprender", "id": 1004, "nivel": 1}},
+                         {"daimon": {"acao": "habilidade", "id": 1004, "nivel": 1, "x": 1}},
+                         {"daimon": {"acao": "habilidade", "id": 1004, "nivel": 1}, "pontos": 1},
                          # B216: item no slot (recipiente e slot juntos, sem o corpo); dar mascote com ovo.
                          {"item": {"id": 3001, "quantidade": 1, "recipiente": "bolsa"}},
                          {"item": {"id": 3001, "quantidade": 1, "slot": 3}},
@@ -1108,6 +1116,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
                        {"missao": {"acao": "dar", "id": 1173, "sub": 1175}}, {"missao": {"acao": "concluir", "id": 5001}},
                        {"missao": {"acao": "cancelar", "id": 5001}}, {"missao": {"acao": "esquecer", "id": 5002}},
                        {"daimon_exp": 5000},
+                       {"daimon": {"acao": "atributos", "atributos": [41, 7, 0, 0], "genios": [8, 3, 0, 0, 0]}},
+                       {"daimon": {"acao": "habilidade", "id": 1004, "nivel": 3}}, {"daimon": {"acao": "habilidade", "id": 1004, "nivel": 0}},
                        {"item": {"id": 3001, "quantidade": 5, "recipiente": "armazem", "slot": 2}},
                        {"dar_mascote": {"ovo": 4501}},
                        {"organizar_bolsa": True}):
