@@ -2940,6 +2940,17 @@ impl BusServer {
         true
     }
 
+    /// B343 — `GM_MSG_DELIVER_TASK` (`player.cpp:2570-2575`) → `OnTaskManualTrig(task, id, false)`
+    /// (`TaskServer.cpp:585-592`): só missão de topo sem NPC que entrega, sem aviso de erro.
+    pub(crate) async fn missao_da_politica(&self, roleid: i32, missao: u32) {
+        let dados = self.world.read().await.data_manager.clone();
+        if !dados.tasks.get_task(missao).is_some_and(|t| t.parent.is_none() && t.npc_que_entrega == 0) {
+            return;
+        }
+        let r = self.com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.aceitar(missao, 0, false))).await;
+        debug!("mundo: a política entregou a missão {missao} a {roleid}: {r:?}");
+    }
+
     /// `item_taskdice::OnUse` (`gs/item/item_taskdice.cpp:12-42`): em combate a carta com
     /// `no_use_in_combat` é recusada (`ERR_INVALID_OPERATION_IN_COMBAT`); senão sorteia a
     /// missão (`generate_task_id`, a mesma do `Load` de um item sem dados) e tenta entregá-la

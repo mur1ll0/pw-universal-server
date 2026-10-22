@@ -743,9 +743,10 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     subir de nível, devorar (`swallow_exp`) e renascer.
 11. **IA de monstro:** estratégias, eventos de vida e o intérprete do `aipolicy.data` feitos
     (B126/B127, spec 05 §4.1); **feitos em 2026-10-21:** invocar monstro (B336), `max_move_range`
-    (B337), tocar ação (B338), contar jogadores (B339) e trocar de caminho (B341). No 1.5.5 faltam
-    invocar NPC/mina, histórico e missões da política, 93 condições (estágio de história, filtro,
-    fim de caminho) e as estratégias de ódio por facção/invisibilidade.
+    (B337), tocar ação (B338), contar jogadores (B339), trocar de caminho (B341), invocar NPC/mina,
+    histórico (em memória) e missões da política (B343). No 1.5.5 faltam 7 usos (torre, depósito de
+    missões, PvP de facção), 93 condições (estágio de história, filtro, fim de caminho) e as
+    estratégias de ódio por facção/invisibilidade.
 
 **Instâncias (masmorras), diagnóstico B160, `falta` inteiro:** no original, os mapas
 `[Instance_isNN]` do `gs.conf` (o 169 é um deles; 52 ao todo) são cópias por **chave**. Sem grupo,
@@ -1342,6 +1343,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 340 | 10-21 | Prêmio de missão por escala de tempo e de itens |
 | 341 | 10-21 | Política: trocar de caminho (`AndarPorCaminho`) |
 | 342 | 10-21 | Suíte completa: 1.168/0 no Rust; painel sem regressão (14 falhas de ambiente, as mesmas de antes) |
+| 343 | 10-21 | Política: invocar NPC e mina, histórico (dados únicos em memória) e entregar missão |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

@@ -58,7 +58,9 @@ pub enum Expr {
     Global(i32),
     /// `expr_local_value` — as três do monstro (`gnpc_imp::_local_var`).
     Local(i32),
-    /// `expr_history_value` / `expr_room_index`: sem porte, valem 0.
+    /// B343 — `expr_history_value` (`aitrigger.cpp:160-165`): o dado único do servidor.
+    Historia(i32),
+    /// `expr_room_index`: sem porte, vale 0.
     SemPorte,
     Soma(Box<Expr>, Box<Expr>),
     Subtracao(Box<Expr>, Box<Expr>),
@@ -162,6 +164,17 @@ pub enum Acao {
     /// B341 — `op_change_path(_2)` (`aitrigger.h:2186-2223`, `policy_loader.cpp:301-311`): troca a rota do monstro.
     /// `corre` é o `iSpeedType == 2` do construtor.
     MudarCaminho { mundo: i32, caminho: ValorLogico, tipo: i32, corre: bool },
+    /// B343 — `op_summon_npc` (`aitrigger.cpp:817-846`): `CreateNPC` perto do alvo.
+    InvocarNpc { npc: ValorLogico, quantidade: ValorLogico, distancia: i32, vida_s: ValorLogico, caminho: ValorLogico },
+    /// B343 — `op_summon_mine` (`aitrigger.cpp:848-875`): `CreateMine` perto do alvo.
+    InvocarMina { mina: ValorLogico, quantidade: ValorLogico, distancia: i32, vida_s: ValorLogico },
+    /// B343 — `op_revise_history` (soma) / `op_set_history` (define) (`aitrigger.cpp:907-915`). O
+    /// `bIsHistoryValue` do `O_SET_HISTORY` chega ao construtor e o `DoSomething` não o usa.
+    Historia { chave: i32, valor: i32, definir: bool },
+    /// B343 — `op_deliver_task` (`aitrigger.cpp:932-944`): `GM_MSG_DELIVER_TASK` ao alvo, que tem de ser jogador.
+    EntregarMissao { missao: ValorLogico },
+    /// B343 — `op_deliver_task_in_dmglist` (`aitrigger.cpp:969-975`, `gnpc_imp::DispatchTaskToDmgList`, `npc.cpp:1488-1512`).
+    MissaoAosQueFeriram { missao: ValorLogico, distancia: i32, quantidade: i32 },
     SemPorte(&'static str),
 }
 
@@ -261,6 +274,16 @@ pub enum Pedido {
     /// B341 — `op_change_path(_2)::DoSomething` (`aitrigger.cpp:877-896`) → `ai_policy::ChangePath` (`aipolicy.cpp:94-114`).
     /// `caminho` é o id **global** (o mundo faz o `IdConvert`); `mundo` 0 vale em qualquer mapa.
     MudarCaminho { mundo: i32, caminho: i32, tipo: i32, corre: bool },
+    /// B343 — `CreateNPC(param, target, radius)` (`obj_interface.cpp:2190-2260`): `quantidade` NPCs perto do alvo,
+    /// vivendo `vida_s` (0 = para sempre); `caminho` é o id global (o mundo faz o `IdConvert`).
+    InvocarNpc { npc: i32, quantidade: i32, alvo: i64, distancia: i32, vida_s: i32, caminho: i32 },
+    /// B343 — `CreateMine(param, target, radius)` (`obj_interface.cpp:2095-2188`).
+    InvocarMina { mina: i32, quantidade: i32, alvo: i64, distancia: i32, vida_s: i32 },
+    /// B343 — `GM_MSG_DELIVER_TASK` → `OnTaskManualTrig(task, id, false)` (`player.cpp:2570-2575`).
+    EntregarMissao { jogador: i64, missao: i32 },
+    /// B343 — `DispatchTaskToDmgList(missao, quantidade, distancia)`: os primeiros da lista de dano a menos de
+    /// `distancia` m.
+    MissaoAosQueFeriram { missao: i32, quantidade: i32, distancia: i32 },
     /// B338 — `ai_play_action_task::StartTask` → `StartPlayAction` (`aipolicy.cpp:2073-2077`).
     TocarAcao { nome: Vec<u8>, vezes: i32, duracao_ms: i32, intervalo_ms: i32 },
     NaoPortado(&'static str),
@@ -341,6 +364,7 @@ impl Contexto<'_> {
             Expr::Constante(v) => *v,
             Expr::Global(k) => self.global(*k),
             Expr::Local(i) => self.local(*i),
+            Expr::Historia(k) => crate::dados_unicos::ler(*k),
             Expr::SemPorte => 0,
             Expr::Soma(a, b) => self.expr(a)?.wrapping_add(self.expr(b)?),
             Expr::Subtracao(a, b) => self.expr(a)?.wrapping_sub(self.expr(b)?),
@@ -444,6 +468,7 @@ fn expr_do_no(n: &NoDeCondicao) -> Expr {
         (Some(TipoDeCondicao::Constant), ParametroDeCondicao::Valor(v)) => Expr::Constante(*v),
         (Some(TipoDeCondicao::Var), ParametroDeCondicao::Id(k)) => Expr::Global(*k),
         (Some(TipoDeCondicao::LocalVar), ParametroDeCondicao::Id(k)) => Expr::Local(*k),
+        (Some(TipoDeCondicao::HistoryValue), ParametroDeCondicao::Valor(k)) => Expr::Historia(*k),
         (Some(TipoDeCondicao::Plus), _) => Expr::Soma(lado(&n.esquerda), lado(&n.direita)),
         (Some(TipoDeCondicao::Minus), _) => Expr::Subtracao(lado(&n.esquerda), lado(&n.direita)),
         (Some(TipoDeCondicao::Multiply), _) => Expr::Multiplicacao(lado(&n.esquerda), lado(&n.direita)),
@@ -555,7 +580,24 @@ fn operacao(o: &pw_data_loader::aipolicy::Operacao, politica: &AiPolicy, profund
             caminho: ValorLogico { tipo: *tipo_do_caminho, valor: *caminho },
         },
         (Some(T::InvocarMonstro | T::InvocarMonstro2), _) => Acao::SemPorte("InvocarMonstro"),
+        (Some(T::InvocarNpc), P::InvocarNpc {
+            tipo_da_vida, npc, tipo_do_npc, alcance, vida_em_segundos, caminho, tipo_do_caminho, quantidade, tipo_da_quantidade,
+        }) => Acao::InvocarNpc {
+            npc: ValorLogico { tipo: *tipo_do_npc, valor: *npc },
+            quantidade: ValorLogico { tipo: *tipo_da_quantidade, valor: *quantidade },
+            distancia: *alcance,
+            vida_s: ValorLogico { tipo: *tipo_da_vida, valor: *vida_em_segundos },
+            caminho: ValorLogico { tipo: *tipo_do_caminho, valor: *caminho },
+        },
         (Some(T::InvocarNpc), _) => Acao::SemPorte("InvocarNpc"),
+        (Some(T::InvocarMina), P::InvocarMina { tipo_da_vida, mina, tipo_da_mina, alcance, vida_em_segundos, quantidade, tipo_da_quantidade, .. }) => {
+            Acao::InvocarMina {
+                mina: ValorLogico { tipo: *tipo_da_mina, valor: *mina },
+                quantidade: ValorLogico { tipo: *tipo_da_quantidade, valor: *quantidade },
+                distancia: *alcance,
+                vida_s: ValorLogico { tipo: *tipo_da_vida, valor: *vida_em_segundos },
+            }
+        }
         (Some(T::InvocarMina), _) => Acao::SemPorte("InvocarMina"),
         (Some(T::AndarPorCaminho), P::AndarPorCaminho { mundo, caminho, tipo_de_patrulha, tipo_de_velocidade }) => Acao::MudarCaminho {
             mundo: *mundo,
@@ -579,11 +621,19 @@ fn operacao(o: &pw_data_loader::aipolicy::Operacao, politica: &AiPolicy, profund
             intervalo_ms: *intervalo,
         },
         (Some(T::TocarAcao), _) => Acao::SemPorte("TocarAcao"),
+        (Some(T::RevisarHistorico), P::AjustarVariavel { id, valor }) => Acao::Historia { chave: *id, valor: *valor, definir: false },
+        (Some(T::DefinirHistorico), P::DefinirHistorico { id, valor, .. }) => Acao::Historia { chave: *id, valor: *valor, definir: true },
         (Some(T::RevisarHistorico | T::DefinirHistorico), _) => Acao::SemPorte("Historico"),
         (Some(T::EntregarPontosPvpDeFaccao), _) => Acao::SemPorte("PontosPvpDeFaccao"),
-        (Some(T::EntregarMissao | T::EntregarMissaoAleatoriaNaRegiao | T::EntregarMissaoNaListaDeOdio), _) => {
-            Acao::SemPorte("EntregarMissao")
+        (Some(T::EntregarMissao), P::EntregarMissao { id, tipo_do_id }) => {
+            Acao::EntregarMissao { missao: valor_logico(*tipo_do_id, *id) }
         }
+        (Some(T::EntregarMissaoNaListaDeOdio), P::MissaoNaListaDeOdio { id, tipo_do_id, alcance, jogadores }) => {
+            Acao::MissaoAosQueFeriram { missao: valor_logico(*tipo_do_id, *id), distancia: *alcance, quantidade: *jogadores }
+        }
+        // `GM_MSG_DELIVER_STORAGE_TASK` (`player.cpp:2577-…`): o depósito de missões não está portado.
+        (Some(T::EntregarMissaoAleatoriaNaRegiao), _) => Acao::SemPorte("MissaoDoDeposito"),
+        (Some(T::EntregarMissao | T::EntregarMissaoNaListaDeOdio), _) => Acao::SemPorte("EntregarMissao"),
         (Some(T::SalvarContagemDeJogadoresNoRaio), P::ContarJogadoresNoRaio { raio, destino, tipo_do_destino, .. }) => {
             Acao::ContarJogadores { raio: Some((*raio as u32) as f32), caixa: None, destino: valor_logico(*tipo_do_destino, *destino as u32) }
         }
@@ -963,6 +1013,38 @@ fn executar(o: &Operacao, p: &PoliticaDeIa, e: &mut EstadoDaPolitica, ctx: &mut 
             let n = (ctx.jogadores_perto)(*raio, *caixa);
             ctx.definir(*destino, n);
         }
+        Acao::InvocarNpc { npc, quantidade, distancia, vida_s, caminho } => {
+            let Some(alvo) = ctx.alvo(o.alvo, o.profissoes) else { return false };
+            let q = ctx.valor(*quantidade);
+            if !(1..=10).contains(&q) {
+                return false;
+            }
+            let (npc, vida_s, caminho) = (ctx.valor(*npc), ctx.valor(*vida_s).max(0), ctx.valor(*caminho));
+            ctx.pedidos.push(Pedido::InvocarNpc { npc, quantidade: q, alvo, distancia: *distancia, vida_s, caminho });
+        }
+        Acao::InvocarMina { mina, quantidade, distancia, vida_s } => {
+            let Some(alvo) = ctx.alvo(o.alvo, o.profissoes) else { return false };
+            let q = ctx.valor(*quantidade);
+            if !(1..=10).contains(&q) {
+                return false;
+            }
+            let (mina, vida_s) = (ctx.valor(*mina), ctx.valor(*vida_s).max(0));
+            ctx.pedidos.push(Pedido::InvocarMina { mina, quantidade: q, alvo, distancia: *distancia, vida_s });
+        }
+        Acao::Historia { chave, valor, definir } => return crate::dados_unicos::modificar(*chave, *valor, *definir),
+        Acao::EntregarMissao { missao } => {
+            // `if (!target.IsPlayer()) return false`.
+            let Some(alvo) = ctx.alvo(o.alvo, o.profissoes) else { return false };
+            if (ctx.info)(alvo).and_then(|i| i.classe).is_none() {
+                return false;
+            }
+            let missao = ctx.valor(*missao);
+            ctx.pedidos.push(Pedido::EntregarMissao { jogador: alvo, missao });
+        }
+        Acao::MissaoAosQueFeriram { missao, distancia, quantidade } => {
+            let missao = ctx.valor(*missao);
+            ctx.pedidos.push(Pedido::MissaoAosQueFeriram { missao, quantidade: *quantidade, distancia: *distancia });
+        }
         Acao::MudarCaminho { mundo, caminho, tipo, corre } => {
             // **Não é igual:** o original devolve `false` aqui quando `_world_tag` não é o mapa; a política não sabe o
             // mapa, então o mundo ignora o pedido (as operações seguintes do gatilho seguem).
@@ -1135,6 +1217,45 @@ mod testes {
         let mut c = ctx(&mut odio, &mut globais, &info, &perto);
         p.comeco_de_combate(&mut e, &mut c);
         assert_eq!(c.pedidos, vec![Pedido::MudarCaminho { mundo: 0, caminho: 4242, tipo: 1, corre: true }]);
+    }
+
+    /// B343 — `op_summon_npc`/`op_summon_mine`: quantidade fora de 1..=10 é `false`; vida negativa vira 0.
+    /// `op_deliver_task`: só para jogador. `op_revise/set_history`: soma e define no dado único.
+    #[test]
+    fn invocar_npc_e_mina_historia_e_missao() {
+        let c2 = |v| ValorLogico { tipo: 2, valor: v };
+        let p = politica(vec![g(
+            1,
+            Condicao::ComecoDeCombate,
+            vec![
+                Acao::InvocarNpc { npc: c2(9001), quantidade: c2(2), distancia: 3, vida_s: c2(-5), caminho: c2(0) },
+                Acao::InvocarMina { mina: c2(8001), quantidade: c2(1), distancia: 2, vida_s: c2(30) },
+                Acao::Historia { chave: 0x7AB0_0002, valor: 4, definir: false },
+                Acao::Historia { chave: 0x7AB0_0002, valor: 6, definir: false },
+                Acao::EntregarMissao { missao: c2(1234) },
+                Acao::InvocarNpc { npc: c2(9001), quantidade: c2(11), distancia: 3, vida_s: c2(0), caminho: c2(0) },
+                Acao::InvocarMina { mina: c2(8001), quantidade: c2(1), distancia: 2, vida_s: c2(0) },
+            ],
+            false,
+        )]);
+        let mut e = p.novo_estado([0; 3]);
+        let (mut odio, mut globais) = (HashMap::from([(5i64, 10i64)]), HashMap::new());
+        let info = |id: i64| {
+            (id == 5).then(|| InfoDoAlvo { hp: 1, mp: 1, classe: Some(0), posicao: Vector3::new(0.0, 0.0, 0.0), dono: None })
+        };
+        let perto = |_: Option<f32>, _: Option<(f32, f32, f32, f32)>| 0;
+        let mut c = ctx(&mut odio, &mut globais, &info, &perto);
+        p.comeco_de_combate(&mut e, &mut c);
+        assert_eq!(
+            c.pedidos,
+            vec![
+                Pedido::InvocarNpc { npc: 9001, quantidade: 2, alvo: 5, distancia: 3, vida_s: 0, caminho: 0 },
+                Pedido::InvocarMina { mina: 8001, quantidade: 1, alvo: 5, distancia: 2, vida_s: 30 },
+                Pedido::EntregarMissao { jogador: 5, missao: 1234 },
+            ],
+            "a 11ª invocação para o gatilho (quantidade > 10)"
+        );
+        assert_eq!(crate::dados_unicos::ler(0x7AB0_0002), 10);
     }
 
     /// `hp_less` dispara uma vez e se desliga; o fim do combate o religa.

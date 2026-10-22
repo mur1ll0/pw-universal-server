@@ -164,8 +164,8 @@ catálogo quando o monstro nasce.
 
 Cobertura (`tests/politica_do_realm.rs`): **1.2.6 — 258 políticas usadas, 0 operação e 0 condição
 sem porte**; 1.5.5 — 2.771 políticas, sem porte (registradas uma vez no `debug`):
-`EntregarMissao` 32, `InvocarNpc` 31, `Historico` 22, `InvocarMina` 12, `PontosPvpDeFaccao` 3,
-`LimparMissaoDeTorre` 1, e 93 condições (estágio de história, filtro, fim de caminho).
+`PontosPvpDeFaccao` 3, `MissaoDoDeposito` 3 (`GM_MSG_DELIVER_STORAGE_TASK`, sem depósito de
+missões), `LimparMissaoDeTorre` 1, e 93 condições (estágio de história, filtro, fim de caminho).
 
 Portadas em 2026-10-21 (`testado` por unidade, falta ver em jogo):
 
@@ -185,6 +185,21 @@ Portadas em 2026-10-21 (`testado` por unidade, falta ver em jogo):
   `aipolicy.cpp:2073-2077`): `OBJECT_START_PLAY_ACTION` (303) a quem vê, dura
   `max(1, (vezes·(duração + intervalo) − intervalo)/1000)` s e acaba antes com combate ou morte
   (`OBJECT_STOP_PLAY_ACTION`, 304). O nome vai nos bytes do arquivo (GBK), sem o `NUL`.
+- **`InvocarNpc`/`InvocarMina`** (B343, 31 + 12 usos) — `op_summon_npc/mine` (`aitrigger.cpp:817-875`):
+  alvo do gatilho, quantidade 1..=10 (senão `false`), vida negativa vira 0; o mundo
+  (`World::invocar_npc`/`invocar_mina`, `CreateNPC`/`CreateMine`, `obj_interface.cpp:2095-2260`)
+  recusa modelo que não é NPC/mina, põe em `alvo ± Rand(−r, r)` em x/z no chão, com id dinâmico, e
+  tira no fim do prazo (`prazos_de_invocados`, `OBJECT_DISAPPEAR`). `falta`: o NPC andar pelo
+  caminho dado (o nosso NPC de serviço não anda) e o dono da mina (`set_owner`).
+- **`Historico`** (B343, 22 usos) — `op_revise_history` soma, `op_set_history` define
+  (`aitrigger.cpp:907-915`), e a expressão `expr_history_value` lê (`crate::dados_unicos`). **Não é
+  igual:** no original é o `UniqueDataClient`, gravado no banco do `gdeliveryd` e comum ao servidor;
+  aqui fica na memória do processo do GS e zera ao reiniciar. A condição "estágio de história"
+  (`history_manager`) segue sem porte.
+- **`EntregarMissao`** (B343, 32 usos) — `op_deliver_task` só a jogador (`aitrigger.cpp:932-944`) e
+  `op_deliver_task_in_dmglist` (`DispatchTaskToDmgList`, `npc.cpp:1488-1512`: lista de dano, a menos de
+  `iRange` m, até `iPlayerNum`); o jogador recebe `OnTaskManualTrig(id, false)` (`player.cpp:2570-2575`):
+  missão de topo sem NPC que entrega.
 - **`ContarJogadores`** (B339, 50 usos) — `op_get_sphere/box_player_count`
   (`aitrigger.cpp:1001-1029`): jogadores vivos no raio (truncado para inteiro,
   `policy_loader.cpp:385`) ou na caixa x/z, gravado na variável de destino.

@@ -16864,3 +16864,13 @@ comparação lado a lado.
       pw-admin-api sh -c 'cd /tmp/tp && TEST_DATABASE_URL="$DATABASE_URL" python -m unittest discover -s tests -p "teste_*.py"'`
       (isolado: schema `test` e chaves com prefixo). Sem o `MSYS_NO_PATHCONV` o Git Bash converte o `PYTHONPATH`; não
       rodar junto da suíte Rust (esgota as 100 conexões do Postgres).
+
+343. **Sessão 2026-10-21: política — invocar NPC e mina, histórico e entregar missão.**
+
+    - `Acao::InvocarNpc/InvocarMina` → `World::invocar_npc/invocar_mina` (`CreateNPC`/`CreateMine`,
+      `obj_interface.cpp:2095-2260`), com prazo (`prazos_de_invocados`) e os eventos `NpcApareceu`/`MinaRenasceu`.
+    - `crate::dados_unicos` (o `UniqueDataClient`) para `op_revise/set_history` e `expr_history_value` — em memória.
+    - `op_deliver_task` e `op_deliver_task_in_dmglist` → `EventoDoMundo::MissaoDaPolitica` →
+      `BusServer::missao_da_politica` (`OnTaskManualTrig(id, false)`).
+    - Provas: `invocar_npc_e_mina_historia_e_missao`, `dados_unicos::testes`, `invocados_da_politica` **1/1**,
+      `politica_do_realm` **3/3** (1.5.5: sem porte só torre 1, depósito 3, PvP de facção 3).

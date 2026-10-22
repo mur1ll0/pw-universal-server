@@ -1188,6 +1188,25 @@ impl BusServer {
                 }
             }
 
+            EventoDoMundo::NpcApareceu { id } => {
+                // B343 — NPC invocado pela política: `NPC_ENTER_WORLD` a quem está perto (como na vista).
+                let (perto, pacote) = {
+                    let mut mundo = self.world.write().await;
+                    let Some(n) = mundo.npcs.get(&id) else { return };
+                    let (pos, tid, dir) = (n.position, n.template_id, n.direcao);
+                    let ids: Vec<i64> = mundo.players.iter().filter(|(_, p)| na_visao(&p.position, &pos)).map(|(pid, _)| *pid).collect();
+                    for pid in &ids {
+                        if let Some(p) = mundo.players.get_mut(pid) {
+                            p.visiveis.insert(id);
+                        }
+                    }
+                    (ids, self.sub.npc_enter_world(id as i32, tid as i32, pos, dir, 0).data)
+                };
+                for pid in perto {
+                    self.enviar_ao_jogador(pid as i32, pacote.clone()).await;
+                }
+            }
+            EventoDoMundo::MissaoDaPolitica { roleid, missao } => self.missao_da_politica(roleid, missao).await,
             EventoDoMundo::MonstroRenasceu { id } => {
                 // Quem está perto volta a ver o monstro sem precisar andar: o streaming só
                 // recalcula ao trocar de fatia.

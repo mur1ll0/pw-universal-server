@@ -100,6 +100,10 @@ pub enum EventoDoMundo {
     MonstroRenasceu { id: i64 },
     /// Uma mina colhida voltou ao chão.
     MinaRenasceu { id: i64 },
+    /// B343 — um NPC invocado pela política (`CreateNPC`) entrou no mundo.
+    NpcApareceu { id: i64 },
+    /// B343 — `GM_MSG_DELIVER_TASK` da política: `OnTaskManualTrig(id, false)` no jogador.
+    MissaoDaPolitica { roleid: RoleId, missao: u32 },
     /// Chegou a hora do próximo golpe normal do jogador (`session_normal_attack::RepeatSession`).
     GolpeDoJogador { roleid: RoleId },
     /// Um item ou monte de moedas no chão acabou a vida (`gmatter_item_base_imp`,
@@ -356,6 +360,8 @@ pub struct WorldInstance {
     pub rotas: HashMap<i32, Arc<Vec<pw_core::Vector3>>>,
     /// B341 — `path_manager::_convert_tab` (`pathman.h:49-56`): id global da rota → id no `path.sev`.
     pub rotas_do_global: HashMap<i32, i32>,
+    /// B343 — NPCs e minas invocados com prazo (ms): `SetLifeTime`/`SetLife` (0 = para sempre, não entra aqui).
+    pub prazos_de_invocados: HashMap<i64, u32>,
     /// O líder de cada área de grupo ou de chefe (`group_spawner::_leader_id`), pela área do
     /// `npcgen.data`, e os subordinados de cada líder (B136).
     lideres_das_areas: HashMap<i32, i64>,
@@ -495,6 +501,7 @@ impl WorldInstance {
             acoes_tocando: HashMap::new(),
             rotas: HashMap::new(),
             rotas_do_global: HashMap::new(),
+            prazos_de_invocados: HashMap::new(),
             lideres_das_areas: HashMap::new(),
             subordinados: HashMap::new(),
             movimento: pw_data_loader::MapaDeMovimento::vazio(),
@@ -611,6 +618,43 @@ impl WorldInstance {
                     let odiado = (alvo != id).then_some(alvo);
                     for _ in 0..quantidade {
                         self.invocar_monstro(monstro as u32, centro, distancia.max(0) as u32, vida_s, false, odiado);
+                    }
+                }
+                Pedido::InvocarNpc { npc, quantidade, alvo, distancia, vida_s, caminho } => {
+                    let Some(centro) = self.posicao_do_alvo_vivo(alvo) else { continue };
+                    if caminho != 0 {
+                        // `ent.path_id` do `CreateNPC`: o nosso NPC de serviço não anda.
+                        debug!("mundo: NPC {npc} invocado com o caminho {caminho} — NPC andando por rota sem porte");
+                    }
+                    for _ in 0..quantidade {
+                        self.invocar_npc(npc as u32, centro, distancia.max(0) as f32, vida_s);
+                    }
+                }
+                Pedido::InvocarMina { mina, quantidade, alvo, distancia, vida_s } => {
+                    let Some(centro) = self.posicao_do_alvo_vivo(alvo) else { continue };
+                    for _ in 0..quantidade {
+                        self.invocar_mina(mina as u32, centro, distancia.max(0) as f32, vida_s);
+                    }
+                }
+                Pedido::EntregarMissao { jogador, missao } => {
+                    if self.players.contains_key(&jogador) {
+                        self.emitir(EventoDoMundo::MissaoDaPolitica { roleid: jogador as RoleId, missao: missao as u32 });
+                    }
+                }
+                Pedido::MissaoAosQueFeriram { missao, quantidade, distancia } => {
+                    // `DispatchTaskToDmgList` (`npc.cpp:1488-1512`): na ordem da lista de dano, só jogador presente e a
+                    // menos de `distancia` m (3D), até `quantidade`. A ordem do `hash_map` do original não é a de chegada.
+                    let Some((m, _)) = self.monsters.get(&id) else { continue };
+                    let d2 = (distancia as f32) * (distancia as f32);
+                    let quem: Vec<i64> = m
+                        .danos
+                        .iter()
+                        .map(|(j, _)| *j)
+                        .filter(|j| self.players.get(j).is_some_and(|p| p.position.distance_squared(&m.position) < d2))
+                        .take(quantidade.max(0) as usize)
+                        .collect();
+                    for j in quem {
+                        self.emitir(EventoDoMundo::MissaoDaPolitica { roleid: j as RoleId, missao: missao as u32 });
                     }
                 }
                 Pedido::MudarCaminho { mundo, caminho, tipo, corre } => {
@@ -1256,6 +1300,97 @@ impl WorldInstance {
 
     /// A mina some do mapa e espera o tempo de renascer (`BeMined` → `Reclaim`,
     /// `matter.cpp:215-229`, `npcgenerator.cpp:4960-5000`).
+    /// O `QueryObject(target)` dos `Create*` perto do alvo: jogador ou monstro vivo.
+    fn posicao_do_alvo_vivo(&self, alvo: i64) -> Option<pw_core::Vector3> {
+        self.players
+            .get(&alvo)
+            .map(|p| p.position)
+            .or_else(|| self.monsters.get(&alvo).filter(|(m, _)| !m.is_dead).map(|(m, _)| m.position))
+    }
+
+    /// Um ponto em volta do alvo: `pos ± Rand(-radius, radius)` em x e z, no chão (`CreateMine`/`CreateNPC`,
+    /// `obj_interface.cpp:2165-2188`).
+    fn ponto_em_volta(&self, centro: pw_core::Vector3, raio: f32) -> pw_core::Vector3 {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut pos = centro;
+        if raio > 0.0 {
+            pos.x += rng.gen_range(-raio..=raio);
+            pos.z += rng.gen_range(-raio..=raio);
+        }
+        if let Some(chao) = self.terreno.altura_em(pos.x, pos.z) {
+            pos.y = chao;
+        }
+        pos
+    }
+
+    fn proximo_id_dinamico(&mut self) -> i64 {
+        let id = self.proximo_monstro_dinamico as i32 as i64;
+        self.proximo_monstro_dinamico =
+            PRIMEIRO_ID_DE_MONSTRO_DINAMICO | ((self.proximo_monstro_dinamico.wrapping_add(1)) & MASCARA_DE_MONSTRO_DINAMICO);
+        id
+    }
+
+    /// B343 — `object_interface::CreateNPC(pos, param)` (`obj_interface.cpp:2190-2217`): só modelo de NPC
+    /// (`npc_data.is_npc`); vive `vida_s` segundos (`SetLifeTime`, 0 = para sempre).
+    pub fn invocar_npc(&mut self, tid: u32, centro: pw_core::Vector3, raio: f32, vida_s: i32) -> Option<i64> {
+        if !self.data_manager.ids_de_npc.contains(&tid) {
+            debug!("mundo: invocar NPC {tid} recusado — não é NPC no elements.data");
+            return None;
+        }
+        let pos = self.ponto_em_volta(centro, raio);
+        let id = self.proximo_id_dinamico();
+        let npc = NpcEntity { id, template_id: tid, name: "NPC".to_string(), position: pos, dialog_id: 0, direcao: rand::random::<u8>() };
+        self.grid.add_entity(id, pos, false);
+        self.npcs.insert(id, npc);
+        if vida_s > 0 {
+            self.prazos_de_invocados.insert(id, (vida_s as u32).saturating_mul(1000));
+        }
+        self.emitir(EventoDoMundo::NpcApareceu { id });
+        Some(id)
+    }
+
+    /// B343 — `object_interface::CreateMine(pos, param, target)` (`obj_interface.cpp:2095-2128`): só modelo de mina;
+    /// sem gerador, não renasce; vive `vida_s` segundos (`SetLife`, contado no batimento da mina; 0 = para sempre).
+    /// `falta`: o dono da mina (`mine_info.set_owner`).
+    pub fn invocar_mina(&mut self, tid: u32, centro: pw_core::Vector3, raio: f32, vida_s: i32) -> Option<i64> {
+        if !self.data_manager.minas.contains_key(&tid) {
+            debug!("mundo: invocar mina {tid} recusado — não é mina no elements.data");
+            return None;
+        }
+        let pos = self.ponto_em_volta(centro, raio);
+        let id = self.proximo_id_dinamico();
+        self.grid.add_entity(id, pos, false);
+        self.matters.insert(id, MatterEntity { id, template_id: tid, position: pos, renascer_s: 0, renasce: false });
+        if vida_s > 0 {
+            self.prazos_de_invocados.insert(id, (vida_s as u32).saturating_mul(1000));
+        }
+        self.emitir(EventoDoMundo::MinaRenasceu { id });
+        Some(id)
+    }
+
+    /// O prazo dos NPCs e minas invocados: acabado, some (`OBJECT_DISAPPEAR`).
+    pub fn descontar_prazos_de_invocados(&mut self, delta_ms: u32) {
+        let mut acabaram = Vec::new();
+        self.prazos_de_invocados.retain(|id, falta| {
+            *falta = falta.saturating_sub(delta_ms);
+            if *falta == 0 {
+                acabaram.push(*id);
+            }
+            *falta > 0
+        });
+        for id in acabaram {
+            if self.npcs.remove(&id).is_none() && self.matters.remove(&id).is_none() {
+                continue;
+            }
+            self.grid.remove_entity(id);
+            for p in self.players.values_mut() {
+                p.visiveis.remove(&id);
+            }
+            self.emitir(EventoDoMundo::MonstroSumiu { id });
+        }
+    }
+
     pub fn colher_mina(&mut self, id: i64) -> Option<MatterEntity> {
         let m = self.matters.remove(&id)?;
         self.grid.remove_entity(id);
@@ -2587,6 +2722,7 @@ impl WorldInstance {
         // do `invincible_filter` no 1.5.5).
         let mut invencibilidade_mudou: Vec<i64> = Vec::new();
 
+        self.descontar_prazos_de_invocados(delta_ms);
         // O invocado com `remain_time` some quando o tempo acaba, vivo ou não
         // (`prop.remain_time`, `gs/player.cpp:13079`).
         let mut expiraram = Vec::new();
