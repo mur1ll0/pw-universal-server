@@ -1455,6 +1455,16 @@ Portados em 2026-10-21 (`testado` por unidade, falta ver em jogo):
 - **`FORCE_GIVEUP`** (motivo 6) não é falta: o próprio original não o trata
   (`TaskServer.cpp:330-395`). O limite de tempo já era conferido no `CHECK_FINISH`.
 
-`falta` (recusado ou ignorado, nunca inventado): casamento, PQ, torre, variáveis globais
+- **Casamento (B347)** — `characters.spouse` (`scripts/2026_10_21_conjuge.sql`), `PlayerEntity::conjuge`.
+  Pré-requisitos: `m_bPremise_Spouse` exige cônjuge (`CheckSpouse`), `m_bMarriage` exige não ter e estar
+  em equipe de dois (`CheckMarriage`, erro 20), `m_bCoupleOnly` exige o outro membro ser o cônjuge (36).
+  Entregar a missão de casamento no NPC não premia: o capitão (com o `CheckMarriage`) pede a relação de
+  equipe (`TaskServer.cpp:789-794` → `DoTeamRelationTask`, `player.cpp:18741-18890`): recarga de 1 s, os
+  dois neste mapa, vivos e a até 30 m; cada um tem de ter a missão com sucesso e o prêmio cabendo; então
+  cada um recebe o prêmio e os dois ficam casados (`SetSpouse`, gravado, `PLAYER_CHANGE_SPOUSE` 260 a
+  quem vê cada um). `falta`: divórcio (`m_bDivorce`), o cônjuge no estado visível de quem chega depois,
+  reserva/convite de cerimônia (serviços 62/63) e o par na lista de amigos do servidor de entrega.
+
+`falta` (recusado ou ignorado, nunca inventado): PQ, torre, variáveis globais
 (lidas como 0), força (`m_iForce`), sistema de facção. (Invocação de monstros de prêmio, falha
 por morte — B157 — e o que é de equipe — B164 — saíram desta lista.)

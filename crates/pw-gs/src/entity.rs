@@ -203,6 +203,9 @@ pub struct PlayerEntity {
     /// `pInfo->leadership` do `userlogin.cpp:94`) e ganha em missão (`m_iLeaderShip` → `IncLeadership`). A ocupada
     /// pelas cartas vestidas (`_leadership_occupied`) é recontada no recálculo do equipamento.
     pub lideranca: i32,
+    /// B347 — o cônjuge (`_spouse_id`, `characters.spouse`), 0 sem casamento: `SetSpouse` no fim da missão de
+    /// casamento (`PlayerTaskTeamInterface::Execute`, `gs/task/taskman.cpp:607-636`).
+    pub conjuge: i32,
     /// `_basic.reputation` (sem sistema de reputação ainda, vem zerada do banco).
     pub reputacao: i32,
     /// `_combat_timer`, em segundos: atacar põe 15 (`MAX_COMBAT_TIME`, `DoAttack`,
@@ -1690,6 +1693,7 @@ impl PlayerEntity {
             pontos_de_atributo: 0,
             vagas_na_jaula: 1,
             lideranca: 0,
+            conjuge: 0,
             reputacao: p.reputation,
             combate_s: 0,
             contador_hp: 0,

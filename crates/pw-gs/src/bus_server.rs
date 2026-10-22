@@ -1598,6 +1598,7 @@ impl BusServer {
         jogador.pontos_de_atributo = repo.pontos_de_atributo(roleid).await.unwrap_or(0);
         jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
         jogador.lideranca = repo.lideranca(roleid).await.unwrap_or(0);
+        jogador.conjuge = repo.conjuge(roleid).await.unwrap_or(0);
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
                 jogador.missoes = crate::missoes::ListasDeMissao::de_blocos(

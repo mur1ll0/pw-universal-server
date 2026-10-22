@@ -798,6 +798,24 @@ impl CharacterRepository {
         Ok(())
     }
 
+    /// B347 — o cônjuge (`characters.spouse`; o `GDB::set_couple` do `taskman.cpp:618`).
+    pub async fn conjuge(&self, role_id: RoleId) -> Result<i32> {
+        let v: Option<i32> = sqlx::query_scalar("SELECT spouse FROM characters WHERE id = $1")
+            .bind(role_id)
+            .fetch_optional(self.pool.get_ref())
+            .await?;
+        Ok(v.unwrap_or(0))
+    }
+
+    pub async fn gravar_conjuge(&self, role_id: RoleId, conjuge: i32) -> Result<()> {
+        sqlx::query("UPDATE characters SET spouse = $2 WHERE id = $1")
+            .bind(role_id)
+            .bind(conjuge)
+            .execute(self.pool.get_ref())
+            .await?;
+        Ok(())
+    }
+
     /// B346 — a liderança (`characters.leadership`; `pInfo->leadership`, `gs/userlogin.cpp:94`).
     pub async fn lideranca(&self, role_id: RoleId) -> Result<i32> {
         let v: Option<i32> = sqlx::query_scalar("SELECT leadership FROM characters WHERE id = $1")

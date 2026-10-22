@@ -16925,3 +16925,14 @@ comparação lado a lado.
       uma carta que peça até 10 (sobe vida/dano/defesa na ficha); uma segunda que passe do total é recusada com
       "não pode equipar". Arrastar uma carta de qualidade igual ou menor para devorar: a vestida ganha experiência e
       sobe de nível; a devorada some da bolsa.
+
+347. **Sessão 2026-10-22: casamento.**
+
+    - `characters.spouse` (`scripts/2026_10_21_conjuge.sql`, aplicado no banco local), `PlayerEntity::conjuge`,
+      `Jogador::conjuge`; pré-requisitos `CheckSpouse`, `CheckMarriage` e `m_bCoupleOnly` no motor.
+    - Entregar a missão de casamento: `Motor::capitao_pede_casamento` → `BusServer::casar_equipe` (o
+      `DoTeamRelationTask`: equipe de dois, 30 m, recarga 1 s) → `pode_casar` dos dois → `casar` (o prêmio) → cônjuge
+      gravado e `PLAYER_CHANGE_SPOUSE` (260).
+    - Provas: `missao_de_casamento` (motor), `missoes` **21/21**, conferidor S2C **5/5**.
+    - Ver em jogo (1.5.5, dois clientes): em grupo de dois, fazer a missão de casamento e o capitão entregar no NPC — os
+      dois recebem o prêmio e aparecem casados (nome do cônjuge na ficha).

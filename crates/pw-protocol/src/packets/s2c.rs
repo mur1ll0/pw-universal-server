@@ -2559,6 +2559,16 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// B347 — `PLAYER_CHANGE_SPOUSE` (260) `{int who; int spouse}` = 2 + 8 (`gplayer_dispatcher::player_change_spouse`,
+    /// `gs/player.cpp:5629-5636`: a todos em volta, ele incluído).
+    pub fn player_change_spouse(quem: i32, conjuge: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(260);
+        stream.write_i32_le(quem);
+        stream.write_i32_le(conjuge);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     pub fn npc_died(nid: i32, killer_id: i32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(20);               // CMD_S2C_NPC_DIED = 20

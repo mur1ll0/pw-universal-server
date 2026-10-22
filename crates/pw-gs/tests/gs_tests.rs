@@ -103,6 +103,7 @@ fn test_combat_engine_damage_calculation() {
         pontos_de_atributo: 0,
         vagas_na_jaula: 1,
         lideranca: 0,
+        conjuge: 0,
         reputacao: 0,
         combate_s: 0,
         contador_hp: 0,

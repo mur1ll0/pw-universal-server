@@ -692,6 +692,10 @@ pub trait Jogador {
     /// `ReceiveTaskExp` — um de cada vez, como `DeliverExperience`/`DeliverSP`.
     fn dar_exp(&mut self, exp: u32, sp: u32);
     fn dar_reputacao(&mut self, r: i32);
+    /// B347 — `GetSpouseID()`: o cônjuge, 0 sem casamento.
+    fn conjuge(&self) -> u32 {
+        0
+    }
     /// B346 — `AddLeaderShip` → `gplayer_imp::IncLeadership` (`player_imp.h:3277-3281`).
     fn dar_lideranca(&mut self, _v: i32) {}
     /// `SetCurPeriod` (`task/taskman.cpp:251-254`) → `gplayer_imp::SetSecLevel`: o **nível de
@@ -1158,8 +1162,16 @@ impl<'a, J: Jogador> Motor<'a, J> {
                 return r;
             }
         }
-        if t.conjuge {
+        // `CheckSpouse` (`TaskTempl.inl:786-792`).
+        if t.conjuge && self.j.conjuge() == 0 {
             return erro::INDETERMINADO;
+        }
+        // `CheckMarriage` (`TaskTempl.inl:341-366`).
+        if t.casamento {
+            let r = self.checar_casamento();
+            if r != 0 {
+                return r;
+            }
         }
         if t.compara_bolsa && self.j.slots_livres(true) < t.slots_de_bolsa {
             return erro::SLOTS_DE_BOLSA;
@@ -1199,8 +1211,8 @@ impl<'a, J: Jogador> Motor<'a, J> {
         if t.classes_distintas && classes.len() != membros.len() {
             return erro::MEMBRO_INVALIDO;
         }
-        if t.so_casal {
-            // Sem casamento no servidor: ninguém é cônjuge de ninguém.
+        // `m_bCoupleOnly` (`TaskTempl.inl:213-218`): dois na equipe, e o outro é o cônjuge.
+        if t.so_casal && (membros.len() != 2 || self.j.conjuge() != membros[1].id) {
             return erro::NAO_E_CASAL;
         }
         for (w, &n) in t.membros_pedidos.iter().zip(&contagem) {
@@ -2316,6 +2328,60 @@ impl<'a, J: Jogador> Motor<'a, J> {
         }
     }
 
+    /// B347 — `CheckMarriage` (`TaskTempl.inl:341-366`): sem cônjuge, em equipe de exatamente dois.
+    fn checar_casamento(&self) -> u32 {
+        if self.j.conjuge() != 0 {
+            return erro::MEMBRO_INVALIDO;
+        }
+        if self.j.equipe().len() != 2 {
+            return erro::MEMBRO_INVALIDO;
+        }
+        0
+    }
+
+    fn entrada_de_casamento(&self) -> Option<usize> {
+        (0..self.listas.ativa.quantidade as usize).find(|&i| {
+            let e = &self.listas.ativa.e[i];
+            e.valida && self.t(e.id as u32).is_some_and(|t| t.casamento)
+        })
+    }
+
+    /// B347 — o `OnTaskCheckAward` da missão de casamento (`TaskServer.cpp:789-794`): só o capitão, com o
+    /// `CheckMarriage` passando, pede a relação de equipe (`CheckTeamRelationship(TASK_TEAM_RELATION_MARRIAGE)`).
+    pub fn capitao_pede_casamento(&self, id: u32) -> bool {
+        let Some(t) = self.t(id) else { return false };
+        if !t.casamento || t.tipo_de_conclusao != conclusao::NO_NPC {
+            return false;
+        }
+        if self.listas.ativa.indice(id).is_none() {
+            return false;
+        }
+        let capitao = self.j.equipe().first().map(|m| m.id) == Some(self.eu);
+        capitao && self.checar_casamento() == 0
+    }
+
+    /// B347 — `OnCheckTeamRelationship(MARRIAGE)` (`TaskProcess.cpp:3423-3453`): sem cônjuge, a missão de casamento
+    /// com sucesso, concluível e com o prêmio cabendo (`RecursiveCheckAward`).
+    pub fn pode_casar(&mut self) -> bool {
+        if self.j.conjuge() != 0 {
+            return false;
+        }
+        let Some(idx) = self.entrada_de_casamento() else { return false };
+        let en = self.listas.ativa.e[idx];
+        if !en.sucesso() {
+            return false;
+        }
+        let Some(t) = self.t(en.id as u32) else { return false };
+        self.verificar_premio(t, idx, -1) == 0
+    }
+
+    /// B347 — `OnCheckTeamRelationshipComplete(MARRIAGE)` (`TaskProcess.cpp:3458-3480`): o prêmio da missão de
+    /// casamento (`DeliverAward`).
+    pub fn casar(&mut self) -> bool {
+        let Some(idx) = self.entrada_de_casamento() else { return false };
+        self.entregar_premio(idx, -1)
+    }
+
     /// `OnTaskCheckAward` (`TaskServer.cpp:767-862`) — entregar no NPC.
     pub fn entregar_no_npc(&mut self, id: u32, escolha: i32) -> bool {
         let Some(idx) = (0..self.listas.ativa.quantidade as usize).find(|&i| self.listas.ativa.e[i].id as u32 == id && self.listas.ativa.e[i].valida) else {
@@ -2552,9 +2618,11 @@ mod tests {
         equipe: Vec<MembroDaEquipe>,
         teleporte: Option<(u32, [f32; 3])>,
         avisos_de_equipe: Vec<(u32, u32, u8)>,
+        conjuge: u32,
     }
 
     impl Jogador for JogadorDeTeste {
+        fn conjuge(&self) -> u32 { self.conjuge }
         fn agora(&self) -> u32 { 1_000_000 }
         fn nivel(&self) -> u32 { self.nivel }
         fn classe(&self) -> u32 { self.classe }
@@ -2584,6 +2652,39 @@ mod tests {
 
     fn modelo(id: u32) -> TaskTemplate {
         TaskTemplate::vazia(id)
+    }
+
+    /// B347 — `CheckMarriage`/`CheckSpouse`/`m_bCoupleOnly` e o fluxo do casamento no motor: só em equipe de dois, sem
+    /// cônjuge; o capitão pede, cada um passa no `OnCheckTeamRelationship` e recebe o prêmio.
+    #[test]
+    fn missao_de_casamento() {
+        let mut t = modelo(50);
+        t.casamento = true;
+        t.metodo = metodo::FALAR_COM_NPC;
+        t.tipo_de_conclusao = conclusao::NO_NPC;
+        t.rewards.money = 7;
+        let mut so_conjuge = modelo(51);
+        so_conjuge.conjuge = true;
+        let d = dados(vec![t, so_conjuge]);
+        let membro = |id: u32| MembroDaEquipe { id, nivel: 1, classe: 0, masculino: true, mundo: 1, pos: [0.0; 3] };
+        // Sozinho: `ILLEGAL_MEM` (20).
+        let mut l = ListasDeMissao::default();
+        let mut j = JogadorDeTeste { nivel: 1, ..Default::default() };
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(50, 0, true), erro::MEMBRO_INVALIDO);
+        assert_ne!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(51, 0, true), 0, "sem cônjuge");
+        // Em dois: aceita; o capitão pede; passa e recebe o prêmio.
+        j.equipe = vec![membro(1), membro(2)];
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(50, 0, true), 0);
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.capitao_pede_casamento(50));
+        assert!(!Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 2 }.capitao_pede_casamento(50), "o outro não é o capitão");
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.pode_casar());
+        assert!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.casar());
+        assert_eq!((j.dinheiro, l.ativa.quantidade), (7, 0));
+        // Casado: a de casamento não é mais aceita, a de cônjuge é.
+        j.conjuge = 2;
+        let mut nova = ListasDeMissao::default();
+        assert_eq!(Motor { tarefas: &d, listas: &mut nova, j: &mut j, eu: 1 }.aceitar(50, 0, true), erro::MEMBRO_INVALIDO);
+        assert_eq!(Motor { tarefas: &d, listas: &mut l, j: &mut j, eu: 1 }.aceitar(51, 0, true), 0);
     }
 
     fn dados(ts: Vec<TaskTemplate>) -> TasksData {

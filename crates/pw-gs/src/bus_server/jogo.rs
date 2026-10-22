@@ -385,6 +385,9 @@ impl Jogador for Contexto<'_> {
         self.para_mim
             .push(S2CGamedataSend::task_deliver_exp(exp as i32, sp as i32).data);
     }
+    fn conjuge(&self) -> u32 {
+        self.p.conjuge.max(0) as u32
+    }
     fn dar_lideranca(&mut self, v: i32) {
         self.p.lideranca = self.p.lideranca.wrapping_add(v);
         self.mudou = true;
@@ -2887,6 +2890,17 @@ impl BusServer {
             return;
         }
         let dados = self.world.read().await.data_manager.clone();
+        // B347 — a missão de casamento não premia aqui: o capitão pede a relação de equipe (`TaskServer.cpp:789-794`).
+        if dados.tasks.get_task(id).is_some_and(|t| t.casamento) {
+            let pede = self
+                .com_contexto(roleid, |ctx| Self::com_motor(ctx, &dados, |m| m.capitao_pede_casamento(id)))
+                .await
+                .unwrap_or(false);
+            if pede {
+                self.casar_equipe(roleid).await;
+            }
+            return;
+        }
         let ok = self
             .com_contexto(roleid, |ctx| {
                 Self::com_motor(ctx, &dados, |m| m.entregar_no_npc(id, escolha))
@@ -2897,6 +2911,63 @@ impl BusServer {
             "mundo: {roleid} entregou a missão {id}: {}",
             if ok { "premiada" } else { "recusada" }
         );
+    }
+
+    /// B347 — `gplayer_imp::DoTeamRelationTask(TASK_TEAM_RELATION_MARRIAGE)` (`player.cpp:18741-18890`): o capitão de
+    /// uma equipe de dois, com recarga de 1 s (`COOLDOWN_INDEX_TEAM_RELATION`, 28º do enum de `cooldowncfg.h`); os dois
+    /// neste mapa, vivos e a até 30 m do capitão. Todos passam no `OnCheckTeamRelationship`, depois cada um recebe o
+    /// prêmio (`OnCheckTeamRelationshipComplete`) e o `PlayerTaskTeamInterface::Execute` (`taskman.cpp:607-636`) casa os
+    /// dois: `SetSpouse`, grava (`GDB::set_couple`) e `PLAYER_CHANGE_SPOUSE` a quem vê cada um.
+    pub(super) async fn casar_equipe(&self, lider: i32) {
+        const RECARGA_DA_RELACAO: i32 = 28;
+        let par = {
+            let mut mundo = self.world.write().await;
+            let membros = mundo.membros_do_grupo(lider);
+            if membros.len() != 2 || membros.first() != Some(&lider) {
+                return;
+            }
+            let agora = std::time::Instant::now();
+            let Some(p) = mundo.players.get_mut(&(lider as i64)) else { return };
+            if p.recargas.get(&RECARGA_DA_RELACAO).is_some_and(|ate| *ate > agora) {
+                return;
+            }
+            p.recargas.insert(RECARGA_DA_RELACAO, agora + std::time::Duration::from_millis(1000));
+            let centro = p.position;
+            let ok = membros.iter().all(|m| {
+                mundo.players.get(&(*m as i64)).is_some_and(|q| q.hp > 0 && q.position.distance_squared(&centro) <= 30.0 * 30.0)
+            });
+            if !ok {
+                return;
+            }
+            [membros[0], membros[1]]
+        };
+        let dados = self.world.read().await.data_manager.clone();
+        for m in par {
+            let pode = self
+                .com_contexto(m, |ctx| Self::com_motor(ctx, &dados, |mo| mo.pode_casar()))
+                .await
+                .unwrap_or(false);
+            if !pode {
+                debug!("mundo: casamento de {:?} recusado — {m} não passa no OnCheckTeamRelationship", par);
+                return;
+            }
+        }
+        for m in par {
+            self.com_contexto(m, |ctx| Self::com_motor(ctx, &dados, |mo| mo.casar())).await;
+        }
+        let repo = self.repo().await;
+        for (eu, outro) in [(par[0], par[1]), (par[1], par[0])] {
+            if let Some(p) = self.world.write().await.players.get_mut(&(eu as i64)) {
+                p.conjuge = outro;
+            }
+            if let Err(e) = repo.gravar_conjuge(eu, outro).await {
+                warn!("mundo: não consegui gravar o cônjuge de {eu}: {e}");
+            }
+            let aviso = S2CGamedataSend::player_change_spouse(eu, outro).data;
+            self.enviar_ao_jogador(eu, aviso.clone()).await;
+            self.transmitir_a_quem_ve(eu as i64, aviso).await;
+        }
+        info!("mundo: {} e {} se casaram", par[0], par[1]);
     }
 
     /// `TASK_NOTIFY` (49) com os motivos que o motor trata (`OnClientNotify`,
