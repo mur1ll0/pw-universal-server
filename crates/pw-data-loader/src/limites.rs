@@ -24,6 +24,12 @@ pub struct LimitesDoMapa {
     pub secao: String,
     pub limites: Vec<String>,
     pub altura_maxima: f32,
+    /// B349 — `player_per_instance` das seções [Instance_*] (0 nos mundos).
+    #[serde(default)]
+    pub por_copia: u32,
+    /// B349 — `parallelworld_server = 1`: mundo paralelo (cópias por lotação, não por chave).
+    #[serde(default)]
+    pub paralelo: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +54,12 @@ pub fn do_mapa(c: CatalogoDeLimites, world_id: i32) -> Option<&'static LimitesDo
     catalogo(c).iter().find(|m| m.world_id == world_id)
 }
 
+/// B349 — a masmorra com uma cópia por chave (grupo ou jogador): seção [Instance_*] que não é mundo paralelo, com o
+/// limite de jogadores por cópia. `None` para mundo comum e mundo paralelo.
+pub fn masmorra_por_chave(c: CatalogoDeLimites, world_id: i32) -> Option<u32> {
+    do_mapa(c, world_id).filter(|m| m.secao.starts_with("Instance_") && !m.paralelo && m.por_copia > 0).map(|m| m.por_copia)
+}
+
 /// `_world_limit.nofly`.
 pub fn sem_voo(c: CatalogoDeLimites, world_id: i32) -> bool {
     do_mapa(c, world_id).is_some_and(|m| m.limites.iter().any(|t| t == "nofly"))
@@ -68,5 +80,14 @@ mod testes {
         assert!(sem_voo(CatalogoDeLimites::V126, is01.world_id));
         assert_eq!(catalogo(CatalogoDeLimites::V126).len(), 43);
         assert_eq!(catalogo(CatalogoDeLimites::V155).len(), 79);
+    }
+
+    /// B349 — no 1.5.5 o 169 é masmorra de 15 por cópia; o 161 é mundo paralelo; o 1 é mundo.
+    #[test]
+    fn masmorras_do_155() {
+        let c = CatalogoDeLimites::V155;
+        assert_eq!(masmorra_por_chave(c, 169), Some(15));
+        assert_eq!(masmorra_por_chave(c, 161), None, "mundo paralelo");
+        assert_eq!(masmorra_por_chave(c, 1), None);
     }
 }

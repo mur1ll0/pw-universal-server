@@ -47,6 +47,11 @@ for nome, s in secoes.items():
         "limites": limites,
         "altura_maxima": float(altura.strip().rstrip(";").rstrip("f")) if altura else 0.0,
     }
+    # B349 — a masmorra: `player_per_instance` (jogadores por cópia) e `parallelworld_server` (mundo paralelo, cópias
+    # por lotação em vez de por chave); só nas seções [Instance_*].
+    if m.group(1) == "Instance":
+        mapas[tag]["por_copia"] = int(s.get("player_per_instance", "0").strip() or 0)
+        mapas[tag]["paralelo"] = s.get("parallelworld_server", "0").strip() == "1"
 
 saida = {
     "fonte": f"gamed/gs.conf do servidor {versao} (chave `limit` e `height_limit` de [World_*]/[Instance_*]); gerado por specs/mapas/gerar_limites.py",

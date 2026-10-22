@@ -385,6 +385,8 @@ pub struct BusServer {
     /// O roteador dos mapas deste processo, para os comandos de GM que acham um jogador
     /// noutro mapa (`GM_MOVETO_PLAYER`, `GM_CALLIN_PLAYER`). Fraco: o roteador é dono dos mapas.
     roteador: std::sync::OnceLock<std::sync::Weak<crate::mapas::RoteadorDeMapas>>,
+    /// B349 — o id deste mapa no roteador: o `world_id`, ou o id interno da cópia de masmorra.
+    id_de_rota: std::sync::OnceLock<i32>,
     /// Referência fraca a si mesmo, para tarefas que terminam depois do comando (a coleta).
     eu: std::sync::OnceLock<std::sync::Weak<BusServer>>,
     /// O laço de tique deste mapa (`RoteadorDeMapas::preparar_mapa`), para descarregar.
@@ -450,6 +452,7 @@ impl BusServer {
             transferencias_pendentes: Default::default(),
             trocas: std::sync::OnceLock::new(),
             roteador: std::sync::OnceLock::new(),
+            id_de_rota: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
             tique: std::sync::OnceLock::new(),
             golpe_na_fila: Arc::new(RwLock::new(HashMap::new())),
@@ -483,6 +486,11 @@ impl BusServer {
 
     pub fn ligar_trocas(&self, envio: mpsc::UnboundedSender<PedidoDeTroca>) {
         let _ = self.trocas.set(envio);
+    }
+
+    /// B349 — a cópia de masmorra conhece o id dela no roteador.
+    pub(crate) fn definir_id_de_rota(&self, id: i32) {
+        let _ = self.id_de_rota.set(id);
     }
 
     /// Liga este mapa ao roteador, para os comandos de GM que acham jogador noutro mapa.
@@ -1448,7 +1456,8 @@ impl BusServer {
         self.saidas_pendentes.write().await.remove(&role);
         self.sessoes.write().await.remove(&role);
         if let Some(r)=self.roteador.get().and_then(|r|r.upgrade()) {
-            r.apagar_rota(role,self.world.read().await.world_id).await;
+            let id = match self.id_de_rota.get() { Some(i) => *i, None => self.world.read().await.world_id };
+            r.apagar_rota(role, id).await;
         }
         if let Some(result)=p.resultado {
             let _=p.sessao.envio.try_send(BusMessage::PlayerLogout{result,roleid:role,provider_link_id:0,localsid:p.sessao.localsid});

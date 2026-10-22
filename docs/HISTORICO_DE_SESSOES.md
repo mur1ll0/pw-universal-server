@@ -16950,3 +16950,15 @@ comparação lado a lado.
       100202 > 199), `pw-gs --lib` **140/140**, `missoes_do_realm` **3/3**, missões do `subcomandos_no_mundo` **7/7**.
     - Ver em jogo (1.5.5): aceitar a PQ "Cap 1 - Trincheira Apodrecida" (20759) — aparece a janela da PQ com a etapa e
       a pontuação; matar os monstros da etapa sobe a pontuação; a colocação atualiza a cada minuto.
+
+349. **Sessão 2026-10-22: masmorra por grupo.**
+
+    - `specs/mapas/gerar_limites.py` passou a trazer `por_copia` (`player_per_instance`) e `paralelo`
+      (`parallelworld_server`); `limites_126.json`/`limites_155.json` regerados; `limites::masmorra_por_chave`.
+    - `RoteadorDeMapas`: cópias por `(mapa, chave)` com id interno (`PRIMEIRA_COPIA`), montadas como o painel liga um mapa;
+      `trocar` e a entrada no jogo vão à cópia; `BusServer::definir_id_de_rota` para a saída limpar a rota certa; batimento
+      de 10 s libera a cópia vazia há 20 min e solta a chave depois de 4 h.
+    - Provas: `masmorra_por_grupo` **1/1** (líder e membro na mesma cópia, quem está sozinho noutra), `masmorras_do_155`,
+      `varios_mapas` **4/4**, `canal_administrativo` **38/38**, portal **2/2**.
+    - Ver em jogo (1.5.5, dois clientes): os dois em grupo entram na Caverna das Sombras (169) — se veem lá dentro; um
+      terceiro personagem sozinho entra e não vê nenhum dos dois nem os monstros que eles mataram.

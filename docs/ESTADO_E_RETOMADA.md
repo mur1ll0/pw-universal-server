@@ -753,7 +753,9 @@ habilidades com conjuração e recarga certas, mapa inicial e missões iniciais.
     missões, PvP de facção), 93 condições (estágio de história, filtro, fim de caminho) e as
     estratégias de ódio por facção/invisibilidade.
 
-**Instâncias (masmorras), diagnóstico B160, `falta` inteiro:** no original, os mapas
+**Instâncias (masmorras) — cópia por grupo feita no B349** (spec 05 §7, portal de região): o 169 tem uma cópia por
+chave (líder do grupo ou o jogador), 15 por cópia, liberada vazia em 20 min. Falta o resto do diagnóstico abaixo
+(contador/`ResetInstance`, `kickout_instance`, reentrada, mundos paralelos). **Diagnóstico B160:** no original, os mapas
 `[Instance_isNN]` do `gs.conf` (o 169 é um deles; 52 ao todo) são cópias por **chave**. Sem grupo,
 a chave é `(id do jogador, contador)`; em grupo, é a do líder, repassada aos membros
 (`GetInstanceKey`, `player_imp.h:2577`). Uma cópia vazia dura `idle_time` (20 min) e cada cópia
@@ -1354,6 +1356,7 @@ Para achar rápido o item citado num comentário de código ou numa seção acim
 | 346 | 10-21 | Cartas de General: liderança, vestir, atributos e devorar |
 | 347 | 10-22 | Casamento pela missão (cônjuge gravado, `PLAYER_CHANGE_SPOUSE`) |
 | 348 | 10-22 | PQ (missão pública) e variáveis globais nas missões |
+| 349 | 10-22 | Masmorra por grupo: uma cópia do mapa por chave (líder ou jogador) |
 | 241 | 10-14 | Estúdio S3: rótulos e grupos de NPCs, 30 serviços e receitas |
 | 240 | 10-14 | Estúdio S3: conversas (TALK_PROC) estruturadas, editor de janelas/opções, funções com nome |
 | 239 | 10-14 | Estúdio S2: rótulos em português do ExpTypes.h, grupos da ficha, ícones |

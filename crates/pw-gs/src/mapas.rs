@@ -62,9 +62,48 @@ pub struct RoteadorDeMapas {
     /// Fila de trocas e o próprio roteador, para ligar os mapas carregados depois.
     trocas: std::sync::OnceLock<mpsc::UnboundedSender<crate::bus_server::PedidoDeTroca>>,
     eu: std::sync::OnceLock<std::sync::Weak<RoteadorDeMapas>>,
+    /// B349 — as cópias de masmorra (uma por chave), com ids internos a partir de [`PRIMEIRA_COPIA`].
+    copias: std::sync::Mutex<Copias>,
     /// Quando o processo montou o roteador (B249): o painel compara com a última publicação de arquivo do servidor
     /// para dizer "aguarda reinício" — os dados do `config` são lidos uma vez, na partida.
     iniciado_em: std::time::SystemTime,
+}
+
+/// B349 — o primeiro id interno de cópia de masmorra (nunca é `tag` de mapa).
+pub const PRIMEIRA_COPIA: i32 = 1_000_000;
+/// `_idle_time = 60*20` e `_life_time = 3600*4` (`gs/instance/instance_manager.h:164-165`), e o batimento de 10 s
+/// (`HEARTBEAT_CHECK_INTERVAL`, `instance_manager.cpp:648-690`).
+const OCIOSA_S: u64 = 20 * 60;
+const VIDA_S: u64 = 4 * 3600;
+const BATIMENTO_DAS_COPIAS_S: u64 = 10;
+
+/// B349 — uma cópia de masmorra (`instance_manager::AllocWorld` com a `instance_hash_key`).
+struct CopiaDeMasmorra {
+    mapa: i32,
+    chave: i64,
+    criada: std::time::Instant,
+    /// `w_obsolete`: desde quando está sem ninguém.
+    vazia_desde: Option<std::time::Instant>,
+}
+
+#[derive(Default)]
+struct Copias {
+    /// `_team_ins_key_list`: a chave do grupo, guardada para cada membro quando um deles entra (o grupo daqui se desfaz
+    /// na troca de mapa, B51; o do original é global).
+    chave_do_grupo: HashMap<i32, i64>,
+    por_chave: HashMap<(i32, i64), i32>,
+    copias: HashMap<i32, CopiaDeMasmorra>,
+    proximo: i32,
+}
+
+/// Para onde vai quem entra num mapa.
+enum DestinoDeEntrada {
+    /// Mapa comum (ou mundo paralelo): o próprio mapa.
+    Mapa(i32),
+    /// A cópia da masmorra (id interno).
+    Copia(i32),
+    /// A cópia da chave está cheia (`player_per_instance`) ou não deu para montar.
+    Recusada,
 }
 
 /// Dados comuns e versão: o que `preparar_mapa` precisa para montar um mapa (B183).
@@ -157,6 +196,7 @@ impl RoteadorDeMapas {
             trocas: std::sync::OnceLock::new(),
             eu: std::sync::OnceLock::new(),
             iniciado_em: std::time::SystemTime::now(),
+            copias: std::sync::Mutex::new(Copias::default()),
         }
     }
 
@@ -366,8 +406,144 @@ impl RoteadorDeMapas {
     /// aqui os mapas são tarefas do mesmo processo, então a troca é tirar de um e pôr no outro,
     /// e passar a entregar aquele `roleid` ao novo. Mapa que este processo não serve não tem
     /// troca (`falta`: seria o link reencaminhar a sessão).
+    /// B349 — a masmorra com cópia por chave (`masmorra_por_chave` do catálogo da versão): o limite por cópia.
+    fn masmorra(&self, mapa: i32) -> Option<u32> {
+        let versao = self.carga.get()?.versao;
+        let c = if versao == pw_protocol::GameVersion::V1_2_6 {
+            pw_data_loader::limites::CatalogoDeLimites::V126
+        } else {
+            pw_data_loader::limites::CatalogoDeLimites::V155
+        };
+        pw_data_loader::limites::masmorra_por_chave(c, mapa)
+    }
+
+    /// B349 — `GetInstanceKey` (`player_imp.h:2577-2610`): em grupo, a do líder; sozinho, a própria.
+    async fn chave_de_masmorra(&self, roleid: i32) -> i64 {
+        let membros = match self.mapa_de(roleid).await.and_then(|m| self.mapa(m)) {
+            Some(origem) => origem.mundo().read().await.membros_do_grupo(roleid),
+            None => Vec::new(),
+        };
+        let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+        match membros.first() {
+            Some(lider) => {
+                let chave = *lider as i64;
+                for m in &membros {
+                    c.chave_do_grupo.insert(*m, chave);
+                }
+                chave
+            }
+            None => c.chave_do_grupo.get(&roleid).copied().unwrap_or(roleid as i64),
+        }
+    }
+
+    /// B349 — para onde vai quem entra no `mapa` com a `chave`: a cópia existente (viva há menos de 4 h e com vaga), ou
+    /// uma nova (`AllocWorld`); fora de masmorra, o próprio mapa.
+    async fn destino_de_entrada(self: &Arc<Self>, mapa: i32, chave: i64) -> DestinoDeEntrada {
+        let Some(por_copia) = self.masmorra(mapa) else { return DestinoDeEntrada::Mapa(mapa) };
+        let existente = {
+            let c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+            c.por_chave
+                .get(&(mapa, chave))
+                .copied()
+                .filter(|id| c.copias.get(id).is_some_and(|x| x.criada.elapsed().as_secs() < VIDA_S))
+        };
+        if let Some(id) = existente.filter(|id| self.serve(*id)) {
+            let n = self.donos.read().await.values().filter(|m| **m == id).count();
+            return if n < por_copia as usize { DestinoDeEntrada::Copia(id) } else { DestinoDeEntrada::Recusada };
+        }
+        match self.montar_copia(mapa, chave).await {
+            Some(id) => DestinoDeEntrada::Copia(id),
+            None => DestinoDeEntrada::Recusada,
+        }
+    }
+
+    /// B349 — monta uma cópia nova do mapa, como o painel liga um mapa (B183), com id interno.
+    async fn montar_copia(self: &Arc<Self>, mapa: i32, chave: i64) -> Option<i32> {
+        let carga = self.carga.get()?;
+        let (dados, versao, repo) = (self.dados_vigentes(carga), carga.versao, self.repo.clone());
+        let inicio = std::time::Instant::now();
+        let mundo = tokio::task::spawn_blocking(move || {
+            let mut mundo = WorldInstance::new(mapa, dados, repo);
+            mundo.sem_voo = sem_voo_do_mapa(versao, mapa);
+            mundo.init_spawns();
+            mundo
+        })
+        .await
+        .ok()?;
+        let (_, servidor) = Self::preparar_mapa_iniciado(mundo, versao).await;
+        if let Some(envio) = self.trocas.get() {
+            servidor.ligar_trocas(envio.clone());
+        }
+        if let Some(eu) = self.eu.get() {
+            servidor.ligar_roteador(eu.clone());
+        }
+        let id = {
+            let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+            let id = PRIMEIRA_COPIA + c.proximo;
+            c.proximo += 1;
+            c.por_chave.insert((mapa, chave), id);
+            c.copias.insert(id, CopiaDeMasmorra { mapa, chave, criada: std::time::Instant::now(), vazia_desde: None });
+            id
+        };
+        servidor.definir_id_de_rota(id);
+        self.mapas.write().unwrap_or_else(|e| e.into_inner()).insert(id, servidor);
+        tracing::info!(mapa, chave, id, ms = inicio.elapsed().as_millis() as u64, "masmorra: cópia nova");
+        Some(id)
+    }
+
+    /// B349 — o batimento das cópias (`instance_manager::Heartbeat`, a cada 10 s): vazia há mais de 20 min, sai da
+    /// memória; viva há mais de 4 h, a chave deixa de apontar para ela (quem entrar de novo ganha uma cópia nova).
+    async fn batimento_das_copias(self: &Arc<Self>) {
+        let ids: Vec<i32> = self.copias.lock().unwrap_or_else(|e| e.into_inner()).copias.keys().copied().collect();
+        for id in ids {
+            let Some(servidor) = self.mapa(id) else { continue };
+            let com_dono = self.donos.read().await.values().any(|m| *m == id);
+            let vazia = !com_dono && servidor.vazio().await;
+            let liberar = {
+                let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(x) = c.copias.get_mut(&id) else { continue };
+                if vazia {
+                    let desde = *x.vazia_desde.get_or_insert_with(std::time::Instant::now);
+                    desde.elapsed().as_secs() > OCIOSA_S
+                } else {
+                    x.vazia_desde = None;
+                    false
+                }
+            };
+            let _transicao = self.presenca.write().await;
+            {
+                let mut c = self.copias.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(x) = c.copias.get(&id) {
+                    let (mapa, chave, velha) = (x.mapa, x.chave, x.criada.elapsed().as_secs() >= VIDA_S);
+                    if (liberar || velha) && c.por_chave.get(&(mapa, chave)) == Some(&id) {
+                        c.por_chave.remove(&(mapa, chave));
+                    }
+                }
+                if liberar {
+                    if let Some(x) = c.copias.remove(&id) {
+                        let chave = x.chave;
+                        c.chave_do_grupo.retain(|_, k| *k != chave);
+                    }
+                }
+            }
+            if liberar {
+                self.mapas.write().unwrap_or_else(|e| e.into_inner()).remove(&id);
+                servidor.descarregar().await;
+                tracing::info!(id, "masmorra: cópia liberada (vazia há 20 min)");
+            }
+        }
+    }
+
     pub fn ligar_trocas(self: &Arc<Self>) {
         let (envio, mut fila) = mpsc::unbounded_channel::<crate::bus_server::PedidoDeTroca>();
+        let copias = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut t = tokio::time::interval(std::time::Duration::from_secs(BATIMENTO_DAS_COPIAS_S));
+            loop {
+                t.tick().await;
+                copias.batimento_das_copias().await;
+            }
+        });
         let _ = self.trocas.set(envio.clone());
         let _ = self.eu.set(Arc::downgrade(self));
         for (_, mapa) in self.todos() {
@@ -390,6 +566,19 @@ impl RoteadorDeMapas {
     }
 
     async fn trocar(self: &Arc<Self>, p: crate::bus_server::PedidoDeTroca) {
+        // B349 — a masmorra vai à cópia da chave (montada antes de pegar a guarda: é pesado).
+        let destino_id = if self.mapa_ligado(p.mundo) {
+            let chave = self.chave_de_masmorra(p.roleid).await;
+            match self.destino_de_entrada(p.mundo, chave).await {
+                DestinoDeEntrada::Mapa(m) | DestinoDeEntrada::Copia(m) => m,
+                DestinoDeEntrada::Recusada => {
+                    warn!("mundo: {} não entra na masmorra {} — cópia cheia ou não montada", p.roleid, p.mundo);
+                    return;
+                }
+            }
+        } else {
+            p.mundo
+        };
         let _transicao = self.presenca.write().await;
         let controle=self.repo.controle_de_gravacao(p.roleid);
         let _guarda=controle.alterar().await;
@@ -397,7 +586,7 @@ impl RoteadorDeMapas {
             warn!("mundo: {} pediu o mapa {}, desligado pelo painel — troca recusada", p.roleid, p.mundo);
             return;
         }
-        let Some(destino) = self.mapa(p.mundo) else {
+        let Some(destino) = self.mapa(destino_id) else {
             warn!(
                 "mundo: {} pediu o mapa {}, que este processo não serve ({:?})",
                 p.roleid,
@@ -421,7 +610,7 @@ impl RoteadorDeMapas {
         match destino.receber_de_outro_mapa(p.roleid,vindo,p.pos).await {
             Ok(())=> {
                 let (saiu,resultado)=origem.concluir_troca_na_origem(p.roleid,mascote.clone()).await;
-                self.donos.write().await.insert(p.roleid,p.mundo);
+                self.donos.write().await.insert(p.roleid,destino_id);
                 if saiu {destino.encerrar_apos_transferencia(p.roleid,&envio,resultado).await;}
             },
             Err((vindo,false))=> {origem.restaurar_troca(p.roleid,vindo).await;},
@@ -439,7 +628,7 @@ impl RoteadorDeMapas {
                         let _guarda=controle.alterar().await;
                         if destino.receber_de_outro_mapa(p.roleid,vindo.clone(),p.pos).await.is_ok() {
                             let (saiu,resultado)=origem.concluir_troca_na_origem(p.roleid,mascote.clone()).await;
-                            este.donos.write().await.insert(p.roleid,p.mundo);
+                            este.donos.write().await.insert(p.roleid,destino_id);
                             if saiu {destino.encerrar_apos_transferencia(p.roleid,&envio,resultado).await;}
                             break;
                         }
@@ -1108,7 +1297,23 @@ impl RoteadorDeMapas {
             }
             let mapa = self.mapa_para_entrar(roleid).await;
             // Desligado pelo painel, ou o padrão descarregado (B183): mesma recusa.
-            if !self.mapa_ligado(mapa) || !self.serve(mapa) {
+            let mut recusada = !self.mapa_ligado(mapa) || !self.serve(mapa);
+            // B349 — quem entra gravado numa masmorra volta à cópia da chave dele, ou a uma nova
+            // (`instance_userlogin.cpp:110-227`; sem grupo ainda, a chave é a própria).
+            let mapa = if recusada {
+                mapa
+            } else if let Some(eu) = self.eu.get().and_then(|e| e.upgrade()) {
+                match eu.destino_de_entrada(mapa, roleid as i64).await {
+                    DestinoDeEntrada::Mapa(m) | DestinoDeEntrada::Copia(m) => m,
+                    DestinoDeEntrada::Recusada => {
+                        recusada = true;
+                        mapa
+                    }
+                }
+            } else {
+                mapa
+            };
+            if recusada {
                 // Mapa desligado pelo painel: a entrada é recusada e o cliente volta ao
                 // login (`PlayerLogout` result 2, ver `SAIDA_PELO_PAINEL`). O link já
                 // registrou a sessão antes do `EnterWorld` (`pw-link/src/gateway.rs`).

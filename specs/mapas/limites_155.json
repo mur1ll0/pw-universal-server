@@ -57,7 +57,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 106,
@@ -71,7 +73,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 107,
@@ -85,7 +89,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 108,
@@ -99,7 +105,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 109,
@@ -112,7 +120,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 110,
@@ -126,7 +136,9 @@
         "commondata",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 111,
@@ -139,7 +151,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 112,
@@ -181,7 +195,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 115,
@@ -196,7 +212,9 @@
         "height-limit",
         "profit-time"
       ],
-      "altura_maxima": 341.0
+      "altura_maxima": 341.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 116,
@@ -210,7 +228,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 117,
@@ -224,7 +244,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 118,
@@ -299,7 +321,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 124,
@@ -313,7 +337,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 125,
@@ -327,7 +353,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 126,
@@ -342,7 +370,9 @@
         "height-limit",
         "profit-time2"
       ],
-      "altura_maxima": 45.0
+      "altura_maxima": 45.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 127,
@@ -357,7 +387,9 @@
         "height-limit",
         "profit-time2"
       ],
-      "altura_maxima": 263.0
+      "altura_maxima": 263.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 128,
@@ -371,7 +403,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 129,
@@ -386,7 +420,9 @@
         "no-multi-exp",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 131,
@@ -400,7 +436,9 @@
         "lowjump",
         "profit-time2"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 132,
@@ -451,7 +489,9 @@
         "nofly",
         "height-limit"
       ],
-      "altura_maxima": 100.0
+      "altura_maxima": 100.0,
+      "por_copia": 100,
+      "paralelo": false
     },
     {
       "world_id": 137,
@@ -480,7 +520,9 @@
         "use-save-point",
         "height-limit"
       ],
-      "altura_maxima": 380.0
+      "altura_maxima": 380.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 139,
@@ -495,7 +537,9 @@
         "height-limit",
         "lowjump"
       ],
-      "altura_maxima": 340.0
+      "altura_maxima": 340.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 140,
@@ -519,7 +563,9 @@
         "commondata",
         "lowjump"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 142,
@@ -534,7 +580,9 @@
         "need-visa",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 1000,
+      "paralelo": true
     },
     {
       "world_id": 143,
@@ -549,7 +597,9 @@
         "nothrow-anyway",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 5000,
+      "paralelo": false
     },
     {
       "world_id": 144,
@@ -564,7 +614,9 @@
         "nothrow-anyway",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 100,
+      "paralelo": false
     },
     {
       "world_id": 145,
@@ -579,7 +631,9 @@
         "nothrow-anyway",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 100,
+      "paralelo": false
     },
     {
       "world_id": 146,
@@ -594,7 +648,9 @@
         "nothrow-anyway",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 100,
+      "paralelo": false
     },
     {
       "world_id": 147,
@@ -611,7 +667,9 @@
         "lowjump",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 120,
+      "paralelo": false
     },
     {
       "world_id": 148,
@@ -626,7 +684,9 @@
         "no-bind",
         "no-market"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 100,
+      "paralelo": false
     },
     {
       "world_id": 149,
@@ -641,7 +701,9 @@
         "commondata",
         "profit-time"
       ],
-      "altura_maxima": 320.0
+      "altura_maxima": 320.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 150,
@@ -662,7 +724,9 @@
         "profit-time",
         "home_entrance"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 1000,
+      "paralelo": true
     },
     {
       "world_id": 162,
@@ -670,7 +734,9 @@
       "limites": [
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 1000,
+      "paralelo": true
     },
     {
       "world_id": 163,
@@ -695,7 +761,9 @@
         "nofly",
         "lowjump"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 167,
@@ -706,7 +774,9 @@
         "commondata",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 168,
@@ -732,7 +802,9 @@
         "lowjump",
         "profit-time"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 170,
@@ -765,7 +837,9 @@
         "allow-root",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 200,
+      "paralelo": false
     },
     {
       "world_id": 172,
@@ -785,7 +859,9 @@
         "noauto-genhp",
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 2,
+      "paralelo": false
     },
     {
       "world_id": 173,
@@ -805,7 +881,9 @@
         "noauto-genhp",
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 2,
+      "paralelo": false
     },
     {
       "world_id": 174,
@@ -825,7 +903,9 @@
         "noauto-genhp",
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 2,
+      "paralelo": false
     },
     {
       "world_id": 175,
@@ -845,7 +925,9 @@
         "noauto-genhp",
         "allow-root"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 2,
+      "paralelo": false
     },
     {
       "world_id": 176,
@@ -858,7 +940,9 @@
         "allow-root",
         "nofly"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 177,
@@ -890,7 +974,9 @@
         "home_entrance",
         "nothrow"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 60,
+      "paralelo": false
     },
     {
       "world_id": 181,
@@ -904,7 +990,9 @@
         "home_entrance",
         "nothrow"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 60,
+      "paralelo": false
     },
     {
       "world_id": 182,
@@ -918,7 +1006,9 @@
         "home_entrance",
         "nothrow"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 60,
+      "paralelo": false
     },
     {
       "world_id": 183,
@@ -932,7 +1022,9 @@
         "home_entrance",
         "nothrow"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 60,
+      "paralelo": false
     },
     {
       "world_id": 201,
@@ -1009,7 +1101,9 @@
         "can-reenter",
         "noauto-resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 15,
+      "paralelo": false
     },
     {
       "world_id": 214,
@@ -1025,7 +1119,9 @@
         "can-reenter",
         "noauto-resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 6,
+      "paralelo": false
     },
     {
       "world_id": 230,
@@ -1039,7 +1135,9 @@
         "no-bind",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     },
     {
       "world_id": 231,
@@ -1052,7 +1150,9 @@
         "clear-ap",
         "no-bind"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     },
     {
       "world_id": 232,
@@ -1066,7 +1166,9 @@
         "no-bind",
         "nocash_resurrect"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     },
     {
       "world_id": 233,
@@ -1079,7 +1181,9 @@
         "clear-ap",
         "no-bind"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     },
     {
       "world_id": 234,
@@ -1092,7 +1196,9 @@
         "clear-ap",
         "no-bind"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     },
     {
       "world_id": 235,
@@ -1105,7 +1211,9 @@
         "clear-ap",
         "no-bind"
       ],
-      "altura_maxima": 0.0
+      "altura_maxima": 0.0,
+      "por_copia": 410,
+      "paralelo": false
     }
   ]
 }
