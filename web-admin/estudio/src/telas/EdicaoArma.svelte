@@ -14,6 +14,7 @@
   import ModalCategoria from "../componentes/ModalCategoria.svelte";
   import ModalIcone from "../componentes/ModalIcone.svelte";
   import ModalMascara from "../componentes/ModalMascara.svelte";
+  import Origens from "../componentes/Origens.svelte";
   import Modal from "../componentes/Modal.svelte";
   import SeletorDeEspaco from "../componentes/SeletorDeEspaco.svelte";
   import Visual3D from "../componentes/Visual3D.svelte";
@@ -375,6 +376,9 @@
       </div>
     {/each}
   </div>
+
+  <!-- 8. De onde vem o item (B369) -->
+  {#if f.id}<Origens id={f.id} />{/if}
 {/if}
 
 {#if f && modal === "icone"}

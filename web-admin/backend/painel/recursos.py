@@ -270,6 +270,14 @@ def registrar_estudio(app):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/telas/{_tabela(tabela)}/{max(0, indice)}", {"rascunho": rascunho})
 
+    # B369: de onde vem o item (drops, missões, lojas de NPC, Loja Gold, forjas), só leitura.
+    @app.get("/api/realms/{realm}/estudio/origens/{id_item}")
+    async def estudio_origens(realm: str, id_item: int, requisicao: Request, rascunho: int | None = None):
+        if not 0 < id_item <= 2_147_483_647:
+            raise HTTPException(422, "Id inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/origens/{id_item}", {"rascunho": rascunho})
+
     @app.put("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_editar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)

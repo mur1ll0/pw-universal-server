@@ -1,13 +1,14 @@
 <script lang="ts">
   import { urlDoIcone } from "../lib/api";
-  let { hex, nome = "", tamanho = 32 }: { hex: string | null | undefined; nome?: string; tamanho?: number } = $props();
+  // `discreto`: sem ícone (ou fora do atlas de itens, como o de NPC) não desenha nada.
+  let { hex, nome = "", tamanho = 32, discreto = false }: { hex: string | null | undefined; nome?: string; tamanho?: number; discreto?: boolean } = $props();
   let falhou = $state(false);
   $effect(() => { hex; falhou = false; });
 </script>
 
 {#if hex && !falhou}
   <img class="icone-item" src={urlDoIcone(hex)} alt={nome} width={tamanho} height={tamanho} onerror={() => (falhou = true)} />
-{:else}
+{:else if !discreto}
   <span class="icone-item vazio" style:width="{tamanho}px" style:height="{tamanho}px" title={hex ? "ícone fora do atlas" : "sem ícone"}>?</span>
 {/if}
 

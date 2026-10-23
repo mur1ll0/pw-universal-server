@@ -921,6 +921,35 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         }).expect("um NPC_TRANSMIT_SERVICE com destino");
         assert!(tp.iter().any(|d| d["existe_no_servidor"] == true && d["pos"].is_array() && d["preco"].is_number()), "{tp:?}");
         assert_eq!(erro_de(pedir("GET", "estudio/telas/MONSTER_ESSENCE/0").call()).0, 400);
+        // B369: de onde vem o item — o caminho inverso das telas: item da loja → a loja; item da receita → a receita e a
+        // forja que a tem; item do drop → o monstro.
+        let (loja, item_da_loja) = (0..60).find_map(|i| {
+            let tl = json_de(pedir("GET", &format!("estudio/telas/NPC_SELL_SERVICE/{i}")).call().ok()?);
+            let x = tl["paginas"].as_array()?.iter().flat_map(|p| p["itens"].as_array().cloned().unwrap_or_default()).next()?;
+            Some((i, x["item"]["id"].as_i64()?))
+        }).expect("loja com item");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{item_da_loja}")).call().unwrap());
+        assert!(o["vendido_por"].as_array().unwrap().iter().any(|v| v["tabela"] == "NPC_SELL_SERVICE" && v["indice"] == loja
+            && v["paginas"].as_array().is_some_and(|p| !p.is_empty()) && v["npcs"].is_array()), "{o}");
+        let (forja, receita, feito) = (0..60).find_map(|i| {
+            let tl = json_de(pedir("GET", &format!("estudio/telas/NPC_MAKE_SERVICE/{i}")).call().ok()?);
+            let x = tl["paginas"].as_array()?.iter().flat_map(|p| p["receitas"].as_array().cloned().unwrap_or_default())
+                .find(|x| x["faz"].as_array().is_some_and(|f| !f.is_empty()))?;
+            Some((i, x["receita"]["id"].as_i64()?, x["faz"][0]["item"]["id"].as_i64()?))
+        }).expect("forja com receita que faz item");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{feito}")).call().unwrap());
+        let r = o["forjado_por"].as_array().unwrap().iter().find(|r| r["id"] == receita).unwrap_or_else(|| panic!("receita {receita}: {o}"));
+        assert!(r["forjas"].as_array().unwrap().iter().any(|f| f["indice"] == forja && f["tabela"] == "NPC_MAKE_SERVICE"), "{r}");
+        let (monstro, caido) = (0..200).find_map(|i| {
+            let f = json_de(pedir("GET", &format!("estudio/tabelas/MONSTER_ESSENCE/{i}")).call().ok()?);
+            let v = f["campos"].as_array()?.iter().find(|c| c["nome"].as_str().is_some_and(|n| n.starts_with("drop_matters_") && n.ends_with("_id"))
+                && c["valor"].as_i64().is_some_and(|x| x > 0))?["valor"].as_i64()?;
+            Some((i, v))
+        }).expect("monstro com drop");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{caido}")).call().unwrap());
+        assert!(o["dropado_de"].as_array().unwrap().iter().any(|m| m["indice"] == monstro && m["chance"].is_number()), "{o}");
+        assert!(o["recompensa_de"].is_array() && o["loja_gold"].is_array(), "{o}");
+        assert_eq!(erro_de(pedir("GET", "estudio/origens/0").call()).0, 400);
         // B280: corrigir — criar 普攻1落 clonando 普攻1起 (no rascunho); a ficha com o rascunho já não acusa a falta.
         let ecm_cam = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
         let r16 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "ação", "operacao_id": "t_p4_r16"})).unwrap())["id"].as_i64().unwrap();

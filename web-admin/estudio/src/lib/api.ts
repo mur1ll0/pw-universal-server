@@ -196,3 +196,16 @@ export function linkDosEditores(tabela: string, indice: number): string {
   if (contexto.rascunho) q.set("rascunho", String(contexto.rascunho));
   return `/#editores?${q}`;
 }
+
+/* ---- B369: de onde vem o item (`Estudio::origens_do_item`, só leitura) ---- */
+export interface RefDeOrigem { tabela: string; indice: number; id: number | null; nome: string; icone: string | null }
+export interface PaginaDeOrigem { pagina: number; titulo: string }
+export interface Origens {
+  id: number;
+  dropado_de: (RefDeOrigem & { chance: number; linhas: number })[];
+  recompensa_de: { id: number; nome: string; quando: string; quantidade: number; sorteio: boolean }[];
+  vendido_por: (RefDeOrigem & { paginas: PaginaDeOrigem[]; npcs: RefDeOrigem[] })[];
+  loja_gold: { arquivo: string; indice: number; nome: string; quantidade: number; preco: number }[];
+  forjado_por: (RefDeOrigem & { chance: number | null; forjas: (RefDeOrigem & { paginas: PaginaDeOrigem[]; npcs: RefDeOrigem[] })[] })[];
+}
+export const origensDoItem = (id: number) => api<Origens>(rota(`origens/${id}`));

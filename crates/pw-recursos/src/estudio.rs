@@ -4622,3 +4622,182 @@ impl Estudio {
         }
     }
 }
+
+/// B369: campos de uma tabela cujo nome passa no filtro `casa`, como `(deslocamento, nome)`.
+fn campos_que(t: &pw_data_loader::elements_editavel::TabelaEditavel, casa: impl Fn(&str) -> bool) -> Vec<(usize, String)> {
+    t.campos().into_iter().filter(|(_, _, f)| casa(&f.name)).map(|(o, _, f)| (o, f.name.clone())).collect()
+}
+
+fn i32_em(r: &[u8], o: usize) -> i32 {
+    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
+}
+
+fn f32_em(r: &[u8], o: usize) -> f32 {
+    f32::from_le_bytes(r[o..o + 4].try_into().unwrap())
+}
+
+/// O número da página de `pages_<P>_…` (o layout numera de 1, B365).
+fn pagina_do_campo(nome: &str) -> Option<u32> {
+    nome.strip_prefix("pages_")?.split('_').next()?.parse().ok()
+}
+
+impl Estudio {
+    /// B369 — de onde um item vem (só leitura, para o Estúdio). Tudo do rascunho, se houver:
+    /// - `dropado_de`: `MONSTER_ESSENCE.drop_matters_N_id` = item, com o `drop_matters_N_probability` da linha;
+    /// - `recompensa_de`: missões do `tasks.data` cujo prêmio (sucesso ou falha, e as escalas por tempo/itens do v129)
+    ///   tem o item num grupo (`AWARD_ITEMS_CAND`);
+    /// - `vendido_por`: `NPC_SELL_SERVICE.pages_P_goods_G_id` = item → os `NPC_ESSENCE` com `id_sell_service` = a loja;
+    ///   `loja_gold`: as ofertas do `gshop*.data` com o `id` do item;
+    /// - `forjado_por`: `RECIPE_ESSENCE.targets_N_id_to_make` = item → `NPC_MAKE_SERVICE.pages_P_id_goods_G` = a receita
+    ///   → os `NPC_ESSENCE` com `id_make_service` = a forja.
+    ///
+    /// Cada lista vai até 300.
+    pub async fn origens_do_item(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i32) -> Result<Value> {
+        const LIMITE: usize = 300;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let reg = |t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize| {
+            json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i), "icone": icone_do_registro(t, i) })
+        };
+        // Os NPCs cujo `campo` aponta para `alvo`.
+        let npcs_com = |campo: &str, alvo: i32| -> Vec<Value> {
+            let Ok(t) = e.tabela("NPC_ESSENCE") else { return vec![] };
+            let cs = campos_que(t, |n| n == campo);
+            t.registros.iter().enumerate().filter(|(_, b)| cs.iter().any(|(o, _)| i32_em(b, *o) == alvo)).map(|(i, _)| reg(t, i)).collect()
+        };
+        let deslocamento = |t: &pw_data_loader::elements_editavel::TabelaEditavel, nome: &str| {
+            t.campos().into_iter().find(|(_, _, f)| f.name == nome).map(|(o, _, _)| o)
+        };
+
+        // Drops de monstro.
+        let mut dropado_de = Vec::new();
+        if let Ok(t) = e.tabela("MONSTER_ESSENCE") {
+            let pares: Vec<(usize, Option<usize>)> = campos_que(t, |n| n.starts_with("drop_matters_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(t, &format!("{}_probability", n.trim_end_matches("_id")))))
+                .collect();
+            for (i, b) in t.registros.iter().enumerate() {
+                if dropado_de.len() >= LIMITE {
+                    break;
+                }
+                // Um monstro pode ter o item em mais de uma linha: soma as chances das linhas.
+                let linhas: Vec<f32> = pares.iter().filter(|(o, _)| i32_em(b, *o) == id).map(|(_, p)| p.map_or(0.0, |p| f32_em(b, p))).collect();
+                if !linhas.is_empty() {
+                    let mut v = reg(t, i);
+                    v["chance"] = json!(linhas.iter().sum::<f32>());
+                    v["linhas"] = json!(linhas.len());
+                    dropado_de.push(v);
+                }
+            }
+        }
+
+        // Lojas de NPC.
+        let mut vendido_por = Vec::new();
+        if let Ok(t) = e.tabela("NPC_SELL_SERVICE") {
+            let cs = campos_que(t, |n| n.starts_with("pages_") && n.contains("_goods_") && n.ends_with("_id"));
+            let titulos = campos_que(t, |n| n.starts_with("pages_") && n.ends_with("_page_title"));
+            for (i, b) in t.registros.iter().enumerate() {
+                if vendido_por.len() >= LIMITE {
+                    break;
+                }
+                let paginas: std::collections::BTreeSet<u32> = cs.iter().filter(|(o, _)| i32_em(b, *o) == id).filter_map(|(_, n)| pagina_do_campo(n)).collect();
+                if paginas.is_empty() {
+                    continue;
+                }
+                let r = t.ler(i)?;
+                let mut v = reg(t, i);
+                v["paginas"] = json!(paginas.iter().map(|p| json!({ "pagina": p,
+                    "titulo": titulos.iter().find(|(_, n)| pagina_do_campo(n) == Some(*p)).map(|(_, n)| texto_do_campo(&r, n)).unwrap_or_default() })).collect::<Vec<_>>());
+                v["npcs"] = json!(t.id(i).map(|sid| npcs_com("id_sell_service", sid)).unwrap_or_default());
+                vendido_por.push(v);
+            }
+        }
+
+        // Loja Gold: as lojas do cliente que existirem nesta versão.
+        let mut loja_gold = Vec::new();
+        for arquivo in ["gshop.data", "gshop1.data", "gshop2.data"] {
+            let Ok((_, _, _, bytes, _)) = self.item_do_cliente(gov, versao, &format!("data\\{arquivo}"), rascunho).await else { continue };
+            let Ok(g) = GshopEditavel::ler(&bytes) else { continue };
+            for (i, o) in g.ofertas.iter().enumerate() {
+                if o.len() >= 144 && i32::from_le_bytes(o[140..144].try_into().unwrap()) == id {
+                    let c = gs::ler_oferta(&g, o);
+                    loja_gold.push(json!({ "arquivo": arquivo, "indice": i, "nome": c.get("szName"), "quantidade": c.get("num"), "preco": c.get("buy_0_price") }));
+                }
+            }
+        }
+
+        // Forja: receitas que fazem o item → forjas que têm a receita → NPCs.
+        let mut forjado_por = Vec::new();
+        if let Ok(rt) = e.tabela("RECIPE_ESSENCE") {
+            let alvos = campos_que(rt, |n| n.starts_with("targets_") && n.ends_with("_id_to_make"));
+            let forjas = e.tabela("NPC_MAKE_SERVICE").ok().map(|f| {
+                (f, campos_que(f, |n| n.starts_with("pages_") && n.contains("_id_goods_")), campos_que(f, |n| n.starts_with("pages_") && n.ends_with("_page_title")))
+            });
+            for (i, b) in rt.registros.iter().enumerate() {
+                if forjado_por.len() >= LIMITE {
+                    break;
+                }
+                let Some((_, campo)) = alvos.iter().find(|(o, _)| i32_em(b, *o) == id) else { continue };
+                let chance = deslocamento(rt, &campo.replace("_id_to_make", "_probability")).map(|p| f32_em(b, p));
+                let mut v = reg(rt, i);
+                v["chance"] = json!(chance);
+                let mut lista = Vec::new();
+                if let (Some((f, cs, titulos)), Some(rid)) = (&forjas, rt.id(i)) {
+                    for (fi, fb) in f.registros.iter().enumerate() {
+                        let paginas: std::collections::BTreeSet<u32> = cs.iter().filter(|(o, _)| i32_em(fb, *o) == rid).filter_map(|(_, n)| pagina_do_campo(n)).collect();
+                        if paginas.is_empty() {
+                            continue;
+                        }
+                        let r = f.ler(fi)?;
+                        let mut fv = reg(f, fi);
+                        fv["paginas"] = json!(paginas.iter().map(|p| json!({ "pagina": p,
+                            "titulo": titulos.iter().find(|(_, n)| pagina_do_campo(n) == Some(*p)).map(|(_, n)| texto_do_campo(&r, n)).unwrap_or_default() })).collect::<Vec<_>>());
+                        fv["npcs"] = json!(f.id(fi).map(|sid| npcs_com("id_make_service", sid)).unwrap_or_default());
+                        lista.push(fv);
+                    }
+                }
+                v["forjas"] = json!(lista);
+                forjado_por.push(v);
+            }
+        }
+
+        // Missões.
+        let mut recompensa_de = Vec::new();
+        if let Ok(t) = self.missoes_do_realm(gov, versao, rascunho).await {
+            let alvo = id as u32;
+            let no_premio = |p: &pw_data_loader::tasks::TaskReward| -> Option<(u32, bool)> {
+                p.grupos_de_itens.iter().find_map(|g| g.itens.iter().find(|x| x.id == alvo).map(|x| (x.quantidade, g.sorteia_um)))
+            };
+            let mut ids: Vec<&u32> = t.tasks.keys().collect();
+            ids.sort_unstable();
+            for mid in ids {
+                if recompensa_de.len() >= LIMITE {
+                    break;
+                }
+                let m = &t.tasks[mid];
+                let mut onde: Vec<(&str, (u32, bool))> = Vec::new();
+                if let Some(x) = no_premio(&m.rewards) {
+                    onde.push(("sucesso", x));
+                }
+                if let Some(x) = no_premio(&m.premio_de_falha) {
+                    onde.push(("falha", x));
+                }
+                for (nome, esc) in [
+                    ("sucesso, por tempo", &m.escala_de_tempo_sucesso),
+                    ("falha, por tempo", &m.escala_de_tempo_falha),
+                    ("sucesso, por itens", &m.escala_de_itens_sucesso),
+                    ("falha, por itens", &m.escala_de_itens_falha),
+                ] {
+                    if let Some(x) = esc.premios.iter().find_map(|p| no_premio(p)) {
+                        onde.push((nome, x));
+                    }
+                }
+                for (quando, (quantidade, sorteio)) in onde {
+                    recompensa_de.push(json!({ "id": m.id, "nome": m.name, "quando": quando, "quantidade": quantidade, "sorteio": sorteio }));
+                }
+            }
+        }
+
+        Ok(json!({ "id": id, "dropado_de": dropado_de, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
+            "loja_gold": loja_gold, "forjado_por": forjado_por }))
+    }
+}

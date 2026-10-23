@@ -916,6 +916,15 @@ async fn estudio_listar(
 }
 
 /// B365: tela própria (loja, forja, teleporte) do registro — `Estudio::tela`.
+/// B369: de onde vem o item `id` (drops, missões, lojas, Loja Gold, forjas), só leitura.
+async fn estudio_origens(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    if id <= 0 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
+    }
+    Ok(Json(e.estudio.origens_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
 async fn estudio_tela(
     State(e): State<Arc<Estado>>,
     Path((v, tabela, indice)): Path<(String, String, usize)>,
@@ -1717,6 +1726,7 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/telas/{tabela}/{indice}", get(estudio_tela))
+        .route("/admin/{v}/estudio/origens/{id}", get(estudio_origens))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
