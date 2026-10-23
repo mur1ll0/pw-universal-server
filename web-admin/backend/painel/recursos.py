@@ -264,6 +264,12 @@ def registrar_estudio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}/{max(0, indice)}",
                                {"rascunho": rascunho})
 
+    # B365: tela própria do registro (loja em grade, forja com receitas, teleporte no mapa), só leitura.
+    @app.get("/api/realms/{realm}/estudio/telas/{tabela}/{indice}")
+    async def estudio_tela(realm: str, tabela: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/telas/{_tabela(tabela)}/{max(0, indice)}", {"rascunho": rascunho})
+
     @app.put("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_editar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
@@ -436,7 +442,7 @@ def registrar_mapas(app):
     async def estudio_editar_sev(realm: str, caminho: str, arquivo: str, indice: int, rascunho: int,
                                  requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "regioes"):
             raise HTTPException(404, "Mapa inválido.")
         campos = (await requisicao.json()).get("campos")
         if not isinstance(campos, dict) or not campos:
@@ -525,11 +531,18 @@ def registrar_reinicio(app):
         v = await _versao_do_realm(requisicao, realm)
         # B252: destino de teleporte novo pelo mesmo caminho (base = id do destino a copiar).
         # B253: "alinhar" refaz o .sev do realm a partir do .clt do cliente (sem corpo).
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes", "alinhar"):
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "teleportes", "alinhar", "regioes"):
             raise HTTPException(404, "Mapa inválido.")
         if arquivo == "alinhar":
             return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/alinhar", {"rascunho": rascunho})
         dados = await requisicao.json()
+        if arquivo == "regioes":
+            # B365: região nova (nome, tipo, vértices) — sem base.
+            campos = dados.get("campos")
+            if not isinstance(campos, dict) or not campos:
+                raise HTTPException(422, "Pedido inválido.")
+            return await _repassar("POST", f"/admin/{v}/estudio/mapas/{caminho}/regioes", {"rascunho": rascunho},
+                                   dados={"campos": campos})
         base, campos = dados.get("base"), dados.get("campos", {})
         if not isinstance(base, int) or (base < 0 and arquivo != "teleportes") or not isinstance(campos, dict):
             raise HTTPException(422, "Pedido inválido.")
@@ -539,7 +552,7 @@ def registrar_reinicio(app):
     @app.delete("/api/realms/{realm}/estudio/mapas/{caminho}/{arquivo}/{indice}")
     async def estudio_remover_sev(realm: str, caminho: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
-        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais"):
+        if not MAPA.match(caminho) or arquivo not in ("distritos", "portais", "regioes"):
             raise HTTPException(404, "Mapa inválido.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/mapas/{caminho}/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
 
@@ -760,12 +773,15 @@ def registrar_reinicio(app):
 
     @app.get("/api/realms/{realm}/estudio/modelos/ficha")
     async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None,
-                             voo: int | None = None):
+                             voo: int | None = None, habilidades: str | None = None, politica: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         # B283: `voo` (0 espada, 1 asa, 2 rodas) — o diagnóstico de voo.
+        # B365: `habilidades` (ids separados por vírgula) e `politica` (common_strategy) — diagnóstico de habilidades.
+        ids = ",".join(x for x in (habilidades or "").split(",")[:64] if x.strip().isdigit()) or None
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho,
                                "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None,
-                               "voo": voo if voo is not None and 0 <= voo <= 2 else None})
+                               "voo": voo if voo is not None and 0 <= voo <= 2 else None,
+                               "habilidades": ids, "politica": politica if politica and politica > 0 else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
     @app.post("/api/realms/{realm}/estudio/modelos/acao")
@@ -854,8 +870,10 @@ def registrar_reinicio(app):
     async def estudio_editar_comportamento(realm: str, id_politica: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
         dados = await requisicao.json()
-        if id_politica <= 0 or not isinstance(dados.get("gatilho"), int):
+        # B365: "novo_gatilho" cria do zero (sem "gatilho"); "nome", "envolver" e "remover_condicao" editam um gatilho.
+        if id_politica <= 0 or not (isinstance(dados.get("gatilho"), int) or isinstance(dados.get("novo_gatilho"), dict)):
             raise HTTPException(422, "Pedido inválido.")
         corpo = {k: dados[k] for k in ("gatilho", "flags", "operacao", "condicao", "fala", "duplicar", "remover",
-                                         "tipo_da_condicao", "tipo_da_operacao", "operacao_nova", "remover_operacao") if k in dados}
+                                         "tipo_da_condicao", "tipo_da_operacao", "operacao_nova", "remover_operacao",
+                                         "nome", "envolver", "remover_condicao", "novo_gatilho") if k in dados}
         return await _repassar("PUT", f"/admin/{v}/estudio/comportamentos/{id_politica}", {"rascunho": rascunho}, dados=corpo)

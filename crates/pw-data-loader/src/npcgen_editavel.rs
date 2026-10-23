@@ -232,6 +232,20 @@ pub fn nome_do_controlador(b: &[u8]) -> &[u8] {
     &n[..n.iter().position(|&c| c == 0).unwrap_or(n.len())]
 }
 
+/// Troca o nome do controlador (`szName[128]`, bytes 8..136, GBK terminado em NUL; B365). O GS não o lê — é o rótulo
+/// do editor (`npcgendata.h:243-282`). Recusa nome vazio, com NUL, que não cabe em GBK ou com mais de 127 bytes; o
+/// resto do campo fica zerado.
+pub fn definir_nome_do_controlador(b: &mut [u8], nome: &str) -> R<()> {
+    let onde = "controlador";
+    let (g, _, erro) = encoding_rs::GBK.encode(nome);
+    if nome.trim().is_empty() || erro || g.len() > 127 || g.contains(&0) || b.len() < 136 {
+        return Err(ErroDoNpcgen::Campo("nome (vazio, fora do GBK ou com mais de 127 bytes)".into(), onde));
+    }
+    b[8..136].fill(0);
+    b[8..8 + g.len()].copy_from_slice(&g);
+    Ok(())
+}
+
 /// Os campos de um registro como JSON `{nome: valor}`, só os que a versão tem.
 pub fn ler_campos(b: &[u8], campos: &[Campo], versao: u32) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();

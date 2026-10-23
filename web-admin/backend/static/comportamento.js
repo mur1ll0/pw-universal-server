@@ -64,6 +64,7 @@ async function abrirComportamento(id) {
   });
   if (r.monstros.length > 40) usos.append(` … e mais ${r.monstros.length - 40}.`);
   area.appendChild(usos);
+  if (estudio.rascunho) area.appendChild(criarGatilhoDoZero(pol, r.tipos || { condicoes: [], operacoes: [] }));
   pol.triggers.forEach((t, ti) => {
     const fs = criar("fieldset");
     const marcas = [t.ativo ? "ligado de início" : "desligado", t.rodando ? "só quando chamado" : null, t.so_em_combate ? "só em combate" : null].filter(Boolean).join(" · ");
@@ -120,6 +121,20 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
   });
   flags.appendChild(bf);
   caixa.appendChild(flags);
+  // B365: nome do gatilho (rótulo do editor, GBK; o GS não usa).
+  const ln = criar("div", "recursos-linha");
+  const inome = criar("input", "campo");
+  inome.value = t.nome || "";
+  inome.maxLength = 63;
+  const bnome = criar("button", "botao botao-pequeno botao-secundario", "Renomear");
+  bnome.type = "button";
+  bnome.addEventListener("click", () => {
+    const v = inome.value.trim();
+    if (!v || v === (t.nome || "")) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    salvar({ nome: v }, "Nome do gatilho salvo no rascunho.");
+  });
+  ln.append("Nome: ", inome, bnome);
+  caixa.appendChild(ln);
   const linhaDeCampos = (rotulo, campos, atuais, aoSalvar) => {
     const l = criar("div", "recursos-linha");
     l.appendChild(criar("span", "", rotulo));
@@ -239,6 +254,38 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
     l.append(`Condição ${caminho || "raiz"} (${valor ? "valor" : "condição"}): `, s, b);
     caixa.appendChild(l);
   }
+  // Árvore (B365): pôr Não/E/Ou em volta de um nó de condição e tirar nó (Não sai deixando o filho; filho de E/Ou
+  // sai e o operador vira o irmão). Gravado como o SaveConditonTree do original.
+  const nos = [];
+  const todos = (n, caminho, debaixoDeValor) => {
+    if (!n) return;
+    nos.push([caminho, n, debaixoDeValor]);
+    const v = debaixoDeValor || (n.tipo_cru >= 9 && n.tipo_cru <= 15);
+    todos(n.esquerda, caminho + "e", v); todos(n.direita, caminho + "d", v);
+  };
+  todos(t.condicao, "", false);
+  const condicoesDeFolha = tipos.condicoes.filter(([, , v]) => !v).map(([x, nome]) => [x, nome]);
+  for (const [caminho, n, valor] of nos) {
+    if (valor) continue;
+    const l = criar("div", "recursos-linha");
+    const sop = criar("select", "campo");
+    for (const [v, nome] of [[5, "Não"], [6, "Ou"], [7, "E"]]) sop.appendChild(new Option(nome, String(v)));
+    const sfolha = seletor(condicoesDeFolha, -1);
+    const env = criar("button", "botao botao-pequeno botao-secundario", "Envolver");
+    env.type = "button";
+    env.title = "Não: o nó vira o operando. E/Ou: o nó fica à esquerda e a condição escolhida à direita.";
+    env.addEventListener("click", () => {
+      const operador = Number(sop.value);
+      salvar({ envolver: { caminho, operador, folha: operador === 5 ? undefined : Number(sfolha.value) } }, "Condição envolvida no rascunho.");
+    });
+    const tirar = criar("button", "botao botao-pequeno botao-perigo", n.tipo_cru === 5 ? "Tirar o Não" : "Tirar nó");
+    tirar.type = "button";
+    const pai = caminho ? nos.find(([c]) => c === caminho.slice(0, -1))?.[1] : null;
+    tirar.disabled = !(n.tipo_cru === 5 || (pai && (pai.tipo_cru === 6 || pai.tipo_cru === 7)));
+    tirar.addEventListener("click", () => { if (confirm(`Tirar a condição ${caminho || "raiz"}?`)) salvar({ remover_condicao: caminho }, "Condição tirada no rascunho."); });
+    l.append(`Nó ${caminho || "raiz"} (${n.tipo || n.tipo_cru}): `, sop, " nova condição (E/Ou): ", sfolha, env, tirar);
+    caixa.appendChild(l);
+  }
   // Estrutura (B261): duplicar (cópia logo depois, id novo) e remover (recusado se outro gatilho o chama).
   const est = criar("div", "recursos-linha");
   const dup = criar("button", "botao botao-pequeno botao-secundario", "Duplicar gatilho");
@@ -253,6 +300,41 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
   est.append(dup, rem);
   caixa.appendChild(est);
   caixa.appendChild(criar("div", "texto-suave", "Grava o aipolicy.data do realm (só do servidor); reinicie o realm depois de publicar."));
+  return caixa;
+}
+
+/* Gatilho do zero (B365): nome, uma condição e uma operação (alvo 0); o resto se edita depois, como qualquer gatilho. */
+function criarGatilhoDoZero(pol, tipos) {
+  const caixa = criar("details");
+  caixa.appendChild(criar("summary", "", "Novo gatilho (do zero)"));
+  const l = criar("div", "recursos-linha");
+  const nome = criar("input", "campo");
+  nome.placeholder = "Nome";
+  nome.maxLength = 63;
+  const seletor = (lista) => { const s = criar("select", "campo"); for (const [n, x] of lista) s.appendChild(new Option(`${x} (${n})`, String(n))); return s; };
+  const sc = seletor(tipos.condicoes.filter(([, , v]) => !v).map(([x, n]) => [x, n]));
+  const so = seletor(tipos.operacoes);
+  const b = criar("button", "botao botao-pequeno botao-primario", "Criar");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    if (!nome.value.trim()) { alerta("aviso", "Estúdio", "Dê um nome ao gatilho.", { toast: true }); return; }
+    const operacao = Number(so.value);
+    let id_gatilho;
+    if (operacao >= 4 && operacao <= 6) {
+      const v = prompt(`Id do gatilho que a operação chama (desta política: ${pol.triggers.map((x) => x.id).join(", ")}):`);
+      if (!v) return;
+      id_gatilho = Math.trunc(Number(v));
+    }
+    try {
+      const r = await api(rotaDeComportamento(`/${pol.id}`), { method: "PUT",
+        body: JSON.stringify({ novo_gatilho: { nome: nome.value.trim(), condicao: Number(sc.value), operacao, id_gatilho } }) });
+      alerta("ok", "Estúdio", `Gatilho ${r.resultado?.novo_gatilho ?? ""} criado no rascunho (ligado, só em combate; parâmetros zerados: ajuste).`, { toast: true });
+      await abrirComportamento(pol.id);
+      if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
+    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  });
+  l.append(nome, " quando ", sc, " faz ", so, b);
+  caixa.appendChild(l);
   return caixa;
 }
 

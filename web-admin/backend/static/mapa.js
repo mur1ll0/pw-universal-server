@@ -65,7 +65,14 @@ async function carregarMapas() {
   sel.value = ir && mapa.lista.some((m) => m.caminho === ir.caminho) ? ir.caminho
     : mapa.lista.some((m) => m.caminho === anterior) ? anterior : (mapa.lista[0]?.caminho || "");
   await abrirMapa(sel.value);
-  if (ir && mapa.atual?.caminho === ir.caminho) await abrirArea(ir.tipo, ir.indice);
+  if (ir && mapa.atual?.caminho === ir.caminho) {
+    if (ir.tipo === "teleportes") {
+      // B365: vindo da tela do NPC_TRANSMIT_SERVICE — liga a camada de teleportes e abre o destino.
+      elemento("mapa-teleportes").checked = true;
+      await carregarCamadas();
+      abrirDaCamada("teleportes", ir.indice);
+    } else await abrirArea(ir.tipo, ir.indice);
+  }
 }
 
 /** B284: abre a vista de mapas no mapa `caminho`, com a área (`areas` ou `recursos`, índice) aberta. */
@@ -245,7 +252,7 @@ function detalharPonto(ev) {
     desenharListaDeControladores();
     desenharMapa();
   });
-  for (const id of ["mapa-distritos", "mapa-portais", "mapa-teleportes", "mapa-rastreador"]) {
+  for (const id of ["mapa-distritos", "mapa-portais", "mapa-regioes", "mapa-teleportes", "mapa-rastreador"]) {
     elemento(id).addEventListener("change", async () => { fecharArea(); await carregarCamadas(); desenharMapa(); });
   }
   elemento("estudio-rascunho").addEventListener("change", async () => {
@@ -455,6 +462,17 @@ function desenharEditorDeArea() {
   // O id do controlador é o que as áreas citam: não se edita (clone para ter outro).
   const idCtrl = area.querySelector('input[data-campo="id"]');
   if (tipo === "controladores" && idCtrl) idCtrl.disabled = true;
+  let nomeDoCtrl = null;
+  if (tipo === "controladores") {
+    // B365: o rótulo do controlador (szName, GBK até 127 bytes) — só o editor lê; o GS não.
+    const ln = criar("label");
+    nomeDoCtrl = criar("input", "campo");
+    nomeDoCtrl.maxLength = 63;
+    nomeDoCtrl.value = dados.nome || "";
+    nomeDoCtrl.disabled = !editavel;
+    ln.append(criar("span", "", "Nome (rótulo do editor)"), nomeDoCtrl);
+    area.insertBefore(ln, area.children[1] || null);
+  }
   if (tipo === "controladores") {
     const usos = dados.usado_por || [];
     const linha = criar("div", "texto-suave", usos.length ? `Citado por ${usos.length}: ` : "Nenhuma área ou objeto cita este controlador.");
@@ -537,6 +555,7 @@ function desenharEditorDeArea() {
   const nomeCurto = NOMES_DO_TIPO[tipo].toLowerCase();
   botao("Salvar no rascunho", "botao-primario", () => acaoNaArea(async () => {
     const corpo = { campos: valoresDosCampos(area) };
+    if (nomeDoCtrl && nomeDoCtrl.value.trim() && nomeDoCtrl.value.trim() !== (dados.nome || "")) corpo.campos.nome = nomeDoCtrl.value.trim();
     if (!simples) corpo.filhos = [...filhos.querySelectorAll("fieldset[data-filho]")].map(valoresDosCampos);
     return api(rotaDoMapa(rota), { method: "PUT", body: JSON.stringify(corpo) });
   }, () => "Salvo no rascunho.", () => indice));
@@ -599,13 +618,17 @@ async function acaoNaArea(acao, mensagem, reabrir) {
    (conferido pelo cliente) nunca muda. */
 
 const COR_DO_DISTRITO = "#5ec8ff", COR_DO_PORTAL = "#e07bff", COR_DO_TELEPORTE = "#ffa94d";
+/* Regiões do region.clt (B365): tipo 0 = PK, 1 = santuário (`EL_Region.h:86-91`). */
+const COR_DA_REGIAO = { 0: "#ff6b6b", 1: "#69db7c" };
+const regioesVisiveis = () => (elemento("mapa-regioes")?.checked && mapa.portais?.regioes) || [];
 
 async function carregarCamadas() {
   const m = mapa.atual;
   if (!m) return;
   const q = estudio.rascunho ? `?rascunho=${estudio.rascunho}` : "";
   const carregar = async (id, nome) => {
-    if (!elemento(id).checked) return null;
+    // B365: a camada Regiões usa a mesma resposta dos portais (region.sev + region.clt).
+    if (!elemento(id).checked && !(id === "mapa-portais" && elemento("mapa-regioes")?.checked)) return null;
     try { return await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${nome}${q}`)); }
     catch (erro) { alerta("aviso", "Estúdio", `${nome}: ${erro.message}`, { toast: true }); return null; }
   };
@@ -661,6 +684,27 @@ function desenharCamadas(ctx) {
           ctx.fillText(mk.nome, sx + 3, sy - 3);
         }
       }
+    }
+  }
+  for (const g of regioesVisiveis()) {
+    if (g.vertices.length < 2) continue;
+    const sel = escolhido("regioes", g.indice);
+    const cor = COR_DA_REGIAO[g.tipo] || "#adb5bd";
+    ctx.beginPath();
+    g.vertices.forEach(([x, z], k) => { const [sx, sy] = paraTela(x, z); if (k) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); });
+    ctx.closePath();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = cor;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = sel ? "#ffffff" : cor;
+    ctx.lineWidth = sel ? 2.5 : 1.2;
+    ctx.stroke();
+    if (mapa.escala > 0.2 && g.nome) {
+      const [sx, sy] = paraTela(g.vertices[0][0], g.vertices[0][1]);
+      ctx.fillStyle = cor;
+      ctx.font = "11px sans-serif";
+      ctx.fillText(g.nome, sx + 3, sy + 12);
     }
   }
   if (mapa.rastreador) {
@@ -722,6 +766,14 @@ function desenharCamadas(ctx) {
 
 function escolherDistritoOuPortal(ev) {
   if (!mapa.distritos && !mapa.portais && !mapa.teleportes && !mapa.rastreador) return false;
+  const dentroDe = (vs, x, z) => {
+    let d = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+      const [xi, zi] = vs[i], [xj, zj] = vs[j];
+      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) d = !d;
+    }
+    return d;
+  };
   const m = mapa.atual;
   const r = elemento("mapa-tela").getBoundingClientRect();
   const mx = ev.clientX - r.left, my = ev.clientY - r.top;
@@ -761,6 +813,9 @@ function escolherDistritoOuPortal(ev) {
     if (dentro && (!melhor || d.prioridade <= melhor.prioridade)) melhor = d;
   }
   if (melhor) { abrirDaCamada("distritos", melhor.indice); return true; }
+  // B365: região (camada Regiões ligada), quando nenhum distrito foi escolhido.
+  const reg = regioesVisiveis().find((g) => dentroDe(g.vertices, x, z));
+  if (reg) { abrirDaCamada("regioes", reg.indice); return true; }
   return false;
 }
 
@@ -780,7 +835,7 @@ function abrirDaCamada(camada, indice) {
   const ed = elemento("mapa-editor");
   ed.replaceChildren();
   const fonte = camada === "distritos" ? mapa.distritos?.distritos : camada === "portais" ? mapa.portais?.caixas
-    : camada === "teleportes" ? mapa.teleportes?.pontos : mapa.rastreador?.npcs;
+    : camada === "regioes" ? mapa.portais?.regioes : camada === "teleportes" ? mapa.teleportes?.pontos : mapa.rastreador?.npcs;
   const porId = camada === "teleportes" || camada === "rastreador";
   const item = fonte && fonte.find((x) => (porId ? x.id : x.indice) === indice);
   if (!item) { fecharArea(); desenharMapa(); return; }
@@ -853,6 +908,35 @@ function abrirDaCamada(camada, indice) {
     }
     if (item.marcas?.length) ed.appendChild(criar("div", "texto-suave", `Marcas do cliente: ${item.marcas.map((k) => k.nome).join(", ")}`));
     if (item.mapa_do_ponto !== m.id) ed.appendChild(criar("div", "texto-suave", "O ponto de renascer fica em outro mapa: \"Posicionar pelo clique\" usaria as coordenadas deste."));
+  } else if (camada === "regioes") {
+    const alinhadoRg = mapa.portais.alinhado_com_o_cliente;
+    titulo.append(criar("strong", "", `Região #${indice}${item.nome ? `: ${item.nome}` : ""}`),
+      criar("span", "texto-suave", `${item.tipo_nome ? ` · ${item.tipo_nome}` : ""} · ${item.vertices.length} vértices`));
+    const ln = criar("label");
+    const nome = criar("input", "campo");
+    nome.maxLength = 60;
+    nome.value = item.nome || "";
+    nome.disabled = !editavel || !alinhadoRg;
+    ln.append(criar("span", "", "Nome (cliente)"), nome);
+    const lt = criar("label");
+    const tipo = criar("select", "campo");
+    tipo.disabled = !editavel || !alinhadoRg;
+    for (const [v, t] of [[0, "PK"], [1, "Santuário (zona segura)"]]) { const o = criar("option", "", t); o.value = v; tipo.appendChild(o); }
+    if (item.tipo != null) tipo.value = item.tipo;
+    lt.append(criar("span", "", "Tipo"), tipo);
+    grade.append(ln, lt);
+    const novoPoligono = () => mapa.poligonoNovo && mapa.poligonoNovo.camada === "regioes" && mapa.poligonoNovo.indice === indice;
+    corpo = () => {
+      const c = {};
+      if (nome.value.trim() !== (item.nome || "")) c.nome = nome.value.trim();
+      if (item.tipo != null && Number(tipo.value) !== item.tipo) c.tipo = Number(tipo.value);
+      if (novoPoligono()) c.vertices = mapa.poligonoNovo.pontos;
+      return c;
+    };
+    ed.append(titulo, grade, criar("div", "texto-suave",
+      "O cliente testa o polígono: dentro de um santuário ele manda ENTER_SANCTUARY e o servidor tira o PvP (playercmd.cpp:2812). Grava o region.clt do cliente (nome, tipo, polígono) e o region.sev do realm (polígono) juntos."));
+    if (novoPoligono()) ed.appendChild(criar("div", "texto-suave", `Polígono novo com ${mapa.poligonoNovo.pontos.length} pontos: salve para gravar.`));
+    if (!alinhadoRg) { ed.appendChild(criar("div", "texto-suave", `Edição desligada: ${mapa.portais.motivo || "o region.clt do cliente não casa com o .sev"}.`)); ed.appendChild(botaoDeAlinhar()); }
   } else if (camada === "rastreador") {
     titulo.append(criar("strong", "", `Rastreador: ${item.nome || `NPC ${item.id}`}`),
       criar("span", "texto-suave", ` · id ${item.id}${item.distancia != null ? ` · ${item.distancia} m da área mais perto` : ""}`));
@@ -1021,6 +1105,24 @@ function abrirDaCamada(camada, indice) {
         await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/teleportes/${indice}?rascunho=${estudio.rascunho}`, { method: "DELETE" });
         await depois("Destino removido no rascunho.", null);
       } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    });
+  }
+  if (camada === "regioes") pos.hidden = true;
+  if (camada === "regioes" && mapa.portais.alinhado_com_o_cliente) {
+    extra("Redesenhar polígono", "botao-secundario", () => comecarDesenho((pontos) => { mapa.poligonoNovo = { camada, indice, pontos }; abrirDaCamada(camada, indice); }));
+    extra("Nova região (desenhar)", "botao-secundario", () => comecarDesenho(async (pontos) => {
+      const nome = window.prompt("Nome da região nova (aparece no cliente):", "");
+      if (!nome) return;
+      const santuario = confirm("A região nova é santuário (zona segura)? OK = santuário, Cancelar = PK.");
+      try {
+        const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ campos: { nome, tipo: santuario ? 1 : 0, vertices: pontos } }) });
+        await depois(`Região nova #${r.resultado.indice} no rascunho.`, r.resultado.indice);
+      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    }));
+    extra("Remover região", "botao-secundario texto-perigo", async () => {
+      if (!confirm(`Remover a região #${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente?`)) return;
+      try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Região removida no rascunho.", null); }
+      catch (erro) { alerta("erro", "Estúdio", erro.message); }
     });
   }
   if (camada === "portais" && mapa.portais.alinhado_com_o_cliente) {

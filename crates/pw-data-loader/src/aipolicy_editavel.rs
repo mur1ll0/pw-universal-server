@@ -75,6 +75,77 @@ pub fn no_pelo_caminho<'a>(raiz: Option<&'a NoDeCondicao>, caminho: &str) -> Opt
     Some(no)
 }
 
+/// Nó da árvore de condições com o parâmetro cru, para reescrever a árvore (B365).
+#[derive(Debug, Clone)]
+struct NoCru {
+    tipo: i32,
+    parametro: Vec<u8>,
+    esquerda: Option<Box<NoCru>>,
+    direita: Option<Box<NoCru>>,
+}
+
+impl NoCru {
+    fn de(n: &NoDeCondicao, b: &[u8]) -> Self {
+        let t = i32::from_le_bytes(b[n.parametro_em - 4..n.parametro_em].try_into().unwrap()) as usize;
+        NoCru {
+            tipo: n.tipo_cru,
+            parametro: b[n.parametro_em..n.parametro_em + t].to_vec(),
+            esquerda: n.esquerda.as_ref().map(|x| Box::new(Self::de(x, b))),
+            direita: n.direita.as_ref().map(|x| Box::new(Self::de(x, b))),
+        }
+    }
+
+    /// `CTriggerData::SaveConditonTree` (`policy.cpp:110-149`): tipo, tamanho, parâmetro; folha → `3`; senão
+    /// `1` + esquerda, `2` + direita (os que houver) e `4`.
+    fn gravar(&self, b: &mut Vec<u8>) {
+        b.extend_from_slice(&self.tipo.to_le_bytes());
+        b.extend_from_slice(&(self.parametro.len() as i32).to_le_bytes());
+        b.extend_from_slice(&self.parametro);
+        if self.esquerda.is_none() && self.direita.is_none() {
+            b.extend_from_slice(&3i32.to_le_bytes());
+            return;
+        }
+        if let Some(e) = &self.esquerda {
+            b.extend_from_slice(&1i32.to_le_bytes());
+            e.gravar(b);
+        }
+        if let Some(d) = &self.direita {
+            b.extend_from_slice(&2i32.to_le_bytes());
+            d.gravar(b);
+        }
+        b.extend_from_slice(&4i32.to_le_bytes());
+    }
+
+    fn no_mut(&mut self, caminho: &str) -> Option<&mut NoCru> {
+        let mut no = self;
+        for c in caminho.chars() {
+            no = match c {
+                'e' => no.esquerda.as_deref_mut()?,
+                'd' => no.direita.as_deref_mut()?,
+                _ => return None,
+            };
+        }
+        Some(no)
+    }
+
+    /// O nó do caminho está debaixo de aritmética/comparação (papel de valor)?
+    fn debaixo_de_valor(&self, caminho: &str) -> Result<bool, String> {
+        let mut no = self;
+        for c in caminho.chars() {
+            if (9..=15).contains(&no.tipo) {
+                return Ok(true);
+            }
+            no = match c {
+                'e' => no.esquerda.as_deref(),
+                'd' => no.direita.as_deref(),
+                _ => None,
+            }
+            .ok_or_else(|| format!("condição {caminho:?} não existe"))?;
+        }
+        Ok(false)
+    }
+}
+
 pub struct AiPolicyEditavel {
     pub bytes: Vec<u8>,
     pub dados: AiPolicyData,
@@ -361,6 +432,133 @@ impl AiPolicyEditavel {
         Ok(id)
     }
 
+    /// Renomeia o gatilho (B365): `char szName[128]` logo depois das três flags (`ler_trigger`), GBK como o editor
+    /// original grava. É rótulo de editor — o GS não o usa. Recusa vazio, fora do GBK ou com mais de 127 bytes.
+    pub fn renomear_gatilho(&mut self, politica: u32, indice: usize, nome: &str) -> Result<(), String> {
+        let (g, _, erro) = encoding_rs::GBK.encode(nome);
+        if nome.trim().is_empty() || erro || g.len() > 127 || g.contains(&0) {
+            return Err("nome do gatilho: de 1 a 127 bytes em GBK".into());
+        }
+        let o = self.gatilho(politica, indice)?.em + 11;
+        self.bytes[o..o + 128].fill(0);
+        self.bytes[o..o + g.len()].copy_from_slice(&g);
+        self.reler()
+    }
+
+    /// A árvore de condições do gatilho como nós crus, e a faixa de bytes que ela ocupa (`em + 139 .. operacoes_em`).
+    fn arvore_crua(&self, politica: u32, indice: usize) -> Result<(Option<NoCru>, std::ops::Range<usize>, i32), String> {
+        let t = self.gatilho(politica, indice)?;
+        let raiz = t.condicao.as_ref().map(|n| NoCru::de(n, &self.bytes));
+        let papel_da_raiz = t.condicao.as_ref().map(|n| n.tipo_cru).unwrap_or(-1);
+        Ok((raiz, t.em + 139..t.operacoes_em, papel_da_raiz))
+    }
+
+    fn gravar_arvore(&mut self, faixa: std::ops::Range<usize>, raiz: &NoCru) -> Result<(), String> {
+        let mut b = Vec::new();
+        raiz.gravar(&mut b);
+        self.bytes.splice(faixa, b);
+        self.reler()
+    }
+
+    /// Folha nova de **condição** do tipo `tipo` (parâmetro zerado do tamanho que o tipo tem neste arquivo).
+    fn folha_nova(&self, tipo: i32) -> Result<NoCru, String> {
+        let (folhas, _) = self.catalogo();
+        let &(tamanho, valor) = folhas.get(&tipo).ok_or_else(|| format!("o tipo de condição {tipo} não aparece neste arquivo"))?;
+        if valor {
+            return Err(format!("o tipo {tipo} é valor (vai debaixo de comparação), não condição"));
+        }
+        Ok(NoCru { tipo, parametro: vec![0; tamanho], esquerda: None, direita: None })
+    }
+
+    /// Põe um operador lógico em volta do nó do `caminho` (B365): `5` Não (o nó vira o filho **direito** — medido: os
+    /// 113 Não do 1.2.6 e os 1.672 do 1.5.5 só têm o direito; o nosso GS aceita os dois), `6` Ou / `7` E (o nó vira o
+    /// esquerdo e uma folha nova do tipo `folha` o direito; E/Ou sempre têm os dois no arquivo: 9 e 770). Só nó de
+    /// **condição** (não debaixo de aritmética/comparação). Gravado como `SaveConditonTree` (`policy.cpp:110-149`).
+    pub fn envolver_condicao(&mut self, politica: u32, indice: usize, caminho: &str, operador: i32, folha: Option<i32>) -> Result<(), String> {
+        let (raiz, faixa, _) = self.arvore_crua(politica, indice)?;
+        let mut raiz = raiz.ok_or("o gatilho não tem condição")?;
+        if raiz.debaixo_de_valor(caminho)? {
+            return Err("este nó é valor de uma comparação: só condição recebe Não/E/Ou".into());
+        }
+        let novo_direito = match operador {
+            5 => None,
+            6 | 7 => Some(Box::new(self.folha_nova(folha.ok_or("E/Ou precisam do tipo da condição nova (`folha`)")?)?)),
+            _ => return Err("operador: 5 (Não), 6 (Ou) ou 7 (E)".into()),
+        };
+        let alvo = raiz.no_mut(caminho).ok_or_else(|| format!("condição {caminho:?} não existe"))?;
+        let antigo = std::mem::replace(alvo, NoCru { tipo: operador, parametro: vec![], esquerda: None, direita: None });
+        if operador == 5 {
+            alvo.direita = Some(Box::new(antigo));
+        } else {
+            alvo.esquerda = Some(Box::new(antigo));
+            alvo.direita = novo_direito;
+        }
+        self.gravar_arvore(faixa, &raiz)
+    }
+
+    /// Tira um nó da árvore (B365): um Não sai e deixa o filho no lugar; um nó filho de E/Ou sai e o operador é
+    /// trocado pelo irmão. A raiz-folha não sai (o gatilho precisa de condição) nem nó debaixo de comparação.
+    pub fn remover_condicao(&mut self, politica: u32, indice: usize, caminho: &str) -> Result<(), String> {
+        let (raiz, faixa, _) = self.arvore_crua(politica, indice)?;
+        let mut raiz = raiz.ok_or("o gatilho não tem condição")?;
+        let no = raiz.no_mut(caminho).ok_or_else(|| format!("condição {caminho:?} não existe"))?;
+        if no.tipo == 5 {
+            let filho = no.direita.take().or_else(|| no.esquerda.take()).ok_or("Não sem filho")?;
+            *no = *filho;
+            return self.gravar_arvore(faixa, &raiz);
+        }
+        if caminho.is_empty() {
+            return Err("a raiz só sai trocando de tipo (o gatilho precisa de condição)".into());
+        }
+        let (pai_c, lado) = caminho.split_at(caminho.len() - 1);
+        let pai = raiz.no_mut(pai_c).ok_or("pai")?;
+        if !matches!(pai.tipo, 6 | 7) {
+            return Err("só sai nó filho de E/Ou, ou um Não".into());
+        }
+        let irmao = if lado == "e" { pai.direita.take() } else { pai.esquerda.take() }.ok_or("E/Ou sem o outro filho")?;
+        *pai = *irmao;
+        self.gravar_arvore(faixa, &raiz)
+    }
+
+    /// Gatilho novo do zero no fim da política (B365): versão do arquivo, `id` pedido ou o maior + 1, ativo, não rodando,
+    /// só em combate (as flags se mudam depois), o `nome`, uma folha de condição `condicao` e uma operação `operacao`
+    /// (alvo 0), nos formatos de `bytes_da_operacao` e `SaveConditonTree`. Devolve o id.
+    pub fn criar_gatilho(&mut self, politica: u32, nome: &str, condicao: i32, operacao: i32, id_gatilho: Option<u32>, novo_id: Option<u32>) -> Result<u32, String> {
+        let p = self.politica_unica(politica)?;
+        let id = match novo_id {
+            Some(i) => i,
+            None => p.triggers.iter().map(|x| x.id).max().map_or(Some(0), |m| m.checked_add(1)).ok_or("sem id livre")?,
+        };
+        if p.triggers.iter().any(|x| x.id == id) {
+            return Err(format!("o id {id} já existe nesta política"));
+        }
+        let versao = self.dados.policies.values().flat_map(|q| q.triggers.iter().map(|t| t.versao)).max().ok_or("o arquivo não tem gatilho para dar a versão")?;
+        let fim = p.triggers.last().map(|t| t.fim).unwrap_or(p.em + 12);
+        let em_p = p.em;
+        if (4..=6).contains(&operacao) && id_gatilho == Some(id) {
+            return Err("o gatilho novo não pode chamar a si mesmo".into());
+        }
+        self.validar_tipo_de_operacao(politica, operacao, id_gatilho)?;
+        let folha = self.folha_nova(condicao)?;
+        let (g, _, erro) = encoding_rs::GBK.encode(nome);
+        if nome.trim().is_empty() || erro || g.len() > 127 || g.contains(&0) {
+            return Err("nome do gatilho: de 1 a 127 bytes em GBK".into());
+        }
+        let mut b = versao.to_le_bytes().to_vec();
+        b.extend_from_slice(&id.to_le_bytes());
+        b.extend_from_slice(&[1, 0, 1]);
+        let mut n = [0u8; 128];
+        n[..g.len()].copy_from_slice(&g);
+        b.extend_from_slice(&n);
+        folha.gravar(&mut b);
+        b.extend_from_slice(&1i32.to_le_bytes());
+        b.extend(Self::bytes_da_operacao(operacao, versao, id_gatilho, &0i32.to_le_bytes())?);
+        self.bytes.splice(fim..fim, b);
+        self.somar_na_quantidade(em_p, 1);
+        self.reler()?;
+        Ok(id)
+    }
+
     /// Troca o texto de uma fala (`Falar`, `Falar2`, `SkillComFala`).
     pub fn definir_fala(&mut self, politica: u32, indice: usize, op: usize, texto: &str) -> Result<(), String> {
         if texto.contains('\0') {
@@ -601,6 +799,62 @@ mod testes {
             } else {
                 eprintln!("{realm}: nenhum gatilho citado por outro — a recusa NÃO foi verificada aqui");
             }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod testes_b365 {
+    use super::*;
+
+    /// Nos dois realms (B365): Não e E em volta de uma folha e tirar de volta devolvem o arquivo idêntico; o nome do
+    /// gatilho (GBK) muda e relê; o gatilho do zero entra no fim da política, relê e não mexe nas outras.
+    #[test]
+    fn arvore_nome_e_gatilho_do_zero() {
+        for realm in ["realm_126", "realm_155"] {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../data/{realm}/config/aipolicy.data"));
+            let b = std::fs::read(&p).unwrap();
+            let mut a = AiPolicyEditavel::ler(&b).unwrap();
+            // Uma política sem id repetido com um gatilho cuja raiz é folha de condição.
+            let (pol, gi) = a.dados.policies.iter().filter(|(id, _)| !a.dados.ids_repetidos.contains(id))
+                .find_map(|(id, q)| q.triggers.iter().position(|t| t.condicao.as_ref().is_some_and(|c| c.esquerda.is_none() && c.direita.is_none() && !e_operador(c.tipo_cru))).map(|i| (*id, i)))
+                .expect("gatilho com raiz folha");
+            let folha = a.dados.policies[&pol].triggers[gi].condicao.as_ref().unwrap().tipo_cru;
+            a.envolver_condicao(pol, gi, "", 5, None).unwrap();
+            let raiz = a.dados.policies[&pol].triggers[gi].condicao.clone().unwrap();
+            assert_eq!((raiz.tipo_cru, raiz.esquerda.is_none(), raiz.direita.as_ref().map(|d| d.tipo_cru)), (5, true, Some(folha)), "{realm}: Não com o filho direito");
+            a.remover_condicao(pol, gi, "").unwrap();
+            assert!(a.gravar() == b, "{realm}: tirar o Não devolve o arquivo");
+            a.envolver_condicao(pol, gi, "", 7, Some(folha)).unwrap();
+            let raiz = a.dados.policies[&pol].triggers[gi].condicao.clone().unwrap();
+            assert_eq!((raiz.tipo_cru, raiz.esquerda.as_ref().map(|x| x.tipo_cru), raiz.direita.as_ref().map(|x| x.tipo_cru)), (7, Some(folha), Some(folha)));
+            assert!(a.remover_condicao(pol, gi, "").is_err(), "{realm}: E na raiz não sai");
+            a.remover_condicao(pol, gi, "d").unwrap();
+            assert!(a.gravar() == b, "{realm}: tirar o filho do E devolve o arquivo");
+            assert!(a.envolver_condicao(pol, gi, "", 6, None).is_err(), "Ou sem a condição nova");
+            assert!(a.envolver_condicao(pol, gi, "", 9, Some(folha)).is_err(), "operador fora de Não/E/Ou");
+
+            a.renomear_gatilho(pol, gi, "Chefe enfurecido 狂暴").unwrap();
+            assert_eq!(a.dados.policies[&pol].triggers[gi].nome, "Chefe enfurecido 狂暴");
+            assert!(a.renomear_gatilho(pol, gi, &"x".repeat(128)).is_err());
+            assert_eq!(a.gravar().len(), b.len(), "renomear não muda o tamanho");
+
+            let antes = a.dados.policies[&pol].triggers.len();
+            let outras: Vec<_> = a.dados.policies.iter().filter(|(id, _)| **id != pol).map(|(id, q)| (*id, q.triggers.len())).collect();
+            let op = *a.catalogo().1.iter().find(|t| !(4..=6).contains(*t)).unwrap();
+            let id = a.criar_gatilho(pol, "Novo", folha, op, None, None).unwrap();
+            let q = &a.dados.policies[&pol];
+            let t = q.triggers.last().unwrap();
+            assert_eq!((q.triggers.len(), t.id, t.nome.as_str(), t.ativo, t.rodando, t.so_em_combate, t.operacoes.len()), (antes + 1, id, "Novo", true, false, true, 1));
+            assert_eq!(t.condicao.as_ref().map(|c| c.tipo_cru), Some(folha));
+            assert_eq!(t.operacoes[0].tipo_cru, op);
+            assert_eq!(t.versao, a.dados.policies[&pol].triggers[0].versao);
+            for (oid, n) in outras {
+                assert_eq!(a.dados.policies[&oid].triggers.len(), n, "{realm}: política {oid} intacta");
+            }
+            assert!(a.criar_gatilho(pol, "Repetido", folha, op, None, Some(id)).is_err(), "id repetido");
+            AiPolicyData::load_from_bytes(&a.gravar()).unwrap();
         }
     }
 }

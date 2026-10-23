@@ -62,6 +62,51 @@ async function recarregarVersao() {
   desenharHistorico();
 }
 
+/* B365: diferenças lado a lado de um item (onde · campo · antes · depois), a partir do `resumo` que o Estúdio grava:
+   `campos` [{tabela, id, campo, antes, depois}] e `registros` do elements (spec 07 §6b) e `mudancas` dos outros
+   editores (`campos` {nome: [antes, depois]} ou lista de nomes, `antes_*`/`depois`, o resto como está). */
+function linhasDeDiferenca(resumo) {
+  const linhas = [];
+  const texto = (v) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
+  for (const c of resumo?.campos || []) {
+    if (c && typeof c === "object" && "campo" in c) linhas.push([`${c.tabela || ""} ${c.id ?? ""}`.trim(), c.campo, texto(c.antes), texto(c.depois)]);
+  }
+  for (const r of resumo?.registros || []) linhas.push([`${r.tabela || ""} ${r.id ?? ""}`.trim(), r.acao || "registro", r.base != null ? `cópia de ${r.base}` : "—", r.acao === "removido" ? "—" : "(novo)"]);
+  for (const m of resumo?.mudancas || []) {
+    const onde = [m.tipo, m.id ?? m.indice, m.nome].filter((x) => x !== undefined && x !== null && x !== "").join(" ");
+    if (m.campos && !Array.isArray(m.campos) && typeof m.campos === "object") {
+      for (const [k, v] of Object.entries(m.campos)) {
+        if (Array.isArray(v) && v.length === 2) linhas.push([onde, k, texto(v[0]), texto(v[1])]);
+        else linhas.push([onde, k, "—", texto(v)]);
+      }
+      if (!Object.keys(m.campos).length) linhas.push([onde, m.acao || "", "—", "(sem mudança de valor)"]);
+    } else if (Array.isArray(m.campos)) {
+      linhas.push([onde, `${m.acao || "editar"}: ${m.campos.join(", ")}`, "—", "—"]);
+    } else {
+      const antesK = Object.keys(m).find((k) => k.startsWith("antes"));
+      const resto = Object.fromEntries(Object.entries(m).filter(([k]) => !["acao", "tipo", "id", "indice", "nome", "depois"].includes(k) && k !== antesK));
+      linhas.push([onde, m.acao || "", antesK ? texto(m[antesK]) : "—", "depois" in m ? texto(m.depois) : Object.keys(resto).length ? texto(resto) : "—"]);
+    }
+  }
+  return linhas;
+}
+
+function tabelaDeDiferencas(resumo) {
+  const linhas = linhasDeDiferenca(resumo);
+  if (!linhas.length) return criar("div", "texto-suave", "Arquivo inteiro trocado: sem diferença por campo registrada.");
+  const t = criar("table", "recursos-tabela recursos-diferencas");
+  const cab = criar("tr");
+  for (const h of ["Onde", "Campo / ação", "Antes", "Depois"]) cab.appendChild(criar("th", "", h));
+  t.appendChild(cab);
+  for (const [onde, campo, antes, depois] of linhas.slice(0, 500)) {
+    const tr = criar("tr");
+    tr.append(criar("td", "", onde), criar("td", "", campo), criar("td", "recursos-antes", antes), criar("td", "recursos-depois", depois));
+    t.appendChild(tr);
+  }
+  if (linhas.length > 500) t.appendChild(criar("caption", "", `… e mais ${linhas.length - 500} linhas.`));
+  return t;
+}
+
 function tabelaDeItens(alteracao, editavel) {
   const tabela = criar("table", "recursos-tabela");
   const cabeca = criar("tr");
@@ -84,6 +129,17 @@ function tabelaDeItens(alteracao, editavel) {
     }
     linha.appendChild(acoes);
     tabela.appendChild(linha);
+    // B365: as diferenças lado a lado do item, abrindo sob a linha.
+    const n = linhasDeDiferenca(i.resumo).length;
+    const linhaDif = criar("tr");
+    const celula = criar("td");
+    celula.colSpan = 5;
+    const det = criar("details");
+    det.appendChild(criar("summary", "texto-suave", n ? `Diferenças (${n})` : "Diferenças"));
+    det.addEventListener("toggle", () => { if (det.open && det.children.length === 1) det.appendChild(tabelaDeDiferencas(i.resumo)); }, { once: false });
+    celula.appendChild(det);
+    linhaDif.appendChild(celula);
+    tabela.appendChild(linhaDif);
   }
   return tabela;
 }
@@ -180,7 +236,11 @@ async function publicarRecursos() {
   const texto = `Publica a versão ${atual.atual + 1} do cliente ${recursos.versao} com ${ids.map((i) => `#${i}`).join(", ")}. ` +
     (obrigar ? "O launcher vai exigir a atualização antes de jogar." : "Quem estiver na versão anterior ainda pode jogar.") +
     " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los (aviso no topo do Estúdio).";
-  if (!(await confirmar("Publicar versão nova?", texto, "Publicar"))) return;
+  // B365: o total de diferenças registradas nos rascunhos escolhidos (o detalhe lado a lado fica em cada item).
+  const escolhidos = recursos.rascunhos.filter((r) => ids.includes(r.id));
+  const total = escolhidos.reduce((s, r) => s + r.lista.reduce((t, i) => t + linhasDeDiferenca(i.resumo).length, 0), 0);
+  const arquivos = escolhidos.reduce((s, r) => s + r.lista.length, 0);
+  if (!(await confirmar("Publicar versão nova?", `${texto} São ${arquivos} arquivo(s) e ${total} diferença(s) registrada(s) — confira em "Diferenças" em cada item.`, "Publicar"))) return;
   executarRecurso(async () => {
     const r = await api(rotaRecursos("publicar"), { method: "POST", body: JSON.stringify({ rascunhos: ids, minima: obrigar ? atual.atual + 1 : null }) });
     recursos.selecionados.clear();

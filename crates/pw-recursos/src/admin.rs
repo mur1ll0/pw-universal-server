@@ -167,6 +167,11 @@ struct QCaminho {
     habitat: Option<u32>,
     /// B283: modo de voo (`fly_mode`: 0 espada, 1 asa, 2 rodas) para o diagnóstico de voo.
     voo: Option<u32>,
+    /// B365: habilidades do monstro (ids separados por vírgula, dos campos `*id_skill` da ficha) para o diagnóstico de
+    /// ações de habilidade.
+    habilidades: Option<String>,
+    /// B365: a política do monstro (`common_strategy`): as habilidades que ela manda usar entram no diagnóstico.
+    politica: Option<u32>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -373,9 +378,51 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             Some((modo, (tipo, gancho_do_jogador, encaixe))) => Some(diagnostico_de_voo(&e, &v, q.rascunho, &nome, &m, modo, tipo, gancho_do_jogador, encaixe).await?),
             None => None,
         };
+        // B365: ações de habilidade (sobra do S5). O cliente monta `GetNativeName(id)` + `_<ambiente>_` (só mascote) +
+        // `吟唱` (conjurar) e `施放起`/`施放落` (soltar), `EC_NPCModel.cpp:624-670`; o nome nativo vem do `habilidades.pwsk`.
+        let mut ids: Vec<u32> = q.habilidades.as_deref().unwrap_or("").split(',').filter_map(|s| s.trim().parse().ok()).filter(|&x| x > 0).take(64).collect();
+        if let Some(p) = q.politica.filter(|&p| p > 0) {
+            ids.extend(e.estudio.habilidades_da_politica(&e.gov, &v, p).await.unwrap_or_default());
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let de_habilidades = if ids.is_empty() {
+            None
+        } else {
+            let nativos: std::collections::HashMap<u32, String> = e.gov.conteudo(&v, "habilidades.pwsk").ok()
+                .and_then(|(_, b)| pw_data_loader::habilidades_do_cliente::ler(&b).ok())
+                // O `nome_nativo` do modelo é o hex dos bytes GBK (o `char*` do `GetNativeName`).
+                .map(|m| m.habilidades.into_iter().filter_map(|h| {
+                    let s = &h.estaticas.nome_nativo;
+                    let b: Option<Vec<u8>> = (s.len() % 2 == 0).then(|| (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()).flatten();
+                    b.map(|b| (h.id, encoding_rs::GBK.decode_without_bom_handling(&b).0.into_owned()))
+                }).collect())
+                .unwrap_or_default();
+            // Mascote: o mesmo nome com cada ambiente do habitat (como o diagnóstico de mascote, B281).
+            let ambientes: Vec<Option<String>> = match q.habitat.filter(|h| *h <= 6) {
+                Some(h) => pw_data_loader::ecm::ambientes_do_habitat(h).iter().map(|a| Some(a.to_string())).collect(),
+                None => vec![None],
+            };
+            let mut lista = Vec::new();
+            for id in ids {
+                let Some(nativo) = nativos.get(&id).filter(|n| !n.is_empty()) else {
+                    lista.push(json!({ "habilidade": id, "pedido": null, "estado": "sem nome nativo no habilidades.pwsk (o cliente não acha ação)" }));
+                    continue;
+                };
+                for amb in &ambientes {
+                    let base = match amb { Some(a) => format!("{nativo}_{a}_"), None => nativo.clone() };
+                    for sufixo in ["吟唱", "施放起", "施放落"] {
+                        let mut d = diagnosticar(vec![(0, format!("{base}{sufixo}"), None)]).remove(0);
+                        d["habilidade"] = json!(id);
+                        lista.push(d);
+                    }
+                }
+            }
+            Some(lista)
+        };
         return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(), "voo": q.voo, "diagnostico_de_voo": de_voo,
             "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico,
-            "habitat": q.habitat, "diagnostico_de_mascote": de_mascote })));
+            "habitat": q.habitat, "diagnostico_de_mascote": de_mascote, "diagnostico_de_habilidades": de_habilidades })));
     }
     if q.caminho.to_lowercase().ends_with(".smd") {
         let (nome, c, peles, esqueleto) = ler_smd(&e, &v, &q.caminho)?;
@@ -868,6 +915,17 @@ async fn estudio_listar(
     Ok(Json(r))
 }
 
+/// B365: tela própria (loja, forja, teleporte) do registro — `Estudio::tela`.
+async fn estudio_tela(
+    State(e): State<Arc<Estado>>,
+    Path((v, tabela, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    Ok(Json(e.estudio.tela(&e.gov, &v, q.rascunho, &tabela, indice).await?))
+}
+
 async fn estudio_ficha(
     State(e): State<Arc<Estado>>,
     Path((v, tabela, indice)): Path<(String, String, usize)>,
@@ -1124,6 +1182,40 @@ async fn estudio_remover_portal(
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
     Ok(Json(e.estudio.remover_portal(&e.gov, &v, &caminho, r, indice).await?))
+}
+
+// ------------------------------------------------------------------ regiões (B365)
+
+async fn estudio_nova_regiao(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho)): Path<(String, String)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.nova_regiao(&e.gov, &v, &caminho, r, p.campos).await?))
+}
+
+async fn estudio_editar_regiao(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.editar_regiao(&e.gov, &v, &caminho, r, indice, p.campos).await?))
+}
+
+async fn estudio_remover_regiao(
+    State(e): State<Arc<Estado>>,
+    Path((v, caminho, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_regiao(&e.gov, &v, &caminho, r, indice).await?))
 }
 
 // ------------------------------------------------------------------ alinhar o servidor com o cliente (B253)
@@ -1624,6 +1716,7 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/tabelas/{tabela}", get(estudio_listar))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
+        .route("/admin/{v}/estudio/telas/{tabela}/{indice}", get(estudio_tela))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
@@ -1635,6 +1728,8 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/mapas/{caminho}/distritos/{indice}", put(estudio_editar_distrito).delete(estudio_remover_distrito))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais", get(estudio_portais).post(estudio_novo_portal))
         .route("/admin/{v}/estudio/mapas/{caminho}/portais/{indice}", put(estudio_editar_portal).delete(estudio_remover_portal))
+        .route("/admin/{v}/estudio/mapas/{caminho}/regioes", post(estudio_nova_regiao))
+        .route("/admin/{v}/estudio/mapas/{caminho}/regioes/{indice}", put(estudio_editar_regiao).delete(estudio_remover_regiao))
         .route("/admin/{v}/estudio/mapas/{caminho}/teleportes", get(estudio_teleportes).post(estudio_novo_teleporte))
         .route("/admin/{v}/estudio/teleportes/{id}", put(estudio_editar_teleporte).delete(estudio_remover_teleporte))
         .route("/admin/{v}/estudio/mapas/{caminho}/rastreador", get(estudio_rastreador))

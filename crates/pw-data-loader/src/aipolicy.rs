@@ -768,7 +768,8 @@ impl<'a> Leitor<'a> {
     fn texto_fixo(&mut self, n: usize) -> Result<String> {
         let bruto = self.fatia(n)?;
         let fim = bruto.iter().position(|&b| b == 0).unwrap_or(n);
-        Ok(String::from_utf8_lossy(&bruto[..fim]).into_owned())
+        // B365: GBK, como o editor original grava (antes `from_utf8_lossy`, que trocava o chinês por U+FFFD).
+        Ok(encoding_rs::GBK.decode_without_bom_handling(&bruto[..fim]).0.into_owned())
     }
 
     /// Um texto no formato de `O_TALK_TEXT`: tamanho em bytes, texto UTF-16 e — só a

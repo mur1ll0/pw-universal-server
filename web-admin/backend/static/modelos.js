@@ -198,11 +198,18 @@ function botaoDeAcoes(smd) {
   return rotulo;
 }
 
-async function abrirModelo(caminho, habitat = null, voo = null) {
+/* B365: habilidades e política do monstro que abriu o modelo, guardadas por caminho (os "Criar" reabrem sem elas). */
+const extrasDoModelo = new Map();
+
+async function abrirModelo(caminho, habitat = null, voo = null, extras = null) {
   const ficha = elemento("modelos-ficha");
   ficha.textContent = "Carregando…";
   let f;
   const q = { caminho };
+  if (extras) extrasDoModelo.set(caminho, extras);
+  const ex = extrasDoModelo.get(caminho);
+  if (ex?.habilidades?.length) q.habilidades = [...new Set(ex.habilidades)].join(",");
+  if (ex?.politica) q.politica = ex.politica;
   if (estudio.rascunho) q.rascunho = estudio.rascunho;
   if (habitat !== null && habitat !== undefined) q.habitat = habitat;
   if (voo !== null && voo !== undefined) q.voo = voo;
@@ -264,6 +271,16 @@ async function abrirModelo(caminho, habitat = null, voo = null) {
       ficha.appendChild(tabelaDeDiagnostico(f, caminho, `Diagnóstico de mascote — habitat ${f.habitat} (${HABITATS[f.habitat] || "?"}): nomes + _地面/_水中/_空中`, f.diagnostico_de_mascote, f.habitat));
     } else {
       ficha.appendChild(tabelaDeDiagnostico(f, caminho, "Diagnóstico de monstro (nomes de Configs\\actions_npc.txt + 起/落 nos ataques)", f.diagnostico_de_monstro, null));
+    }
+    if (f.diagnostico_de_habilidades) {
+      // B365: as ações de cada habilidade do monstro — nome nativo do habilidades.pwsk + 吟唱 (conjurar), 施放起/施放落 (soltar).
+      const semNome = f.diagnostico_de_habilidades.filter((d) => !d.pedido);
+      const comNome = f.diagnostico_de_habilidades.filter((d) => d.pedido).map((d) => ({ ...d, estado: d.estado }));
+      const titulo = `Diagnóstico de habilidades (${[...new Set(f.diagnostico_de_habilidades.map((d) => d.habilidade))].join(", ")}): nome nativo + 吟唱 / 施放起 / 施放落`;
+      if (comNome.length) ficha.appendChild(tabelaDeDiagnostico(f, caminho, titulo, comNome, f.habitat ?? null));
+      for (const d of semNome) ficha.appendChild(criar("div", "texto-suave", `Habilidade ${d.habilidade}: ${d.estado}.`));
+    } else if (ex && !ex.habilidades?.length && !ex.politica) {
+      ficha.appendChild(criar("div", "texto-suave", "Este registro não cita habilidade nem política: sem diagnóstico de habilidades."));
     }
     const lista = criar("ul");
     for (const c of f.combinadas) lista.appendChild(criar("li", "", `${c.nome} ← ${c.bases.length ? c.bases.join(", ") : "(sem ação-base)"}${c.bases_ausentes.length ? ` — ausentes no .smd: ${c.bases_ausentes.join(", ")}` : ""}`));

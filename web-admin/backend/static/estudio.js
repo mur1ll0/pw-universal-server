@@ -322,6 +322,8 @@ function desenharFichaDoEstudio() {
   area.appendChild(topo);
   area.appendChild(criar("p", "texto-suave", `${f.tabela} · registro ${f.indice}${f.espaco ? ` · espaço ${f.espaco}` : ""}`));
   if (!editavel) area.appendChild(criar("p", "texto-suave", "Somente leitura: escolha um rascunho no alto da página para editar."));
+  // B365: telas próprias — loja em grade, forja com receitas, teleporte no mapa (só leitura; edita-se nos campos abaixo).
+  if (TELAS_DO_ESTUDIO[f.tabela]) area.appendChild(telaPropriaDoEstudio(f));
 
   const entradas = [];
   const { soltos, grupos } = agruparCamposDoEstudio(f.campos);
@@ -356,7 +358,12 @@ function desenharFichaDoEstudio() {
           const comSufixo = typeof habitat === "number" && (valor("id_type") === 28752 || habitat === 6);
           // B283: modelo de voo — `WINGMANWING_ESSENCE` é asa; `FLYSWORD_ESSENCE` pelo `fly_mode` (`EC_Player.cpp:4262-4273`).
           const voo = f.tabela === "WINGMANWING_ESSENCE" ? 1 : f.tabela === "FLYSWORD_ESSENCE" ? (valor("fly_mode") ?? 0) : null;
-          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim(), comSufixo ? habitat : null, voo); });
+          // B365: as habilidades do registro (campos `*id_skill`) e a política (`common_strategy`) entram no diagnóstico
+          // de ações de habilidade (GetNativeName + 吟唱/施放起/施放落, EC_NPCModel.cpp:624-670).
+          const habilidades = f.campos.filter((x) => /(^|_)id_skill$/.test(x.nome) && typeof x.valor === "number" && x.valor > 0).map((x) => x.valor);
+          const politica = valor("common_strategy");
+          const extras = { habilidades, politica: typeof politica === "number" && politica > 0 ? politica : null };
+          ir.addEventListener("click", (ev) => { ev.preventDefault(); mostrarVistaDoEstudio("modelos"); abrirModelo(c.valor.trim(), comSufixo ? habitat : null, voo, extras); });
           grade.append(criar("span"), ir);
         }
       }
@@ -441,6 +448,102 @@ function desenharFichaDoEstudio() {
     if (!(await confirmar("Remover o registro?", `${f.tabela} id ${f.id}: a remoção fica no rascunho e só vale ao publicar.`, "Remover"))) return;
     executarNoEstudio(() => api(rotaEstudio(`tabelas/${f.tabela}/${f.indice}`), { method: "DELETE" }), () => "Remoção no rascunho.", null);
   });
+}
+
+/* B365: telas próprias por área. O servidor resolve os ids (`GET …/estudio/telas/{T}/{i}`); a tela só mostra — a edição
+   continua nos campos da ficha (pages_N_goods_N_id, pages_N_id_goods_N, targets_N_…). */
+const TELAS_DO_ESTUDIO = { NPC_SELL_SERVICE: "Loja", NPC_MAKE_SERVICE: "Forja", NPC_TRANSMIT_SERVICE: "Teleporte" };
+
+function cartaoDeItemDoEstudio(item, extra) {
+  const b = criar("button", "estudio-cartao");
+  b.type = "button";
+  if (item?.ausente) {
+    b.append(criar("span", "texto-perigo", `id ${item.id} (não existe)`));
+    b.disabled = true;
+  } else {
+    b.append(iconeDoEstudio(item.icone, item.nome), criar("span", "", item.nome || `id ${item.id}`));
+    b.title = `${item.tabela} · id ${item.id}`;
+    b.addEventListener("click", () => abrirRegistroDoEstudio(item.tabela, item.indice));
+  }
+  if (extra) b.appendChild(criar("small", "texto-suave", extra));
+  return b;
+}
+
+function telaPropriaDoEstudio(f) {
+  const bloco = criar("details", "estudio-grupo");
+  bloco.open = true;
+  bloco.appendChild(criar("summary", "", `${TELAS_DO_ESTUDIO[f.tabela]} (como o jogador vê)`));
+  const corpo = criar("div", "", "Carregando…");
+  bloco.appendChild(corpo);
+  const q = estudio.rascunho ? `?rascunho=${estudio.rascunho}` : "";
+  api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/telas/${f.tabela}/${f.indice}${q}`).then((t) => {
+    corpo.replaceChildren();
+    if (t.tipo === "loja" || t.tipo === "forja") {
+      const abas = criar("div", "recursos-linha");
+      const conteudo = criar("div");
+      const paginas = t.paginas.filter((p) => (p.itens || p.receitas).length || p.titulo);
+      const mostrar = (p) => {
+        conteudo.replaceChildren();
+        if (t.tipo === "loja") {
+          const grade = criar("div", "estudio-grade-loja");
+          for (const x of p.itens) grade.appendChild(cartaoDeItemDoEstudio(x.item, `#${x.posicao}${x.preco != null ? ` · ${x.preco.toLocaleString("pt-BR")} moedas` : ""}${x.contribuicao ? ` · contrib. ${x.contribuicao}` : ""}`));
+          if (!p.itens.length) grade.appendChild(criar("div", "texto-suave", "Página vazia."));
+          conteudo.appendChild(grade);
+        } else {
+          for (const x of p.receitas) {
+            const linha = criar("div", "estudio-receita");
+            const cab = criar("div", "recursos-linha");
+            cab.appendChild(cartaoDeItemDoEstudio(x.receita, `#${x.posicao}${x.nivel != null ? ` · nível ${x.nivel}` : ""}${x.preco ? ` · ${x.preco.toLocaleString("pt-BR")} moedas` : ""}`));
+            linha.appendChild(cab);
+            const faz = criar("div", "recursos-linha");
+            faz.appendChild(criar("span", "texto-suave", `Faz${x.quantidade > 1 ? ` (${x.quantidade})` : ""}:`));
+            for (const a of x.faz) faz.appendChild(cartaoDeItemDoEstudio(a.item, typeof a.probabilidade === "number" ? `${Math.round(a.probabilidade * 1000) / 10}%` : ""));
+            const mat = criar("div", "recursos-linha");
+            mat.appendChild(criar("span", "texto-suave", "Materiais:"));
+            for (const m of x.materiais) mat.appendChild(cartaoDeItemDoEstudio(m.item, `× ${m.quantidade}`));
+            if (!x.materiais.length) mat.appendChild(criar("span", "texto-suave", "nenhum"));
+            linha.append(faz, mat);
+            conteudo.appendChild(linha);
+          }
+          if (!p.receitas.length) conteudo.appendChild(criar("div", "texto-suave", "Página vazia."));
+        }
+      };
+      for (const p of paginas) {
+        const b = criar("button", "botao botao-pequeno botao-secundario", p.titulo || `Página ${p.pagina + 1}`);
+        b.type = "button";
+        b.addEventListener("click", () => { abas.querySelectorAll("button").forEach((x) => x.classList.remove("botao-primario")); b.classList.add("botao-primario"); mostrar(p); });
+        abas.appendChild(b);
+      }
+      corpo.append(abas, conteudo);
+      if (paginas.length) abas.firstChild.click(); else corpo.appendChild(criar("div", "texto-suave", "Nenhuma página com conteúdo."));
+    } else if (t.tipo === "teleporte") {
+      const tab = criar("table", "recursos-tabela");
+      const cab = criar("tr");
+      for (const h of ["#", "Destino", "Mapa", "Chegada", "Preço", "Nível", ""]) cab.appendChild(criar("th", "", h));
+      tab.appendChild(cab);
+      for (const d of t.destinos) {
+        const tr = criar("tr");
+        tr.append(criar("td", d.conta ? "" : "texto-suave", `${d.posicao}${d.conta ? "" : " (além de num_targets)"}`),
+          criar("td", "", `${d.nome || "(sem nome no cliente)"} · id ${d.id}`),
+          criar("td", "", d.mapa ? `${d.mapa.nome} (${d.mapa.caminho})` : d.existe_no_servidor ? `mundo ${d.mundo}` : "⚠ não existe no world_targets.sev"),
+          criar("td", "", d.pos ? d.pos.map((v) => Math.round(v)).join(", ") : "—"),
+          criar("td", "", d.preco != null ? d.preco.toLocaleString("pt-BR") : "—"),
+          criar("td", "", d.nivel ?? "—"));
+        const td = criar("td");
+        if (d.mapa && typeof irParaArea === "function") {
+          const ir = criar("a", "", "ver no mapa");
+          ir.href = "#";
+          ir.addEventListener("click", (ev) => { ev.preventDefault(); irParaArea(d.mapa.caminho, "teleportes", d.id); });
+          td.appendChild(ir);
+        }
+        tr.appendChild(td);
+        tab.appendChild(tr);
+      }
+      corpo.appendChild(tab);
+      if (!t.destinos.length) corpo.appendChild(criar("div", "texto-suave", "Nenhum destino."));
+    }
+  }).catch((erro) => { corpo.textContent = erro.message; });
+  return bloco;
 }
 
 async function executarNoEstudio(acao, mensagem, reabrir, indiceNovo) {

@@ -24,7 +24,7 @@ fn pwsk_de_teste() -> Vec<u8> {
         habilidades: vec![Habilidade {
             id: 1,
             max_level: 10,
-            estaticas: Estaticas { tipo: 1, icone: "".into(), nome: "4100".into(), nome_nativo: "".into(), efeito: "".into(), duende: 0, movel: 0, sobrescrita: 0, pre_combo: 0, recarga_comum: 0 },
+            estaticas: Estaticas { tipo: 1, icone: "".into(), nome: "4100".into(), nome_nativo: "bbf0c7f2".into() /* GBK de 火球 */, efeito: "".into(), duende: 0, movel: 0, sobrescrita: 0, pre_combo: 0, recarga_comum: 0 },
             armas: Armas::Todas("todas".into()),
             vida: None,
             combo: None,
@@ -603,6 +603,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             .send_json(json!({"campos": {"bActived": !ativo, "ActiveTime_iHours": 5}})).unwrap();
         let f2 = json_de(pedir("GET", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).call().unwrap());
         assert_eq!((f2["campos"]["bActived"].as_bool(), f2["campos"]["ActiveTime_iHours"].as_i64()), (Some(!ativo), Some(5)));
+        // B365: o nome (szName, GBK) se edita; vazio e longo demais são recusados.
+        assert_eq!(erro_de(pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).send_json(json!({"campos": {"nome": " "}}))).0, 400);
+        assert_eq!(erro_de(pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).send_json(json!({"campos": {"nome": "x".repeat(128)}}))).0, 400);
+        pedir("PUT", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).send_json(json!({"campos": {"nome": "Chefe da noite 夜"}})).unwrap();
+        let f3 = json_de(pedir("GET", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}"))).call().unwrap());
+        assert_eq!((f3["nome"].as_str(), f3["campos"]["bActived"].as_bool()), (Some("Chefe da noite 夜"), Some(!ativo)), "{f3}");
         let maior = ctrls.iter().map(|c| c[1].as_i64().unwrap()).max().unwrap();
         let clone = json_de(pedir("POST", &em7(&format!("estudio/mapas/world/npcgen/controladores/{ic}/clonar"))).call().unwrap())["resultado"]["indice"].as_u64().unwrap();
         let fc = json_de(pedir("GET", &em7(&format!("estudio/mapas/world/npcgen/controladores/{clone}"))).call().unwrap());
@@ -679,6 +685,46 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(rc.sequencia(), rs.registros.iter().map(|x| matches!(x, pw_data_loader::regioes::RegistroDeRegiao::Caixa(_))).collect::<Vec<_>>());
         let caixa = pw_data_loader::regioes::ler_caixas_de_transporte(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap()[0];
         assert_eq!((caixa.destino, caixa.pos), (101, [1.5, 2.0, 3.0]));
+
+        // Regiões (B365): nome e tipo só no region.clt, polígono nos dois; criar e remover em par sem mexer no índice
+        // dos portais.
+        let g0 = json_de(pedir("GET", "estudio/mapas/world/portais").call().unwrap());
+        assert_eq!((g0["regioes"][0]["nome"].as_str(), g0["regioes"][0]["tipo"].as_i64(), g0["regioes"][0]["tipo_nome"].as_str()),
+            (Some("安全区"), Some(1), Some("santuário")), "{g0}");
+        let n_regioes0 = g0["regioes"].as_array().unwrap().len();
+        let n_caixas0 = g0["caixas"].as_array().unwrap().len();
+        let r11 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "regiões", "operacao_id": "t_p4_regioes"})).unwrap())["id"].as_i64().unwrap();
+        let em11 = |rel: &str| format!("{rel}?rascunho={r11}");
+        assert_eq!(erro_de(pedir("PUT", &em11("estudio/mapas/world/regioes/0")).send_json(json!({"campos": {"tipo": 2}}))).0, 400, "tipo fora de 0/1");
+        assert_eq!(erro_de(pedir("PUT", &em11("estudio/mapas/world/regioes/99")).send_json(json!({"campos": {"tipo": 0}}))).0, 400, "região inexistente");
+        pedir("PUT", &em11("estudio/mapas/world/regioes/0")).send_json(json!({"campos": {"nome": "Praça", "tipo": 0, "vertices": [[0, 0], [10, 0], [10, 10]]}})).unwrap();
+        let nr = json_de(pedir("POST", &em11("estudio/mapas/world/regioes")).send_json(json!({"campos": {"nome": "Zona Nova", "tipo": 1, "vertices": [[0, 0], [5, 0], [5, 5], [0, 5]]}})).unwrap());
+        assert_eq!(nr["resultado"]["indice"].as_u64(), Some(n_regioes0 as u64), "{nr}");
+        pedir("POST", &em11("estudio/mapas/world/regioes")).send_json(json!({"campos": {"nome": "Apagar", "tipo": 0, "vertices": [[0, 0], [1, 0], [1, 1]]}})).unwrap();
+        pedir("DELETE", &em11(&format!("estudio/mapas/world/regioes/{}", n_regioes0 + 1))).call().unwrap();
+        let g1 = json_de(pedir("GET", &em11("estudio/mapas/world/portais")).call().unwrap());
+        assert_eq!((g1["alinhado_com_o_cliente"].as_bool(), g1["regioes"].as_array().unwrap().len(), g1["caixas"].as_array().unwrap().len()),
+            (Some(true), n_regioes0 + 1, n_caixas0), "{g1}");
+        assert_eq!((g1["regioes"][0]["nome"].as_str(), g1["regioes"][0]["tipo"].as_i64()), (Some("Praça"), Some(0)));
+        let p11 = json_de(pedir("POST", "publicar").send_json(json!({"rascunhos": [r11]})).unwrap());
+        assert_eq!(p11["aplicados"].as_array().unwrap().len(), 1, "{p11}");
+        let rc = pw_data_loader::clt::RegionDoCliente::ler(&baixar("maps\\world\\region.clt")).unwrap();
+        let rs = pw_data_loader::regioes::RegioesEditavel::ler(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap();
+        assert_eq!(rc.carimbo, rs.carimbo, "carimbo intacto");
+        assert_eq!(rc.sequencia(), rs.registros.iter().map(|x| matches!(x, pw_data_loader::regioes::RegistroDeRegiao::Caixa(_))).collect::<Vec<_>>());
+        let regs: Vec<_> = rc.registros.iter().filter_map(|x| match x {
+            pw_data_loader::clt::RegistroDoCliente::Regiao { nome, tipo, vertices } => Some((nome.clone(), *tipo, vertices.len())),
+            _ => None,
+        }).collect();
+        assert_eq!(regs.first(), Some(&("Praça".to_string(), 0, 3)));
+        assert_eq!(regs.last(), Some(&("Zona Nova".to_string(), 1, 4)));
+        let sev_regs: Vec<usize> = rs.registros.iter().filter_map(|x| match x {
+            pw_data_loader::regioes::RegistroDeRegiao::Regiao(p) => Some(p.len()),
+            _ => None,
+        }).collect();
+        assert_eq!((sev_regs.len(), sev_regs[0], *sev_regs.last().unwrap()), (n_regioes0 + 1, 3, 4));
+        assert_eq!(pw_data_loader::regioes::ler_caixas_de_transporte(&fs::read(realm2.join("world").join("region.sev")).unwrap()).unwrap()[0].destino, 101,
+            "o portal 0 continua o mesmo");
 
         // Alinhar o servidor com o cliente (B253): um precinct.clt com um distrito a menos no rascunho → o alinhamento
         // acusa; "alinhar" refaz o precinct.sev a partir do .clt (item servidor) e o par volta a ser equivalente.
@@ -844,6 +890,37 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(estado("站立").unwrap().contains("sem ação-base"), "{fe}");
         assert!(estado("普攻1起").unwrap().contains("ausente no .smd"), "{fe}");
         assert!(estado("普攻1落").unwrap().contains("sem ação combinada"), "{fe}");
+        // B365: ações de habilidade — o nome nativo do habilidades.pwsk (火球) + 吟唱/施放起/施放落; a 99 não está no .pwsk.
+        let fh = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("habilidades", "1,99,0").call().unwrap());
+        let dh = fh["diagnostico_de_habilidades"].as_array().unwrap_or_else(|| panic!("{fh}"));
+        let pedidos: Vec<&str> = dh.iter().filter_map(|x| x["pedido"].as_str()).collect();
+        assert_eq!(pedidos, ["火球吟唱", "火球施放起", "火球施放落"], "{fh}");
+        assert!(dh.iter().filter(|x| x["habilidade"] == 1).all(|x| x["estado"].as_str().unwrap().contains("sem ação combinada")));
+        assert!(dh.iter().any(|x| x["habilidade"] == 99 && x["pedido"].is_null() && x["estado"].as_str().unwrap().contains("sem nome nativo")), "{fh}");
+        let fh2 = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("habilidades", "1").query("habitat", "0").call().unwrap());
+        assert_eq!(fh2["diagnostico_de_habilidades"][0]["pedido"].as_str(), Some("火球_地面_吟唱"), "mascote: com o ambiente");
+        assert!(fe["diagnostico_de_habilidades"].is_null(), "sem habilidades, sem diagnóstico");
+        // B365: telas próprias (elements real do 1.2.6) — loja com itens nomeados, forja com receitas e materiais,
+        // teleporte com destinos do world_targets.sev; tabela sem tela é recusada.
+        for (tab, chave) in [("NPC_SELL_SERVICE", "itens"), ("NPC_MAKE_SERVICE", "receitas")] {
+            let achado = (0..60).find_map(|i| {
+                let tl = json_de(pedir("GET", &format!("estudio/telas/{tab}/{i}")).call().ok()?);
+                tl["paginas"].as_array()?.iter().flat_map(|p| p[chave].as_array().cloned().unwrap_or_default()).next()
+            });
+            let x = achado.unwrap_or_else(|| panic!("{tab}: nenhum registro com {chave} nos 60 primeiros"));
+            if tab == "NPC_SELL_SERVICE" {
+                assert!(x["item"]["nome"].as_str().is_some_and(|s| !s.is_empty()) && x["item"]["tabela"].is_string(), "{x}");
+            } else {
+                assert_eq!(x["receita"]["tabela"].as_str(), Some("RECIPE_ESSENCE"), "{x}");
+                assert!(x["materiais"].as_array().is_some_and(|m| !m.is_empty()) || x["faz"].as_array().is_some_and(|m| !m.is_empty()), "{x}");
+            }
+        }
+        let tp = (0..60).find_map(|i| {
+            let tl = json_de(pedir("GET", &format!("estudio/telas/NPC_TRANSMIT_SERVICE/{i}")).call().ok()?);
+            tl["destinos"].as_array().filter(|d| !d.is_empty()).cloned()
+        }).expect("um NPC_TRANSMIT_SERVICE com destino");
+        assert!(tp.iter().any(|d| d["existe_no_servidor"] == true && d["pos"].is_array() && d["preco"].is_number()), "{tp:?}");
+        assert_eq!(erro_de(pedir("GET", "estudio/telas/MONSTER_ESSENCE/0").call()).0, 400);
         // B280: corrigir — criar 普攻1落 clonando 普攻1起 (no rascunho); a ficha com o rascunho já não acusa a falta.
         let ecm_cam = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
         let r16 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "ação", "operacao_id": "t_p4_r16"})).unwrap())["id"].as_i64().unwrap();

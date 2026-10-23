@@ -1562,12 +1562,23 @@ impl Estudio {
                     bail!("o id do controlador é o que as áreas citam (idCtrl): não se edita; clone para ter outro");
                 }
                 let antes = ng::ler_campos(bruto, ca, v);
+                let nome_antes = nomes::legivel(ng::nome_do_controlador(bruto));
                 for (k, valor) in &campos {
+                    if tipo == TipoDeArea::Controlador && k == "nome" {
+                        // B365: o rótulo do controlador (szName, GBK) — o GS não lê.
+                        let s = valor.as_str().context("nome: texto")?;
+                        ng::definir_nome_do_controlador(bruto, s).map_err(|e| anyhow::anyhow!("{e}"))?;
+                        continue;
+                    }
                     ng::definir_campo(bruto, ca, v, k, valor, onde_a).map_err(|e| anyhow::anyhow!("{e}"))?;
                 }
                 let depois = ng::ler_campos(bruto, ca, v);
-                let mudados: Map<String, Value> =
+                let mut mudados: Map<String, Value> =
                     depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
+                let nome_depois = nomes::legivel(ng::nome_do_controlador(bruto));
+                if tipo == TipoDeArea::Controlador && nome_depois != nome_antes {
+                    mudados.insert("nome".into(), json!([nome_antes, nome_depois]));
+                }
                 let mudanca = json!({ "acao": "editado", "tipo": tipo.nome(), "indice": indice, "campos": mudados });
                 return Ok((json!({ "indice": indice }), mudanca));
             }
@@ -2002,11 +2013,14 @@ impl Estudio {
         for (n, reg) in r.registros.iter().enumerate() {
             match reg {
                 RegistroDeRegiao::Regiao(p) => {
-                    let nome = alinhado.as_ref().ok().and_then(|c| match &c.registros[n] {
-                        RegistroDoCliente::Regiao { nome, .. } => Some(nome.clone()),
+                    let (nome, tipo) = alinhado.as_ref().ok().and_then(|c| match &c.registros[n] {
+                        RegistroDoCliente::Regiao { nome, tipo, .. } => Some((Some(nome.clone()), Some(*tipo))),
                         _ => None,
-                    });
-                    regioes.push(json!({ "nome": nome, "vertices": p.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>() }));
+                    }).unwrap_or((None, None));
+                    regioes.push(json!({
+                        "indice": regioes.len(), "nome": nome, "tipo": tipo, "tipo_nome": tipo.map(nome_do_tipo_de_regiao),
+                        "vertices": p.iter().map(|v| json!([v[0], v[2]])).collect::<Vec<_>>(),
+                    }));
                 }
                 RegistroDeRegiao::Caixa(k) => caixas.push(json!({
                     "indice": caixas.len(), "destino": k.destino, "origem": k.origem, "nivel_minimo": k.nivel_minimo,
@@ -2128,6 +2142,111 @@ impl Estudio {
         })
         .await
     }
+
+    /// Edita uma região (`[region]`) nos dois arquivos (B365). `nome` e `tipo` só existem no `region.clt`
+    /// (`CELRegion::Load`, `EL_Region.cpp:80-83`); os `vertices` (`[[x, z], …]`) vão aos dois. O tipo decide o que o
+    /// cliente faz com o polígono: 0 = PK (`m_aPKRegions`), 1 = santuário (`m_aPeaceRegions`, `EL_Region.cpp:439-442`) —
+    /// é o cliente que testa o santuário (`IsPointInSanctuary`, `:382-392`) e manda `C2S::ENTER_SANCTUARY`
+    /// (`playercmd.cpp:2812-2827`); no servidor o polígono do `.sev` só serve aos pontos de passagem. Exige o `.clt`.
+    pub async fn editar_regiao(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_portais(gov, versao, caminho, rascunho, true, move |r, c| {
+            let c = c.context("exige o .clt")?;
+            let (ps, pc) = posicoes_da_regiao(r, c, indice)?;
+            let mut mudou = Map::new();
+            for (campo, valor) in &campos {
+                match campo.as_str() {
+                    "nome" => {
+                        let novo = nome_do_json(valor)?;
+                        if let RegistroDoCliente::Regiao { nome, .. } = &mut c.registros[pc] {
+                            if *nome != novo {
+                                mudou.insert("nome".into(), json!([nome.clone(), novo.clone()]));
+                                *nome = novo;
+                            }
+                        }
+                    }
+                    "tipo" => {
+                        let novo = tipo_de_regiao_do_json(valor)?;
+                        if let RegistroDoCliente::Regiao { tipo, .. } = &mut c.registros[pc] {
+                            if *tipo != novo {
+                                mudou.insert("tipo".into(), json!([*tipo, novo]));
+                                *tipo = novo;
+                            }
+                        }
+                    }
+                    "vertices" => {
+                        let y = match &r.registros[ps] { RegistroDeRegiao::Regiao(p) => p.first().map(|v| v[1]).unwrap_or(0.0), _ => 0.0 };
+                        let novos = vertices_do_json(valor, y)?;
+                        if let RegistroDeRegiao::Regiao(p) = &mut r.registros[ps] {
+                            if *p != novos {
+                                mudou.insert("vertices".into(), json!([p.len(), novos.len()]));
+                                *p = novos.clone();
+                            }
+                        }
+                        if let RegistroDoCliente::Regiao { vertices, .. } = &mut c.registros[pc] {
+                            *vertices = novos;
+                        }
+                    }
+                    _ => bail!("campo da região não editável: {campo}"),
+                }
+            }
+            let mudanca = if mudou.is_empty() { Value::Null } else { json!({ "acao": "editado", "tipo": "regiao", "indice": indice, "campos": mudou }) };
+            Ok((json!({ "indice": indice }), mudanca))
+        })
+        .await
+    }
+
+    /// Região nova no fim dos dois arquivos (a sequência de portais não muda: os índices dos portais ficam iguais).
+    /// `campos`: `nome`, `tipo` e `vertices` obrigatórios. Exige o `.clt`.
+    pub async fn nova_regiao(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, campos: Map<String, Value>) -> Result<Value> {
+        self.alterar_portais(gov, versao, caminho, rascunho, true, move |r, c| {
+            let c = c.context("exige o .clt")?;
+            let nome = nome_do_json(campos.get("nome").context("nome obrigatório")?)?;
+            let tipo = tipo_de_regiao_do_json(campos.get("tipo").context("tipo obrigatório")?)?;
+            let vertices = vertices_do_json(campos.get("vertices").context("vertices obrigatórios")?, 0.0)?;
+            let indice = r.registros.iter().filter(|x| matches!(x, RegistroDeRegiao::Regiao(_))).count();
+            r.registros.push(RegistroDeRegiao::Regiao(vertices.clone()));
+            c.registros.push(RegistroDoCliente::Regiao { nome: nome.clone(), tipo, vertices });
+            Ok((json!({ "indice": indice }), json!({ "acao": "novo", "tipo": "regiao", "indice": indice, "nome": nome, "tipo_da_regiao": tipo })))
+        })
+        .await
+    }
+
+    /// Tira a região dos dois arquivos. Exige o `.clt`.
+    pub async fn remover_regiao(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, indice: usize) -> Result<Value> {
+        self.alterar_portais(gov, versao, caminho, rascunho, true, move |r, c| {
+            let c = c.context("exige o .clt")?;
+            let (ps, pc) = posicoes_da_regiao(r, c, indice)?;
+            r.registros.remove(ps);
+            c.registros.remove(pc);
+            Ok((json!({ "removido": indice }), json!({ "acao": "removido", "tipo": "regiao", "indice": indice })))
+        })
+        .await
+    }
+}
+
+/// Nome do tipo de região do cliente (`CELRegion`, `EL_Region.h:86-91`).
+fn nome_do_tipo_de_regiao(t: i64) -> &'static str {
+    match t {
+        0 => "PK",
+        1 => "santuário",
+        _ => "outro",
+    }
+}
+
+fn tipo_de_regiao_do_json(v: &Value) -> Result<i64> {
+    match v.as_i64() {
+        Some(t @ (0 | 1)) => Ok(t),
+        _ => bail!("tipo: 0 (PK) ou 1 (santuário) — os dois tipos que o cliente reconhece (EL_Region.h:86-91)"),
+    }
+}
+
+/// Posição da `indice`-ésima região no `.sev` e no `.clt` (alinhados: mesma sequência).
+fn posicoes_da_regiao(r: &RegioesEditavel, c: &RegionDoCliente, indice: usize) -> Result<(usize, usize)> {
+    let ps = r.registros.iter().enumerate().filter(|(_, x)| matches!(x, RegistroDeRegiao::Regiao(_))).nth(indice).map(|(i, _)| i)
+        .with_context(|| format!("região {indice} não existe"))?;
+    let pc = c.registros.iter().enumerate().filter(|(_, x)| matches!(x, RegistroDoCliente::Regiao { .. })).nth(indice).map(|(i, _)| i)
+        .context("região no .clt")?;
+    Ok((ps, pc))
 }
 
 // ------------------------------------------------------------------ teleportes (S4, B245)
@@ -3087,6 +3206,22 @@ static POLITICAS: std::sync::OnceLock<Mutex<HashMap<(String, Sha256Bytes), Arc<A
 impl Estudio {
     /// O `aipolicy.data` do realm (só do servidor: o cliente não o tem), pelo leitor do GS, em cache por versão/SHA;
     /// com o rascunho, o dele (B259).
+    /// B365: as habilidades que a política manda usar (`O_USE_SKILL` e `O_SKILL_WITH_TALK`), para o diagnóstico de
+    /// ações de habilidade do modelo do monstro.
+    pub async fn habilidades_da_politica(&self, gov: &Governanca, versao: &str, politica: u32) -> Result<Vec<u32>> {
+        use pw_data_loader::aipolicy::ParametroDeOperacao as P;
+        let p = self.politicas_do_realm(gov, versao, None).await?;
+        let mut ids: Vec<u32> = p.policies.get(&politica).map_or(vec![], |q| {
+            q.triggers.iter().flat_map(|t| t.operacoes.iter()).filter_map(|o| match &o.parametro {
+                P::Skill { skill, .. } | P::SkillComFala { skill, .. } => Some(*skill),
+                _ => None,
+            }).filter(|&s| s > 0).collect()
+        });
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     async fn politicas_do_realm(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Arc<AiPolicyData>> {
         let (_, do_realm, do_rascunho) = self.item_do_realm(gov, versao, "servidor\\aipolicy.data".into(), rascunho).await?;
         let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
@@ -3209,7 +3344,31 @@ impl Estudio {
         let (nome, do_realm, do_rascunho) = self.item_do_realm(gov, versao, "servidor\\aipolicy.data".into(), Some(rascunho)).await?;
         self.gravar_item_do_realm(gov, versao, rascunho, nome, do_realm, do_rascunho, move |base| {
             let mut a = pw_data_loader::aipolicy_editavel::AiPolicyEditavel::ler(base).map_err(anyhow::Error::msg)?;
+            // B365: gatilho do zero `{novo_gatilho: {nome, condicao, operacao, id_gatilho?, id?}}` — sem `gatilho`.
+            if let Some(n) = pedido.get("novo_gatilho").filter(|x| x.is_object()) {
+                let nome = n["nome"].as_str().context("novo_gatilho.nome")?;
+                let cond = n["condicao"].as_i64().context("novo_gatilho.condicao")? as i32;
+                let op = n["operacao"].as_i64().context("novo_gatilho.operacao")? as i32;
+                let idg = n["id_gatilho"].as_u64().map(|v| v as u32);
+                let novo_id = n["id"].as_u64().map(u32::try_from).transpose().context("novo_gatilho.id")?;
+                let criado = a.criar_gatilho(id, nome, cond, op, idg, novo_id).map_err(anyhow::Error::msg)?;
+                let novo = a.gravar();
+                let mudanca = json!({ "acao": "editado", "tipo": "politica", "id": id, "pedido": pedido });
+                return Ok((novo, json!({ "id": id, "novo_gatilho": criado }), mudanca));
+            }
             let g = pedido["gatilho"].as_u64().context("gatilho")? as usize;
+            // B365: nome do gatilho e nós da árvore (Não/E/Ou em volta de um nó; tirar nó).
+            if let Some(n) = pedido["nome"].as_str() {
+                a.renomear_gatilho(id, g, n).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(e) = pedido.get("envolver").filter(|x| x.is_object()) {
+                let caminho = e["caminho"].as_str().unwrap_or("");
+                let operador = e["operador"].as_i64().context("envolver.operador")? as i32;
+                a.envolver_condicao(id, g, caminho, operador, e["folha"].as_i64().map(|x| x as i32)).map_err(anyhow::Error::msg)?;
+            }
+            if let Some(c) = pedido["remover_condicao"].as_str() {
+                a.remover_condicao(id, g, c).map_err(anyhow::Error::msg)?;
+            }
             // B271: trocas de tipo e operações novas/removidas vêm primeiro (as edições de valor abaixo valem para o
             // tipo novo).
             let id_gatilho = |x: &Value| x["id_gatilho"].as_u64().map(|v| v as u32);
@@ -4305,5 +4464,161 @@ impl Estudio {
             Ok((novo, json!({ "nome": nova }), mudanca))
         })
         .await
+    }
+}
+
+// ------------------------------------------------------------------ telas próprias por área (B365)
+
+/// Texto de um campo do elements (UTF-16 decodificado ou GBK legível).
+fn texto_do_campo(r: &pw_data_loader::generic_elements::Record, nome: &str) -> String {
+    match r.get(nome) {
+        Some(FieldValue::Text(t)) => t.clone(),
+        Some(FieldValue::Raw(b)) => nomes::legivel(b),
+        _ => String::new(),
+    }
+}
+
+/// Os índices de uma lista achatada do layout (`pages_N_…`, `targets_N_…`): começa em 0 ou em 1, conforme o layout
+/// (o v7 e o v156 numeram de 1), e segue enquanto o campo existe.
+fn indices_da_lista(existe: impl Fn(usize) -> bool) -> Vec<usize> {
+    let inicio = if existe(0) { 0 } else { 1 };
+    (inicio..).take_while(|k| existe(*k)).collect()
+}
+
+fn inteiro_do_campo(r: &pw_data_loader::generic_elements::Record, nome: &str) -> Option<i64> {
+    match r.get(nome) {
+        Some(FieldValue::Int(v)) => Some(*v as i64),
+        Some(FieldValue::Float(f)) => Some(*f as i64),
+        _ => None,
+    }
+}
+
+fn numero_do_campo(r: &pw_data_loader::generic_elements::Record, nome: &str) -> Value {
+    match r.get(nome) {
+        Some(FieldValue::Int(v)) => json!(v),
+        Some(FieldValue::Float(f)) => json!(f),
+        _ => Value::Null,
+    }
+}
+
+impl Estudio {
+    /// Tela própria de um registro (B365), só leitura — a edição continua na ficha genérica (os mesmos campos):
+    /// - `NPC_SELL_SERVICE`: a loja em páginas, cada página com os itens na ordem dos `pages_N_goods_N_id` (nome, ícone,
+    ///   preço do item, contribuição);
+    /// - `NPC_MAKE_SERVICE`: a forja em páginas, cada receita (`RECIPE_ESSENCE`) com o que faz, a chance, os materiais
+    ///   e o preço;
+    /// - `NPC_TRANSMIT_SERVICE`: os destinos (`targets_N_idTarget` → `world_targets.sev` do realm), com o nome do
+    ///   `world_targets.txt` do cliente, o mapa (`instance.txt`), a posição, o preço e o nível.
+    pub async fn tela(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, tabela: &str, indice: usize) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let t = e.tabela(tabela)?;
+        if indice >= t.registros.len() {
+            bail!("registro {indice} inexistente em {tabela}");
+        }
+        let r = t.ler(indice)?;
+        let ids = mapa_de_ids(&e);
+        // Referência de um id no espaço `esp`: tabela, índice, nome, ícone e o registro lido.
+        let achar = |esp: &str, id: i64| -> Option<(Value, pw_data_loader::generic_elements::Record)> {
+            let id = i32::try_from(id).ok().filter(|&x| x > 0)?;
+            let &(ti, ri) = ids.get(&(esp.to_string(), id))?;
+            if ti == CONVERSAS {
+                return None;
+            }
+            let alvo = &e.tabelas[ti];
+            let reg = alvo.ler(ri).ok()?;
+            Some((json!({ "tabela": alvo.nome, "indice": ri, "id": id, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) }), reg))
+        };
+        let ausente = |id: i64| json!({ "ausente": true, "id": id });
+        let paginas = indices_da_lista(|p| r.contains_key(&format!("pages_{p}_page_title")));
+        match tabela {
+            "NPC_SELL_SERVICE" => {
+                let mut lista = Vec::new();
+                for &p in &paginas {
+                    let mut itens = Vec::new();
+                    for g in indices_da_lista(|g| r.contains_key(&format!("pages_{p}_goods_{g}_id"))) {
+                        let id = inteiro_do_campo(&r, &format!("pages_{p}_goods_{g}_id")).unwrap_or(0);
+                        if id <= 0 {
+                            continue;
+                        }
+                        let (refe, preco) = match achar("ESSENCE", id) {
+                            Some((v, reg)) => (v, inteiro_do_campo(&reg, "price")),
+                            None => (ausente(id), None),
+                        };
+                        itens.push(json!({ "posicao": g, "item": refe, "preco": preco,
+                            "contribuicao": inteiro_do_campo(&r, &format!("pages_{p}_goods_{g}_contrib_cost")) }));
+                    }
+                    lista.push(json!({ "pagina": p, "titulo": texto_do_campo(&r, &format!("pages_{p}_page_title")), "itens": itens }));
+                }
+                Ok(json!({ "tipo": "loja", "tabela": tabela, "indice": indice, "nome": nome_do_registro(t, indice), "paginas": lista }))
+            }
+            "NPC_MAKE_SERVICE" => {
+                let mut lista = Vec::new();
+                for &p in &paginas {
+                    let mut receitas = Vec::new();
+                    for g in indices_da_lista(|g| r.contains_key(&format!("pages_{p}_id_goods_{g}"))) {
+                        let id = inteiro_do_campo(&r, &format!("pages_{p}_id_goods_{g}")).unwrap_or(0);
+                        if id <= 0 {
+                            continue;
+                        }
+                        let Some((refe, rec)) = achar("RECIPE", id) else {
+                            receitas.push(json!({ "posicao": g, "receita": ausente(id), "faz": [], "materiais": [] }));
+                            continue;
+                        };
+                        let mut faz = Vec::new();
+                        for k in indices_da_lista(|k| rec.contains_key(&format!("targets_{k}_id_to_make"))) {
+                            let alvo = inteiro_do_campo(&rec, &format!("targets_{k}_id_to_make")).unwrap_or(0);
+                            if alvo > 0 {
+                                faz.push(json!({ "item": achar("ESSENCE", alvo).map(|x| x.0).unwrap_or_else(|| ausente(alvo)),
+                                    "probabilidade": numero_do_campo(&rec, &format!("targets_{k}_probability")) }));
+                            }
+                        }
+                        let mut materiais = Vec::new();
+                        for k in indices_da_lista(|k| rec.contains_key(&format!("materials_{k}_id"))) {
+                            let m = inteiro_do_campo(&rec, &format!("materials_{k}_id")).unwrap_or(0);
+                            if m > 0 {
+                                materiais.push(json!({ "item": achar("ESSENCE", m).map(|x| x.0).unwrap_or_else(|| ausente(m)),
+                                    "quantidade": inteiro_do_campo(&rec, &format!("materials_{k}_num")) }));
+                            }
+                        }
+                        receitas.push(json!({ "posicao": g, "receita": refe, "faz": faz, "materiais": materiais,
+                            "preco": inteiro_do_campo(&rec, "price"), "nivel": inteiro_do_campo(&rec, "recipe_level"),
+                            "quantidade": inteiro_do_campo(&rec, "num_to_make"), "duracao": numero_do_campo(&rec, "duration") }));
+                    }
+                    lista.push(json!({ "pagina": p, "titulo": texto_do_campo(&r, &format!("pages_{p}_page_title")), "receitas": receitas }));
+                }
+                Ok(json!({ "tipo": "forja", "tabela": tabela, "indice": indice, "nome": nome_do_registro(t, indice),
+                    "habilidade_de_producao": inteiro_do_campo(&r, "id_make_skill"), "paginas": lista }))
+            }
+            "NPC_TRANSMIT_SERVICE" => {
+                let (_, do_realm, do_rascunho) = self.item_do_realm(gov, versao, ITEM_DOS_TELEPORTES.to_string(), rascunho).await?;
+                let w = PontosDoMundo::load_from_bytes(&do_rascunho.map(|(_, b)| b).unwrap_or(do_realm)).map_err(|x| anyhow::anyhow!("{x}"))?;
+                let nomes_dos_destinos: HashMap<i32, String> = match self.item_do_cliente(gov, versao, DESTINOS_NO_CLIENTE, rascunho).await {
+                    Ok(x) => TxtDosDestinos::ler(&x.3).map(|t| t.destinos.into_iter().map(|d| (d.id, d.nome)).collect()).unwrap_or_default(),
+                    Err(_) => HashMap::new(),
+                };
+                let mapas: Vec<crate::mapas::Mapa> = match self.arquivo_do_cliente(gov, versao, "configs\\instance.txt").await {
+                    Ok(b) => crate::mapas::ler_instancias(&crate::mapas::texto_do_arquivo(&b)).unwrap_or_default(),
+                    Err(_) => vec![],
+                };
+                let n = inteiro_do_campo(&r, "num_targets").unwrap_or(0).max(0) as usize;
+                let mut destinos = Vec::new();
+                for (ordem, k) in indices_da_lista(|k| r.contains_key(&format!("targets_{k}_idTarget"))).into_iter().enumerate() {
+                    let id = inteiro_do_campo(&r, &format!("targets_{k}_idTarget")).unwrap_or(0);
+                    if id <= 0 {
+                        continue;
+                    }
+                    let ponto = i32::try_from(id).ok().and_then(|i| w.get(i));
+                    let mapa = ponto.and_then(|p| mapas.iter().find(|m| m.id == p.mundo));
+                    destinos.push(json!({
+                        "posicao": k, "id": id, "nome": nomes_dos_destinos.get(&(id as i32)), "conta": ordem < n,
+                        "preco": inteiro_do_campo(&r, &format!("targets_{k}_fee")), "nivel": inteiro_do_campo(&r, &format!("targets_{k}_required_level")),
+                        "mundo": ponto.map(|p| p.mundo), "mapa": mapa.map(|m| json!({ "id": m.id, "caminho": m.caminho, "nome": m.nome })),
+                        "pos": ponto.map(|p| vetor_json(&p.pos)), "existe_no_servidor": ponto.is_some(),
+                    }));
+                }
+                Ok(json!({ "tipo": "teleporte", "tabela": tabela, "indice": indice, "nome": nome_do_registro(t, indice), "num_targets": n, "destinos": destinos }))
+            }
+            _ => bail!("{tabela} não tem tela própria (loja, forja e teleporte têm)"),
+        }
     }
 }

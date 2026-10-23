@@ -736,6 +736,15 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .recursos-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
 .recursos-tabela th, .recursos-tabela td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
 .recursos-tabela th { color: var(--texto-3); font-weight: 500; }
+/* B365: telas próprias do Estúdio (loja em grade, forja com receitas). */
+.estudio-grade-loja { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
+.estudio-cartao { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
+.estudio-cartao:hover:not(:disabled) { border-color: var(--texto-3); }
+.estudio-receita { border-bottom: 1px solid var(--borda); padding: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+/* B365: diferenças lado a lado na publicação. */
+.recursos-diferencas td { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-word; }
+.recursos-diferencas .recursos-antes { color: var(--vermelho); }
+.recursos-diferencas .recursos-depois { color: var(--verde); }
 .recursos-caminho { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
 .recursos-historico-item { border-bottom: 1px solid var(--borda); padding: 8px 0; }
 .recursos-historico-item summary { cursor: pointer; }
