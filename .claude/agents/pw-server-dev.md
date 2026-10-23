@@ -88,6 +88,12 @@ Etapas são as fases do trabalho (analisar, implementar, testar, documentar), n�
 chamada de ferramenta. Quando uma etapa sair cara, diga **por quê** em uma linha — quase
 sempre é leitura de fonte C++, e é aí que dá para melhorar na próxima.
 
+**Janela de contexto e limites do plano (pedido de 2026-10-23).** Logo abaixo da tabela de consumo, chame
+`mcp__ccd_session_mgmt__get_usage` (carregar com `ToolSearch` se estiver adiado) e acrescente uma linha:
+`Contexto: <usados>/<janela> (<%>; compacta em <%>) · Plano: 5 h <%> (renova em …) · semana <%> (renova em …)`.
+É o mesmo número do `/context` e do cartão de uso do app. Se a ferramenta não responder, diga "indisponível" —
+nunca estime.
+
 **Rebuild do Docker é caro em tempo, não em tokens** — desde que a saída seja filtrada. Se
 ainda assim for pesado, ofereça ao Murillo rodar ele mesmo, com o comando pronto.
 
