@@ -62,7 +62,7 @@ async function recarregarVersao() {
   desenharHistorico();
 }
 
-/* B365: diferenças lado a lado de um item (onde · campo · antes · depois), a partir do `resumo` que o Estúdio grava:
+/* B365: diferenças lado a lado de um item (onde · campo · antes · depois), a partir do `resumo` que os Editores gravam:
    `campos` [{tabela, id, campo, antes, depois}] e `registros` do elements (spec 07 §6b) e `mudancas` dos outros
    editores (`campos` {nome: [antes, depois]} ou lista de nomes, `antes_*`/`depois`, o resto como está). */
 function linhasDeDiferenca(resumo) {
@@ -235,7 +235,7 @@ async function publicarRecursos() {
   const obrigar = elemento("recursos-obrigar").checked;
   const texto = `Publica a versão ${atual.atual + 1} do cliente ${recursos.versao} com ${ids.map((i) => `#${i}`).join(", ")}. ` +
     (obrigar ? "O launcher vai exigir a atualização antes de jogar." : "Quem estiver na versão anterior ainda pode jogar.") +
-    " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los (aviso no topo do Estúdio).";
+    " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los (aviso no topo dos Editores).";
   // B365: o total de diferenças registradas nos rascunhos escolhidos (o detalhe lado a lado fica em cada item).
   const escolhidos = recursos.rascunhos.filter((r) => ids.includes(r.id));
   const total = escolhidos.reduce((s, r) => s + r.lista.reduce((t, i) => t + linhasDeDiferenca(i.resumo).length, 0), 0);
@@ -246,7 +246,7 @@ async function publicarRecursos() {
     recursos.selecionados.clear();
     elemento("recursos-obrigar").checked = false;
     return r;
-  }, "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo do Estúdio.");
+  }, "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo dos Editores.");
 }
 
 /* B333: canal de teste do GM — os rascunhos marcados, por cima da versão atual, sem publicar. O painel mostra o

@@ -55,10 +55,10 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat, voo = null) {
       b.addEventListener("click", async () => {
         try {
           await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, origem: origem.value, nova: d.pedido, base: base.value || undefined }) });
-          alerta("ok", "Estúdio", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
+          alerta("ok", "Editores", `Ação ${d.pedido} criada no rascunho.`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
           abrirModelo(caminho, habitat, voo);
-        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { alerta("erro", "Editores", erro.message); }
       });
       td.append(origem, base, b);
       // B285: copiar a ação de outro .ecm com o mesmo esqueleto (e mesma versão de arquivo) que a tenha.
@@ -84,13 +84,13 @@ function tabelaDeDiagnostico(f, caminho, titulo, lista, habitat, voo = null) {
           copiar.addEventListener("click", async () => {
             try {
               await api(rotaDeModelos("/acao", { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify({ caminho, de: sel.value, origem: d.pedido, nova: d.pedido }) });
-              alerta("ok", "Estúdio", `Ação ${d.pedido} copiada de ${sel.value.split("\\").pop()} no rascunho.`, { toast: true });
+              alerta("ok", "Editores", `Ação ${d.pedido} copiada de ${sel.value.split("\\").pop()} no rascunho.`, { toast: true });
               if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
               abrirModelo(caminho, habitat, voo);
-            } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+            } catch (erro) { alerta("erro", "Editores", erro.message); }
           });
           doar.replaceWith(criar("span", "texto-suave", `${r.total} doador(es): `), sel, copiar);
-        } catch (erro) { doar.disabled = false; doar.textContent = "Copiar de outro modelo…"; alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { doar.disabled = false; doar.textContent = "Copiar de outro modelo…"; alerta("erro", "Editores", erro.message); }
       });
       td.appendChild(doar);
       tr.appendChild(td);
@@ -113,7 +113,7 @@ function botaoDeImportar(smd, destino) {
     const f = arquivo.files[0];
     arquivo.value = "";
     if (!f) return;
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores antes de importar.", { toast: true }); return; }
     try {
       const resp = await fetch(rotaDeModelos("/importar", { rascunho: estudio.rascunho, smd, destino }), {
         method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
@@ -123,9 +123,9 @@ function botaoDeImportar(smd, destino) {
       if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível importar.");
       const r = dados.resultado || {};
       const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
-      alerta("ok", "Estúdio", `${destino.split("\\").pop()} substituída no rascunho: ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos, texturas ${(r.texturas || []).join(", ") || "(nenhuma)"}.${avisos}`);
+      alerta("ok", "Editores", `${destino.split("\\").pop()} substituída no rascunho: ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos, texturas ${(r.texturas || []).join(", ") || "(nenhuma)"}.${avisos}`);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   return rotulo;
 }
@@ -147,7 +147,7 @@ function controleDePeleNova(smd) {
     const f = arquivo.files[0];
     arquivo.value = "";
     if (!f) return;
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores antes de importar.", { toast: true }); return; }
     let n = nome.value.trim() || f.name.replace(/\.glb$/i, "");
     if (!/\.ski$/i.test(n)) n += ".ski";
     try {
@@ -159,9 +159,9 @@ function controleDePeleNova(smd) {
       if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível criar a pele.");
       const r = dados.resultado || {};
       const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
-      alerta("ok", "Estúdio", `${r.pele} criada e ligada ao modelo no rascunho (${r.peles_do_modelo} peles): ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos.${avisos}`);
+      alerta("ok", "Editores", `${r.pele} criada e ligada ao modelo no rascunho (${r.peles_do_modelo} peles): ${r.malhas} malhas, ${r.vertices} vértices, ${r.ossos} ossos.${avisos}`);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   caixa.append(nome, " ", rotulo);
   return caixa;
@@ -180,7 +180,7 @@ function botaoDeAcoes(smd) {
     const f = arquivo.files[0];
     arquivo.value = "";
     if (!f) return;
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores antes de importar.", { toast: true }); return; }
     try {
       const resp = await fetch(rotaDeModelos("/acoes_glb", { rascunho: estudio.rascunho, smd }), {
         method: "POST", credentials: "same-origin", body: await f.arrayBuffer(),
@@ -191,9 +191,9 @@ function botaoDeAcoes(smd) {
       const r = dados.resultado || {};
       const lista = (r.acoes || []).map((a) => `${a.nome} (${a.acao}, ${a.quadros} quadros a ${a.fps}/s)`).join(", ");
       const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
-      alerta("ok", "Estúdio", `Ações no rascunho: ${lista}. O modelo agora tem ${r.acoes_do_modelo} ações.${avisos}`);
+      alerta("ok", "Editores", `Ações no rascunho: ${lista}. O modelo agora tem ${r.acoes_do_modelo} ações.${avisos}`);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   return rotulo;
 }
@@ -254,7 +254,7 @@ async function abrirModelo(caminho, habitat = null, voo = null, extras = null) {
     });
     perfil.append(criar("span", "texto-suave", "Perfil: "), sel);
     ficha.appendChild(perfil);
-    if (!estudio.rascunho) ficha.appendChild(criar("div", "texto-suave", "Escolha um rascunho no alto do Estúdio para corrigir as ações que faltam."));
+    if (!estudio.rascunho) ficha.appendChild(criar("div", "texto-suave", "Escolha um rascunho no alto dos Editores para corrigir as ações que faltam."));
     if (f.diagnostico_de_voo) {
       const d = f.diagnostico_de_voo;
       const enc = d.encaixe_presente === null || d.encaixe_presente === undefined
@@ -348,7 +348,7 @@ async function carregarGlb(tela, caminho, acao, link) {
     const resp = await fetch(rotaDeModelos("/glb", q), { credentials: "same-origin" });
     if (!resp.ok) throw new Error(`GLB: HTTP ${resp.status}${resp.status === 400 ? " — " + ((await resp.json().catch(() => ({}))).detail || "") : ""}`);
     desenharGlb(tela, await resp.arrayBuffer());
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  } catch (erro) { alerta("erro", "Editores", erro.message); }
 }
 
 /* ---- visualizador WebGL mínimo: GLB → buffers → Lambert + órbita; esqueleto e animação na CPU (B276) ---- */
@@ -597,9 +597,9 @@ function desenharGlb(tela, buf) {
     const f = arquivo.files[0];
     arquivo.value = "";
     if (!f) return;
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio antes de importar.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores antes de importar.", { toast: true }); return; }
     const t = titulo.value.trim() || f.name.replace(/\.glb$/i, "");
-    if (!pasta.value.trim()) { alerta("aviso", "Estúdio", "Informe a pasta (dentro de models\\).", { toast: true }); return; }
+    if (!pasta.value.trim()) { alerta("aviso", "Editores", "Informe a pasta (dentro de models\\).", { toast: true }); return; }
     try {
       const q = { rascunho: estudio.rascunho, pasta: pasta.value.trim(), titulo: t };
       if (molde.value.trim()) q.molde = molde.value.trim();
@@ -611,9 +611,9 @@ function desenharGlb(tela, buf) {
       if (!resp.ok) throw new Error(dados?.mensagem || dados?.detail || "Não foi possível criar o modelo.");
       const r = dados.resultado || {};
       const avisos = (r.relatorio || []).length ? ` Relatório: ${r.relatorio.join(" · ")}` : "";
-      alerta("ok", "Estúdio", `${r.modelo} e ${r.ecm} (molde ${r.molde_do_ecm}) criados no rascunho: ${r.ossos} ossos, ${r.ganchos} ganchos, ${r.malhas} malhas, ${(r.acoes || []).length} ações, ${(r.texturas_gravadas || []).length} texturas, ${(r.arquivos || []).length} arquivos.${avisos}`);
+      alerta("ok", "Editores", `${r.modelo} e ${r.ecm} (molde ${r.molde_do_ecm}) criados no rascunho: ${r.ossos} ossos, ${r.ganchos} ganchos, ${r.malhas} malhas, ${(r.acoes || []).length} ações, ${(r.texturas_gravadas || []).length} texturas, ${(r.arquivos || []).length} arquivos.${avisos}`);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   linha.append(pasta, " ", titulo, " ", molde, " ", rotulo);
   elemento("modelos-busca").parentElement.after(linha);

@@ -53,17 +53,17 @@ async function abrirHabilidade(id) {
     const b = criar("button", "botao botao-pequeno", "Nova habilidade (cópia desta)");
     b.type = "button";
     b.addEventListener("click", async () => {
-      if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+      if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
       const corpo = { ensinar: ensinar.checked };
       if (nomeNovo.value.trim()) corpo.nome = nomeNovo.value.trim();
       if (idNovo.value.trim()) corpo.novo = Number(idNovo.value);
       try {
         const r = await api(rotaDeHabilidades(`/${f.id}/nova`, { rascunho: estudio.rascunho }), { method: "POST", body: JSON.stringify(corpo) });
         const ens = Array.isArray(r.ensinada_por) ? ` Ensinada pelos serviços ${r.ensinada_por.join(", ")}.` : "";
-        alerta("ok", "Estúdio", `Habilidade ${r.id} criada no rascunho (${r.arquivos.join(", ")}).${ens}`);
+        alerta("ok", "Editores", `Habilidade ${r.id} criada no rascunho (${r.arquivos.join(", ")}).${ens}`);
         if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
         abrirHabilidade(r.id);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     const nova = criar("div");
     nova.append(nomeNovo, " ", idNovo, " ", rotulo, " ", b);
@@ -80,13 +80,13 @@ async function abrirHabilidade(id) {
   const salvar = criar("button", "botao botao-pequeno", "Salvar texto no rascunho");
   salvar.type = "button";
   salvar.addEventListener("click", async () => {
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
     try {
       // O cliente lê o texto como está; as quebras do arquivo são CRLF.
       await api(rotaDeHabilidades(`/${f.id}/texto`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ nome: nome.value, descricao: desc.value.replace(/\r?\n/g, "\r\n") }) });
-      alerta("ok", "Estúdio", `Texto da habilidade ${f.id} no rascunho.`, { toast: true });
+      alerta("ok", "Editores", `Texto da habilidade ${f.id} no rascunho.`, { toast: true });
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   const caixa = criar("div");
   caixa.append(criar("div", "texto-suave", `Nome (${f.skillstr}, ficha ${f.id * 10}):`), nome,
@@ -151,7 +151,7 @@ async function abrirHabilidade(id) {
       const salvarN = criar("button", "botao botao-pequeno", "Salvar números no rascunho");
       salvarN.type = "button";
       salvarN.addEventListener("click", async () => {
-        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
         const corpo = {};
         for (const [k, es] of Object.entries(entradas)) {
           if (es.length !== n) continue; // campo com algum nível sem número fica de fora
@@ -159,10 +159,10 @@ async function abrirHabilidade(id) {
         }
         try {
           await api(rotaDeHabilidades(`/${f.id}/numeros`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
-          alerta("ok", "Estúdio", `Números da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
+          alerta("ok", "Editores", `Números da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
           abrirHabilidade(f.id);
-        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { alerta("erro", "Editores", erro.message); }
       });
       ficha.appendChild(salvarN);
       // B325: o mesmo número no servidor e no cliente (habilidades.pwsk), num pedido só — os campos que existem nos dois.
@@ -171,19 +171,19 @@ async function abrirHabilidade(id) {
       salvarD.type = "button";
       salvarD.title = "Grava os mesmos números no catalogo\\habilidades.json (servidor) e no habilidades.pwsk (cliente): " + NOS_DOIS.join(", ");
       salvarD.addEventListener("click", async () => {
-        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
         const corpo = {};
         for (const [k, es] of Object.entries(entradas)) {
           if (!NOS_DOIS.includes(k) || es.length !== n) continue;
           corpo[k] = es.map((e) => Math.round(Number(e.value)));
         }
-        if (!Object.keys(corpo).length) { alerta("aviso", "Estúdio", "Nenhum campo que exista nos dois.", { toast: true }); return; }
+        if (!Object.keys(corpo).length) { alerta("aviso", "Editores", "Nenhum campo que exista nos dois.", { toast: true }); return; }
         try {
           await api(rotaDeHabilidades(`/${f.id}/numeros_nos_dois`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
-          alerta("ok", "Estúdio", `Habilidade ${f.id}: ${Object.keys(corpo).join(", ")} no servidor e no cliente (rascunho).`, { toast: true });
+          alerta("ok", "Editores", `Habilidade ${f.id}: ${Object.keys(corpo).join(", ")} no servidor e no cliente (rascunho).`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
           abrirHabilidade(f.id);
-        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { alerta("erro", "Editores", erro.message); }
       });
       ficha.appendChild(salvarD);
     }
@@ -198,12 +198,12 @@ async function abrirHabilidade(id) {
     chk.type = "checkbox";
     chk.checked = !!s[flag];
     chk.addEventListener("change", async () => {
-      if (!estudio.rascunho) { chk.checked = !chk.checked; alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+      if (!estudio.rascunho) { chk.checked = !chk.checked; alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
       try {
         await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [flag]: chk.checked }) });
-        alerta("ok", "Estúdio", `${flag} = ${chk.checked} no rascunho.`, { toast: true });
+        alerta("ok", "Editores", `${flag} = ${chk.checked} no rascunho.`, { toast: true });
         if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-      } catch (erro) { chk.checked = !chk.checked; alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { chk.checked = !chk.checked; alerta("erro", "Editores", erro.message); }
     });
     caixaFlag.append(chk, ` ${flag} — o GS roda ${r === "no_alvo" ? "o efeito no alvo (ou se a habilidade é de bênção/maldição)" : "o efeito em quem lança"} só com esta flag`);
     if (!Array.isArray(s[r]) || !s[r].length) {
@@ -255,13 +255,13 @@ async function abrirHabilidade(id) {
       const salvarR = criar("button", "botao botao-pequeno", `Salvar ${r} no rascunho`);
       salvarR.type = "button";
       salvarR.addEventListener("click", async () => {
-        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
         try {
           await api(rotaDeHabilidades(`/${f.id}/roteiro`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ [r]: passos.map((p) => [p.quem, p.setter, p.expr]) }) });
-          alerta("ok", "Estúdio", `Roteiro ${r} da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
+          alerta("ok", "Editores", `Roteiro ${r} da habilidade ${f.id} no rascunho (catalogo\\habilidades.json).`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
           abrirHabilidade(f.id);
-        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { alerta("erro", "Editores", erro.message); }
       });
       caixa.append(sel, mais, salvarR, criar("div", "texto-suave", "Variáveis: L (nível), P_* (quem lança), V_* (alvo), S_* (golpe da habilidade) — só as que algum roteiro do original usa; números, + − × ÷, comparações, && ||, ?:, INT(...). Passo novo: quem = V e um setter que o GS porta; Probability (0–100), Time (ms), Ratio, Value, Amount e Showicon valem para o efeito seguinte."));
     };
@@ -317,14 +317,14 @@ async function abrirHabilidade(id) {
       const salvarC = criar("button", "botao botao-pequeno", "Salvar números do cliente no rascunho");
       salvarC.type = "button";
       salvarC.addEventListener("click", async () => {
-        if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+        if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
         const corpo = Object.fromEntries(Object.entries(ents).map(([k, es]) => [k, es.map((e) => Number(e.value))]));
         try {
           await api(rotaDeHabilidades(`/${f.id}/numeros_do_cliente`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
-          alerta("ok", "Estúdio", `Números do cliente da habilidade ${f.id} no rascunho (elementskill.dll).`, { toast: true });
+          alerta("ok", "Editores", `Números do cliente da habilidade ${f.id} no rascunho (elementskill.dll).`, { toast: true });
           if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
           abrirHabilidade(f.id);
-        } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+        } catch (erro) { alerta("erro", "Editores", erro.message); }
       });
       ficha.appendChild(salvarC);
     }
@@ -386,15 +386,15 @@ function desenharDescricaoDoCliente(f, d) {
   const b = criar("button", "botao botao-pequeno", "Salvar números da descrição no rascunho");
   b.type = "button";
   b.addEventListener("click", async () => {
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
     // Só o que mudou vai; o resto fica `null` (mantém).
     const niveis = entradas.map((linha) => linha.map((e) => (e && e.value !== e.dataset.original ? Number(e.value) : null)));
     try {
       await api(rotaDeHabilidades(`/${f.id}/descricao_numeros`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify({ niveis }) });
-      alerta("ok", "Estúdio", `Descrição da habilidade ${f.id} no rascunho (habilidades.pwsk).`, { toast: true });
+      alerta("ok", "Editores", `Descrição da habilidade ${f.id} no rascunho (habilidades.pwsk).`, { toast: true });
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
       abrirHabilidade(f.id);
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   ficha.append(b, criar("div", "texto-suave", "Mudar o texto (Nome/Descrição acima) muda as colunas: cada %d/%.1f do texto lê o próximo número. Vale para o jogador depois de publicar e ele atualizar pelo launcher."));
 }
@@ -433,15 +433,15 @@ function desenharAlcanceDoCliente(f, al) {
   const b = criar("button", "botao botao-pequeno", "Salvar alcance no rascunho");
   b.type = "button";
   b.addEventListener("click", async () => {
-    if (!estudio.rascunho) { alerta("aviso", "Estúdio", "Escolha um rascunho no alto do Estúdio.", { toast: true }); return; }
+    if (!estudio.rascunho) { alerta("aviso", "Editores", "Escolha um rascunho no alto dos Editores.", { toast: true }); return; }
     const corpo = { servidor: servidor.checked };
     for (const k of ["a", "b", "c"]) corpo[k] = col[k].map((e) => Number(e.value));
     try {
       await api(rotaDeHabilidades(`/${f.id}/alcance`, { rascunho: estudio.rascunho }), { method: "PUT", body: JSON.stringify(corpo) });
-      alerta("ok", "Estúdio", `Alcance da habilidade ${f.id} no rascunho${servidor.checked ? " (cliente e servidor)" : " (cliente)"}.`, { toast: true });
+      alerta("ok", "Editores", `Alcance da habilidade ${f.id} no rascunho${servidor.checked ? " (cliente e servidor)" : " (cliente)"}.`, { toast: true });
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
       abrirHabilidade(f.id);
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   ficha.append(rotulo, b);
 }

@@ -13,5 +13,10 @@
 !web-admin/backend/painel/**
 !web-admin/backend/static/
 !web-admin/backend/static/**
+# B366: o Estúdio entra pelo código-fonte (estágio Node); a saída local da build e o node_modules ficam fora.
+!web-admin/estudio/
+!web-admin/estudio/**
+web-admin/estudio/node_modules/
+web-admin/backend/static/estudio/
 **/__pycache__/
 **/target/

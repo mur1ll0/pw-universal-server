@@ -1,0 +1,85 @@
+/* Painel de administração — design próprio, sem dependências (CSP: só 'self'). */
+:root {
+  --fundo: #0b0f14;
+  --fundo-2: #10161d;
+  --superficie: #141b23;
+  --superficie-2: #1a232d;
+  --borda: #232e3a;
+  --borda-forte: #2f3d4c;
+  --texto: #e8edf2;
+  --texto-2: #9aa7b4;
+  --texto-3: #6b7886;
+  --ouro: #e3b65b;
+  --ouro-forte: #f0c66e;
+  --ouro-suave: rgba(227, 182, 91, 0.12);
+  --verde: #3ecf8e;
+  --verde-suave: rgba(62, 207, 142, 0.12);
+  --vermelho: #f2696b;
+  --vermelho-suave: rgba(242, 105, 107, 0.12);
+  --azul: #6aa7ff;
+  --azul-suave: rgba(106, 167, 255, 0.12);
+  --raio: 10px;
+  --raio-g: 14px;
+  --sombra: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+  --fonte: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --fonte-numero: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+  --texto-erro: #ffb3b4;
+  --texto-info: #b9d4ff;
+  --barra-topo: rgba(11, 15, 20, .85);
+  color-scheme: dark;
+}
+
+/* Tema claro (B218): segue o sistema, ou o botão do topo (`data-tema` no <html>, lembrado no
+   navegador). Células de item, dica e ícones do jogo continuam escuros, como as janelas do cliente. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema="escuro"]) {
+    --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+    --borda: #ddd5c4; --borda-forte: #c9bea8;
+    --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+    --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176, 125, 26, .12);
+    --verde: #18895a; --verde-suave: rgba(24, 137, 90, .12);
+    --vermelho: #c9393b; --vermelho-suave: rgba(201, 57, 59, .1);
+    --azul: #2f6fd1; --azul-suave: rgba(47, 111, 209, .1);
+    --sombra: 0 1px 2px rgba(60, 45, 20, .08), 0 8px 24px rgba(60, 45, 20, .08);
+    --texto-erro: #9f2224; --texto-info: #1f4f9a; --barra-topo: rgba(244, 241, 234, .88);
+    color-scheme: light;
+  }
+}
+:root[data-tema="claro"] {
+  --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+  --borda: #ddd5c4; --borda-forte: #c9bea8;
+  --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+  --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176, 125, 26, .12);
+  --verde: #18895a; --verde-suave: rgba(24, 137, 90, .12);
+  --vermelho: #c9393b; --vermelho-suave: rgba(201, 57, 59, .1);
+  --azul: #2f6fd1; --azul-suave: rgba(47, 111, 209, .1);
+  --sombra: 0 1px 2px rgba(60, 45, 20, .08), 0 8px 24px rgba(60, 45, 20, .08);
+  --texto-erro: #9f2224; --texto-info: #1f4f9a; --barra-topo: rgba(244, 241, 234, .88);
+  color-scheme: light;
+}
+
+/* ---- Estúdio (B366): base própria; os tokens acima são os do painel (`static/painel.css`). ---- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; background: var(--fundo); color: var(--texto); font-family: var(--fonte); font-size: 14px; }
+a { color: var(--azul); }
+h1, h2, h3 { font-weight: 600; }
+.botao { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--borda-forte);
+  background: var(--superficie-2); color: var(--texto); font: inherit; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.botao:hover:not(:disabled) { border-color: var(--ouro); }
+.botao:disabled { opacity: .45; cursor: not-allowed; }
+.botao.primario { background: var(--ouro); border-color: var(--ouro); color: #16120a; font-weight: 600; }
+.botao.perigo { color: var(--vermelho); }
+.botao.fantasma { background: transparent; border-color: transparent; }
+.botao.pequeno { height: 28px; padding: 0 8px; font-size: 13px; }
+.campo { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--borda-forte); background: var(--fundo-2); color: var(--texto); font: inherit; min-width: 0; }
+textarea.campo { height: auto; padding: 8px 10px; resize: vertical; }
+.campo:focus, .botao:focus-visible { outline: 2px solid var(--ouro-suave); border-color: var(--ouro); }
+.suave { color: var(--texto-2); }
+.mini { font-size: 12px; color: var(--texto-3); }
+.linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.erro { color: var(--texto-erro); }
+.caixa { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio-g); padding: 14px 16px; }
+.caixa > h3 { margin: 0 0 10px; font-size: 14px; color: var(--texto-2); text-transform: uppercase; letter-spacing: .04em; }
+.grade-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px 12px; }
+.grade-campos label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-2); }
+.grade-campos .alterado { border-color: var(--ouro); background: var(--ouro-suave); }

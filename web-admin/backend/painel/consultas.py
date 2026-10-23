@@ -1,7 +1,7 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
 from typing import Literal, Optional
 from fastapi import HTTPException, Path, Query, Request, Response
-from .icones import png_do_icone
+from .icones import buscar_icones, png_do_icone
 from .dica import TIPO_HABILIDADE_DO_ITEM, catalogo_de_efeitos, habilidade_do_efeito, linhas_da_dica, texto_do_efeito
 from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades, tipos_de_efeito
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
@@ -43,6 +43,16 @@ def registrar_consultas(app):
         except CanalIndisponivel as erro:
             return {"realm_id": realm_id, "estado": "desconhecido", "jogadores_online": None,
                     "mapas": [], "aviso": str(erro)}
+
+    @app.get("/api/icones/{sexo}")
+    async def buscar_icones_do_atlas(sexo: str = Path(..., pattern="^(m|f)$"),
+                                     busca: str = Query("", max_length=64), limite: int = Query(60, ge=1, le=200)):
+        """B366: nomes do atlas de ícones de item (só leitura), para o Estúdio escolher um ícone existente."""
+        try:
+            total, achados = buscar_icones(sexo, busca, limite)
+        except (OSError, ValueError):
+            raise HTTPException(503, "Atlas de ícones indisponível.")
+        return {"total": total, "icones": [{"arquivo": n, "hex": h} for n, h in achados]}
 
     @app.get("/api/icones/{sexo}/{titulo}.png")
     async def icone(sexo: str = Path(..., pattern="^(m|f|habilidade|mascote)$"),

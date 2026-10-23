@@ -20,7 +20,7 @@ const PAGINAS = {
   rates: ["Rates", ""],
   templates: ["Templates", ""],
   recursos: ["Recursos do cliente", "Versões do cliente distribuídas pelo launcher"],
-  estudio: ["Estúdio", ""],
+  estudio: ["Editores", ""],
 };
 const CAMPOS_RATES = [["exp", "rate-exp"], ["sp", "rate-sp"], ["drop", "rate-drop"], ["moedas", "rate-moedas"]];
 const mesmasRates = (a, b) => !!a && !!b && CAMPOS_RATES.every(([c]) => Math.abs(Number(a[c]) - Number(b[c])) < 0.001);
@@ -432,6 +432,8 @@ function selecionar(id, irPara = "realm") {
   });
   elemento("grupo-realm").hidden = !estado.selecionado;
   elemento("rotulo-realm-nav").textContent = estado.selecionado?.versao || "";
+  // B366: o Estúdio abre no realm escolhido (a versão do realm decide o layout).
+  elemento("nav-estudio").href = `/static/estudio/index.html#/?realm=${encodeURIComponent(estado.selecionado?.id || "")}`;
   if (!estado.selecionado) { mudarPagina(estado.pagina === "contas" ? "contas" : "inicio"); return; }
   renderizarRealm();
   if (irPara) mudarPagina(irPara);
@@ -686,6 +688,9 @@ const ICONES = {
   bloqueio: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M5.6 5.6l12.8 12.8",
   sair: "M10 17l5-5-5-5M15 12H3M14 4h6v16h-6",
   tema: "M12 3a9 9 0 1 0 9 9a7 7 0 0 1-9-9z",
+  // B366: Editores (controles deslizantes) e Estúdio (paleta), antes os dois com a espada dos Templates.
+  editores: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
+  estudio: "M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3zM7.5 11.5h.01M10 7.5h.01M14.5 7.5h.01",
 };
 function icone(nome, classe = "ico") {
   const caixa = criar("span", classe);
@@ -2901,6 +2906,25 @@ async function executarComando(recuperar, tipo = "trocar_senha") {
 
 /* ---------------- Carga e sessão ---------------- */
 
+/* B366: link direto do Estúdio para os Editores — `/#editores?realm=<id>&tabela=<T>&indice=<i>&rascunho=<n>`.
+   Lido uma vez, depois da primeira carga dos realms (precisa da sessão). */
+let linkDiretoDosEditores = (() => {
+  const m = location.hash.match(/^#editores\?(.*)$/);
+  return m ? new URLSearchParams(m[1]) : null;
+})();
+
+function abrirLinkDireto() {
+  const q = linkDiretoDosEditores;
+  if (!q) return;
+  linkDiretoDosEditores = null;
+  history.replaceState(null, "", location.pathname);
+  const realm = q.get("realm");
+  if (!estado.realms.some((r) => r.id === realm)) { aviso(`Realm ${realm} não encontrado.`); return; }
+  // `carregarEstudio` (static/estudio.js) aplica o pedido: rascunho, tabela e ficha.
+  estudio.pedido = { tabela: q.get("tabela") || "", indice: Number(q.get("indice")), rascunho: Number(q.get("rascunho")) || null };
+  selecionar(realm, "estudio");
+}
+
 async function atualizar() {
   if (estado.carregando) return;
   estado.carregando = true;
@@ -2918,6 +2942,7 @@ async function atualizar() {
     if (estado.selecionado) renderizarRealm();
     elemento("ultima-atualizacao").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
     consultarOnline(estado.geracao);
+    abrirLinkDireto();
     if (estado.pagina === "contas") buscarContas();
     else if (!elemento("nome-conta").value) buscarTotalContas();
     if (estado.pagina === "personagens") {
@@ -3072,7 +3097,8 @@ ligarFichaDoPersonagem();
 ligarTemplates();
 elemento("criacao-conta").addEventListener("submit", (evento) => { evento.preventDefault(); executarComando(false, "criar_conta"); });
 elemento("recuperar-comando").addEventListener("click", () => { pararAcompanhamento(); executarComando(true); });
-document.querySelectorAll(".nav").forEach((botao) => botao.addEventListener("click", () => mudarPagina(botao.dataset.pagina)));
+// B366: o Estúdio (Svelte) é uma página à parte (`static/estudio/`): o link não troca de página aqui.
+document.querySelectorAll(".nav[data-pagina]").forEach((botao) => botao.addEventListener("click", () => mudarPagina(botao.dataset.pagina)));
 document.querySelectorAll(".acao, .voltar").forEach((botao) => botao.addEventListener("click", () => trocarAba(botao.dataset.aba)));
 // Clique fora do popup fecha (exceto enquanto o alerta está aberto por cima).
 document.addEventListener?.("mousedown", (evento) => {

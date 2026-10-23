@@ -25,11 +25,24 @@ async function carregarEstudio() {
   if (!realm) return;
   avisoEstudio("");
   if (estudio.realm !== realm) Object.assign(estudio, { realm, rascunho: null, tabela: "", ficha: null, pagina: 0 });
+  // B366: pedido vindo do Estúdio (link direto `#editores?…`, painel.js): rascunho, tabela e registro.
+  const pedido = estudio.pedido;
+  estudio.pedido = null;
+  if (pedido?.tabela) {
+    Object.assign(estudio, { rascunho: pedido.rascunho, tabela: pedido.tabela, ficha: null, pagina: 0 });
+    elemento("estudio-busca-texto").value = "";
+    if (typeof mostrarVistaDoEstudio === "function") mostrarVistaDoEstudio("tabelas");
+  }
   try {
     estudio.versao = (await api(`/api/realms/${encodeURIComponent(realm)}/estudio`)).versao;
     verificarReinicio();
     await carregarRascunhosDoEstudio();
     await carregarTabelasDoEstudio();
+    if (pedido?.tabela && Number.isInteger(pedido.indice) && pedido.indice >= 0) {
+      // A lista mostra o registro pedido (busca pelo id) e a ficha abre ao lado.
+      await abrirFichaDoEstudio(pedido.indice);
+      if (estudio.ficha?.id != null) { elemento("estudio-busca-texto").value = String(estudio.ficha.id); await listarRegistrosDoEstudio(); }
+    }
   } catch (erro) {
     avisoEstudio(erro.message);
   }
@@ -430,13 +443,13 @@ function desenharFichaDoEstudio() {
       if (c.tipo === "int32" || c.tipo === "float") {
         const n = Number(e.value);
         if (e.value === "" || !Number.isFinite(n) || (c.tipo === "int32" && !Number.isInteger(n))) {
-          alerta("aviso", "Estúdio", `${c.rotulo || c.nome}: número inválido.`, { toast: true });
+          alerta("aviso", "Editores", `${c.rotulo || c.nome}: número inválido.`, { toast: true });
           return;
         }
         campos[c.nome] = n;
       } else campos[c.nome] = e.value;
     }
-    if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nenhum campo mudou.", { toast: true }); return; }
+    if (!Object.keys(campos).length) { alerta("aviso", "Editores", "Nenhum campo mudou.", { toast: true }); return; }
     executarNoEstudio(() => api(rotaEstudio(`tabelas/${f.tabela}/${f.indice}`), { method: "PUT", body: JSON.stringify({ campos }) }),
       (r) => (r.igual_ao_publicado ? "Igual ao publicado: o elements saiu do rascunho." : `${r.resultado.campos_mudados} campo(s) salvos no rascunho.`),
       f.indice);
@@ -549,13 +562,13 @@ function telaPropriaDoEstudio(f) {
 async function executarNoEstudio(acao, mensagem, reabrir, indiceNovo) {
   try {
     const r = await acao();
-    alerta("ok", "Estúdio", mensagem(r), { toast: true });
+    alerta("ok", "Editores", mensagem(r), { toast: true });
     await carregarTabelasDoEstudio();
     const alvo = indiceNovo ? indiceNovo(r) : reabrir;
     if (alvo !== null && alvo !== undefined) await abrirFichaDoEstudio(alvo);
     else { estudio.ficha = null; desenharFichaDoEstudio(); }
   } catch (erro) {
-    alerta("erro", "Estúdio", erro.message);
+    alerta("erro", "Editores", erro.message);
   }
 }
 
@@ -619,7 +632,7 @@ function desenharConversaDoEstudio() {
         tirar.type = "button";
         tirar.addEventListener("click", () => {
           if (c.janelas.some((x) => x.id !== j.id && (x.id_pai === j.id || x.opcoes.some((o) => o.id === j.id)))) {
-            alerta("aviso", "Estúdio", `Outra janela ou opção leva à janela ${j.id}: mude-a antes.`, { toast: true });
+            alerta("aviso", "Editores", `Outra janela ou opção leva à janela ${j.id}: mude-a antes.`, { toast: true });
             return;
           }
           c.janelas.splice(ji, 1);
@@ -730,7 +743,7 @@ elemento("estudio-rascunho").addEventListener("change", async (e) => {
 elemento("estudio-novo").addEventListener("submit", async (e) => {
   e.preventDefault();
   const descricao = elemento("estudio-novo-descricao").value.trim();
-  if (!descricao) { alerta("aviso", "Estúdio", "Descreva o rascunho.", { toast: true }); return; }
+  if (!descricao) { alerta("aviso", "Editores", "Descreva o rascunho.", { toast: true }); return; }
   try {
     const r = await api(`/api/recursos/${encodeURIComponent(estudio.versao)}/rascunhos`, {
       method: "POST", body: JSON.stringify({ descricao, operacao_id: (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).slice(0, 64) }),
@@ -740,7 +753,7 @@ elemento("estudio-novo").addEventListener("submit", async (e) => {
     await carregarRascunhosDoEstudio();
     if (estudio.ficha) await abrirFichaDoEstudio(estudio.ficha.indice);
     else desenharFichaDoEstudio();
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  } catch (erro) { alerta("erro", "Editores", erro.message); }
 });
 elemento("estudio-filtro-tabela").addEventListener("input", desenharTabelasDoEstudio);
 elemento("estudio-busca").addEventListener("submit", (e) => { e.preventDefault(); estudio.pagina = 0; listarRegistrosDoEstudio(); });
@@ -784,22 +797,22 @@ async function recarregarRealm(situacao) {
   const realm = estudio.realm;
   try {
     await api(`/api/realms/${encodeURIComponent(realm)}/recarregar`, { method: "POST", body: JSON.stringify({}) });
-    alerta("ok", "Estúdio", "Relendo os dados do realm no servidor de mundo…", { toast: true });
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); return; }
+    alerta("ok", "Editores", "Relendo os dados do realm no servidor de mundo…", { toast: true });
+  } catch (erro) { alerta("erro", "Editores", erro.message); return; }
   const antes = situacao.dados_em || situacao.iniciado_em || 0;
   for (let i = 0; i < 40; i++) {
     await new Promise((ok) => setTimeout(ok, 3000));
     const s = await verificarReinicio().catch(() => null);
     if (s && !s.recarregando && s.dados_em && s.dados_em > antes) {
-      alerta("ok", "Estúdio", "Dados novos em uso, sem desconectar ninguém.", { toast: true });
+      alerta("ok", "Editores", "Dados novos em uso, sem desconectar ninguém.", { toast: true });
       return;
     }
     if (s && !s.recarregando && s.falhas_da_recarga && s.falhas_da_recarga.length) {
-      alerta("erro", "Estúdio", `Recarga recusada: ${s.falhas_da_recarga.join(", ")}`);
+      alerta("erro", "Editores", `Recarga recusada: ${s.falhas_da_recarga.join(", ")}`);
       return;
     }
   }
-  alerta("aviso", "Estúdio", "A recarga ainda não terminou depois de 120 s; confira o log do servidor de mundo.");
+  alerta("aviso", "Editores", "A recarga ainda não terminou depois de 120 s; confira o log do servidor de mundo.");
 }
 
 async function reiniciarRealm(situacao) {
@@ -809,16 +822,16 @@ async function reiniciarRealm(situacao) {
   if (digitado === null) return;
   try {
     const r = await api(`/api/realms/${encodeURIComponent(realm)}/reiniciar`, { method: "POST", body: JSON.stringify({ confirmar: digitado.trim() }) });
-    alerta("ok", "Estúdio", `Reiniciando (${r.processos} processo(s), ${r.online} desconectado(s)). Acompanhando a volta…`, { toast: true });
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); return; }
+    alerta("ok", "Editores", `Reiniciando (${r.processos} processo(s), ${r.online} desconectado(s)). Acompanhando a volta…`, { toast: true });
+  } catch (erro) { alerta("erro", "Editores", erro.message); return; }
   const antes = situacao.iniciado_em;
   for (let i = 0; i < 30; i++) {
     await new Promise((ok) => setTimeout(ok, 3000));
     const s = await verificarReinicio().catch(() => null);
     if (s && s.iniciado_em && s.iniciado_em > antes) {
-      alerta("ok", "Estúdio", "O servidor de mundo voltou com os arquivos novos.", { toast: true });
+      alerta("ok", "Editores", "O servidor de mundo voltou com os arquivos novos.", { toast: true });
       return;
     }
   }
-  alerta("aviso", "Estúdio", "O servidor de mundo ainda não respondeu depois de 90 s; confira o contêiner.");
+  alerta("aviso", "Editores", "O servidor de mundo ainda não respondeu depois de 90 s; confira o contêiner.");
 }

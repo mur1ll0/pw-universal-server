@@ -128,3 +128,20 @@ def png_do_icone(conjunto, titulo_hex):
     except (ValueError, UnicodeDecodeError):
         return None
     return atlas(conjunto).png(titulo)
+
+
+def buscar_icones(conjunto, busca, limite=60):
+    """B366: nomes de arquivo das células do atlas que contêm `busca` (sem diferenciar caixa), para o Estúdio escolher
+    o ícone de um item. Devolve `(total, [(nome, hex GBK)])`; o `file_icon` do item guarda esse nome no fim do caminho
+    e o cliente acha a célula por ele em minúsculas (`SetCover`, `EC_GameUIMan.cpp:6204-6208`)."""
+    alvo = (busca or "").strip().lower()
+    nomes = [n for n in atlas(conjunto).indice if n != "unknown.dds" and (not alvo or alvo in n)]
+    nomes.sort()
+    achados = []
+    for n in nomes[:max(1, min(limite, 200))]:
+        try:
+            achados.append((n, n.encode("gbk").hex()))
+        except UnicodeEncodeError:
+            continue
+    return len(nomes), achados
+

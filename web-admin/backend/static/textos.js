@@ -14,10 +14,10 @@ function rotaDeTextos(resto, q = {}) {
 async function salvarTexto(metodo, resto, corpo, msg) {
   try {
     const r = await api(rotaDeTextos(resto), { method: metodo, body: JSON.stringify(corpo) });
-    alerta("ok", "Estúdio", msg + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), { toast: true });
+    alerta("ok", "Editores", msg + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), { toast: true });
     await carregarTextos();
     if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  } catch (erro) { alerta("erro", "Editores", erro.message); }
 }
 
 async function carregarTextos() {
@@ -41,7 +41,7 @@ async function carregarTextos() {
     const b = criar("button", "botao botao-pequeno botao-secundario", "Acrescentar");
     b.type = "button";
     b.addEventListener("click", () => {
-      if (!id.value || !t.value) { alerta("aviso", "Estúdio", "Informe o id e o texto.", { toast: true }); return; }
+      if (!id.value || !t.value) { alerta("aviso", "Editores", "Informe o id e o texto.", { toast: true }); return; }
       salvarTexto("POST", "", { id: Math.trunc(Number(id.value)), texto: t.value }, "Entrada acrescentada no rascunho.");
     });
     novo.append(id, t, b);
@@ -55,7 +55,7 @@ async function carregarTextos() {
     i.value = texto;
     i.style.flex = "1";
     i.disabled = !estudio.rascunho;
-    i.title = estudio.rascunho ? "Enter salva no rascunho" : "Escolha um rascunho no topo do Estúdio para editar";
+    i.title = estudio.rascunho ? "Enter salva no rascunho" : "Escolha um rascunho no topo dos Editores para editar";
     i.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || i.value === texto) return;
       salvarTexto("PUT", `/${chave}`, { texto: i.value }, `Entrada ${chave} salva no rascunho.`);

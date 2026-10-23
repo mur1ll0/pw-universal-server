@@ -144,10 +144,10 @@ async function abrirMissao(id) {
         const corpo = novo.value ? { novo: Math.trunc(Number(novo.value)) } : {};
         const res = await api(rotaDeMissoes(`/${f.id}/clonar`), { method: "POST", body: JSON.stringify(corpo) });
         const id = res.resultado?.id;
-        alerta("ok", "Estúdio", `Missão ${id} criada no rascunho. Para ser oferecida, inclua-a no serviço de missões de um NPC (Tabelas → NPC_TASK_OUT_SERVICE).`);
+        alerta("ok", "Editores", `Missão ${id} criada no rascunho. Para ser oferecida, inclua-a no serviço de missões de um NPC (Tabelas → NPC_TASK_OUT_SERVICE).`);
         if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
         if (id) await abrirMissao(id);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     linha.append(novo, b);
     area.appendChild(linha);
@@ -160,11 +160,11 @@ async function abrirMissao(id) {
       if (!confirm(`Remover a missão ${f.id} e as submissões dela (no rascunho)?`)) return;
       try {
         const res = await api(rotaDeMissoes(`/${f.id}`), { method: "DELETE" });
-        alerta("ok", "Estúdio", `Missão ${f.id} removida no rascunho (${res.resultado?.missoes_removidas ?? "?"} missões com as submissões).`, { toast: true });
+        alerta("ok", "Editores", `Missão ${f.id} removida no rascunho (${res.resultado?.missoes_removidas ?? "?"} missões com as submissões).`, { toast: true });
         elemento("missoes-ficha").textContent = "Missão removida.";
         if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
         carregarMissoes();
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     area.appendChild(rm);
   }
@@ -278,10 +278,10 @@ function editorDeDialogos(dialogos, funcoes, idDaMissao) {
   const acao = async (corpo, msg) => {
     try {
       await api(rotaDeMissoes(`/${idDaMissao}`), { method: "PUT", body: JSON.stringify({ campos: { dialogos: [corpo] } }) });
-      alerta("ok", "Estúdio", msg, { toast: true });
+      alerta("ok", "Editores", msg, { toast: true });
       await abrirMissao(idDaMissao);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   };
   const botao = (texto, fn, perigo) => { const b = criar("button", `botao botao-pequeno ${perigo ? "botao-perigo" : "botao-secundario"}`, texto); b.type = "button"; b.disabled = !estudio.rascunho; b.addEventListener("click", fn); return b; };
   const nomeDaFuncao = (id) => { const f = funcoes.find(([n]) => (id & 0x7fffffff) === n); return f ? f[1] : `função ${id & 0x7fffffff}`; };
@@ -320,7 +320,7 @@ function editorDeDialogos(dialogos, funcoes, idDaMissao) {
       sel.appendChild(new Option("abre janela nova", "janela"));
       for (const [n, nome] of funcoes) sel.appendChild(new Option(nome, String(n)));
       nova.append(tx, sel, botao("+ Opção", () => {
-        if (!tx.value) { alerta("aviso", "Estúdio", "Escreva o texto da opção.", { toast: true }); return; }
+        if (!tx.value) { alerta("aviso", "Editores", "Escreva o texto da opção.", { toast: true }); return; }
         let destino;
         if (sel.value === "janela") { const tj = prompt("Texto da janela que a opção abre:"); if (!tj) return; destino = { janela: tj }; }
         else destino = { funcao: Number(sel.value) };
@@ -336,7 +336,7 @@ function editorDeDialogos(dialogos, funcoes, idDaMissao) {
 
 function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupos, dialogos, funcoes) {
   const fs = criar("fieldset");
-  fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo do Estúdio)"));
+  fs.appendChild(criar("legend", "", estudio.rascunho ? `Editar (rascunho #${estudio.rascunho})` : "Editar (escolha ou crie um rascunho no topo dos Editores)"));
   const g = criar("div", "mapa-campos");
   const entradas = {};
   for (const [nome, tipo] of editaveis) {
@@ -421,13 +421,13 @@ function formularioDaMissao(f, editaveis, textos, listas, vetores, tetosDosGrupo
         const v = tipo === "bool" ? i.checked : (tipo === "nome" || tipo === "texto") ? i.value : Math.trunc(Number(i.value));
         if (v !== atual) campos[nome] = v;
       }
-      if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+      if (!Object.keys(campos).length) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
       try {
         const r = await api(rotaDeMissoes(`/${f.id}`), { method: "PUT", body: JSON.stringify({ campos }) });
-        alerta("ok", "Estúdio", "Missão salva no rascunho (cliente e realm, o mesmo tasks.data)." + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), { toast: true });
+        alerta("ok", "Editores", "Missão salva no rascunho (cliente e realm, o mesmo tasks.data)." + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), { toast: true });
         await abrirMissao(f.id);
         if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     fs.appendChild(b);
   }

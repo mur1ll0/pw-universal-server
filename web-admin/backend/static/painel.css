@@ -176,6 +176,7 @@ button, input, select { font: inherit; color: inherit; }
   border: 0; border-radius: 8px; background: transparent; color: var(--texto-2);
   font-size: 14px; font-weight: 500; cursor: pointer; text-align: left;
 }
+a.nav { text-decoration: none; }
 .nav:hover { background: var(--superficie); color: var(--texto); }
 .nav.ativo { background: var(--superficie-2); color: var(--texto); box-shadow: inset 2px 0 0 var(--ouro); }
 .nav .icone { width: 18px; text-align: center; color: var(--texto-3); font-size: 14px; }

@@ -965,6 +965,26 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.cliente.cookies.clear()
         self.assertEqual((await self.cliente.get(f"/api/icones/m/{titulo}.png")).status_code, 401)
 
+    async def test_busca_de_nomes_do_atlas_para_o_estudio(self):
+        """B366: nomes das células do atlas (só leitura), com o hex GBK que a rota do PNG aceita."""
+        await self.criar_personagem()
+        resposta = await self.cliente.get("/api/icones/m", params={"busca": "钢刀", "limite": 5})
+        if resposta.status_code == 503:
+            self.skipTest("atlas de ícones ausente em data/icones")
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        dados = resposta.json()
+        self.assertGreaterEqual(dados["total"], 1)
+        self.assertLessEqual(len(dados["icones"]), 5)
+        nomes = [i["arquivo"] for i in dados["icones"]]
+        self.assertIn("钢刀.dds", nomes)
+        hexa = dados["icones"][nomes.index("钢刀.dds")]["hex"]
+        self.assertEqual(hexa, "钢刀.dds".encode("gbk").hex())
+        self.assertEqual((await self.cliente.get(f"/api/icones/m/{hexa}.png")).status_code, 200)
+        self.assertEqual((await self.cliente.get("/api/icones/habilidade")).status_code, 422)
+        self.assertEqual((await self.cliente.get("/api/icones/m", params={"limite": 0})).status_code, 422)
+        self.cliente.cookies.clear()
+        self.assertEqual((await self.cliente.get("/api/icones/m")).status_code, 401)
+
     async def test_inventario_e_busca_de_itens_exigem_canal_e_parametros(self):
         """B186: leitura pelo primeiro GS; sem canal 503; busca exige 1–64 caracteres."""
         realm, personagem = await self.criar_personagem()
