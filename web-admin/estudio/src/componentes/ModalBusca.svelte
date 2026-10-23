@@ -14,7 +14,7 @@
   const POR_PAGINA = 40;
   let existentes = $state<Set<string>>(new Set());
   let subs = $derived(categoria.subcategorias.filter((s) => (!s.so || s.so === estudio.versao) && (!existentes.size || existentes.has(s.tabela))));
-  let chave = $state("armas");
+  let chave = $state(categoria.subcategorias[0]?.chave ?? "");
   let sub = $derived(subs.find((s) => s.chave === chave) ?? subs[0]);
   let busca = $state("");
   let pagina = $state(0);
@@ -45,7 +45,7 @@
     if (!r || !sub) return;
     if (!sub.pronta) { avisar("aviso", `${sub.nome}: tela própria em breve. Edite nos Editores.`); return; }
     // A tabela é lida antes de fechar: fechado o modal, as derivações dele deixam de valer.
-    const destino = `equipaveis/${sub.tabela}/${r.indice}`;
+    const destino = `${categoria.chave}/${sub.tabela}/${r.indice}`;
     aoFechar();
     ir(destino, extra);
   }
@@ -71,7 +71,7 @@
       const r = await listar(sub.tabela, "", 0, 200);
       const base = r.registros.filter((x) => x.id).sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0];
       if (!base) { avisar("aviso", "Subcategoria sem registro para servir de base."); return; }
-      await clonarEscolhido(base, `Novo ${sub.nome.toLowerCase()}`);
+      await clonarEscolhido(base, `Novo (${sub.nome})`);
     } catch (e) { avisar("erro", (e as Error).message); }
   }
 </script>

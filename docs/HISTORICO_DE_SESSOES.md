@@ -17359,3 +17359,28 @@ comparação lado a lado.
       Prateado" com "Cobre: 3 · parte de baixo", voo com a box Voo. `pw-admin-api` publicado.
     ### c. Falta
     - Murillo ver no painel.
+
+371. **Sessão 2026-10-23: Estúdio — Monstros, com o spawn no npcgen.** Pedido do Murillo: monstros na pegada dos
+     Equipáveis, uma box de spawn com a lista de spawners e o mapa (zoom, clique, área de spread), e os campos
+     confusos (comportamento, estratégia de ódio, habilidades) desenhados de forma intuitiva.
+    ### a. O que mudou
+    - `telas/EdicaoMonstro.svelte`, `lib/monstro.ts` (significados com evidência: `aipolicy.h:918-926`, `ainpc.h:17-24`,
+      `ainpc.cpp:209-225`, `npcgenerator.cpp:205-345, 2562-2600`, `ExpTypes.h:2781-2960`), `ListaDeHabilidades.svelte`,
+      `BoxDeSpawn.svelte`, `ModalMapa.svelte`; categoria Monstros ativa (`#/monstros/MONSTER_ESSENCE/{i}`).
+    - Área de spread: o npcgen só tem **retângulo** (`vPos ± vExts/2`, `npcgenerator.cpp:4348-4367`) — desenha-se e
+      arrasta-se o retângulo; polígono livre não existe no formato.
+    - Drops com `drop_times > 1`: gravação posicional (o servidor não compacta; 17–32 só na 1ª rodada).
+    - Sem caminho de escrita novo: ficha/PUT do elements e as rotas do npcgen dos Editores (B243, B248, B284).
+    ### b. Provas
+    - `svelte-check` 0/0; `vitest` 31/31.
+    - Navegador (dev, 1.5.5, rascunho de teste **#62, descartado**): "Inseto de Jade" (id 16) com 24 spawners no
+      `world`; mapa com 12 peças, o spawner em dourado e os outros 23 tracejados; quantidade 2→5 só do id 16 (o 3302 da
+      mesma área ficou 2); mover para (240, 2805) 30×26 com `vPos_y` 219,03 do `.hmap`; spawner novo 20558 (25 no
+      rascunho, 24 publicados) e removido de volta; "Agressivo" gravado. Monstro 13: Bola de Vento (ataque) em combate;
+      Fuga/Ira/Perseverança (bênção) a 33,3% abaixo de 50% da vida.
+    - Achados no teste: dois mapas com o mesmo caminho (`a72`) na lista do realm (chave da lista trocada); o mapa precisa
+      enquadrar depois de medir a caixa (ResizeObserver).
+    - `pw-admin-api` publicado.
+    ### c. Falta
+    - Murillo ver no painel. Minas no drop (`drop_mines`, só 1.5.5), facção por nome e o roteiro do aipolicy na própria
+      tela ficam nos Editores.

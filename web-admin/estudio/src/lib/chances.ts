@@ -130,3 +130,10 @@ export function gravarLista(lista: Lista, linhas: Linha[]): Record<string, numbe
   });
   return campos;
 }
+
+/** Habilidade de monstro: id, nível e (nas faixas de vida) o peso. B371. */
+export interface LinhaDeHabilidade {
+  id: number;
+  nivel: number;
+  peso?: number;
+}

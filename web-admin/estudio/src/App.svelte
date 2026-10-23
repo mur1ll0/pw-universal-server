@@ -9,6 +9,7 @@
   import Topo from "./componentes/Topo.svelte";
   import Principal from "./telas/Principal.svelte";
   import EdicaoEquipavel from "./telas/EdicaoEquipavel.svelte";
+  import EdicaoMonstro from "./telas/EdicaoMonstro.svelte";
   import NovoItem from "./telas/NovoItem.svelte";
 
   let pronto = $state(false);
@@ -43,6 +44,10 @@
   {:else if rota.caminho[0] === "equipaveis" && rota.caminho[1] && rota.caminho[2] !== undefined}
     {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
       <EdicaoEquipavel tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
+    {/key}
+  {:else if rota.caminho[0] === "monstros" && rota.caminho[1] && rota.caminho[2] !== undefined}
+    {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
+      <EdicaoMonstro tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
     {/key}
   {:else if rota.caminho[0] === "itens" && rota.caminho[1] === "novo"}
     <NovoItem />

@@ -564,6 +564,32 @@ não tem não aparece. Campos novos, com a evidência:
 | `id_addons_N` (livro), `id_addonN` (munição), `addon_N` (carta) | box "Efeitos" (só ids, sem chance), mesmo seletor da família | layout |
 | voo, munição, carta, Daimon | rótulos do comentário de cada campo | `ExpTypes.h` (linha no `ROTULOS_EXTRA`) |
 
+### 9.9 Monstros (B371)
+
+Tela `telas/EdicaoMonstro.svelte`, significados em `lib/monstro.ts` (cada um com a evidência do servidor):
+
+| campo | como aparece | evidência |
+| :--- | :--- | :--- |
+| `aggressive_mode` | "Quando ataca?" Passivo / Agressivo | `ExpTypes.h` (0 被动, 1 主动) |
+| `id_strategy` | "Como luta?": corpo a corpo, distância, mágico, corpo+mágico, fixo, bicho, estaca, fixo mágico | `aipolicy.h:918-926` (`STRATEGY_*`, via `primary_strategy`, `npcgenerator.cpp:2600`); 2/3 sem habilidade → aviso (`:288`) |
+| `patroll_mode` | "Quando está ocioso?" fica / anda à toa | o GS só olha ≠ 0 (`npcgenerator.cpp:244`; `aipolicy.cpp:240`) |
+| `sight_range`, `aggro_range`, `aggro_time`, `max_move_range` | "O que enxerga e até onde persegue", com as regras (tempo ≤ 0 → 1; perseguição < 20 → 20, 0 sem limite) | `npcgenerator.cpp:230, 314-317` |
+| `aggro_strategy_N` | "Em quem foca": até 4 políticas com peso | sorteio ao nascer (`npcgenerator.cpp:2562`); `AGGRO_POLICY_*` (`ainpc.h:17-24`); 0–4 iguais no GS 1.5.5 (`ainpc.cpp:209-225`) |
+| `skills_N`, `skill_hp75/50/25_N` | listas com nome e tipo (ataque, bênção, maldição; outro tipo é ignorado pelo GS) e, nas faixas, peso | `npcgenerator.cpp:250-275`; normalização em `elementdataman.cpp` (MONSTER_ESSENCE) |
+| `immune_type`, `after_death`, `combined_switch` | caixas | `ExpTypes.h`; `MONSTER_COMBINED_SWITCH` (`cgame/gs/template/exptypes.h:2962-2968`) |
+| `drop_matters_N` | pesos; com `drop_times > 1` a posição conta (17–32 só na 1ª rodada) e não se compacta | `elementdataman.cpp` (MONSTER_ESSENCE: "不能进行去零操作") |
+| `common_strategy` | id do roteiro do aipolicy (0 nenhum) | `npcgenerator.cpp:218-226` |
+| `id_skill`/`skill_level` | em Avançado, marcado como não usado | `npcgenerator.cpp:225` (comentado) |
+
+**Onde nasce** (`componentes/BoxDeSpawn.svelte` + `ModalMapa.svelte`): os spawners vêm de "onde nasce" (B284); cada um é
+uma área do npcgen. O mapa usa as peças do minimapa (a geometria de `static/mapa.js`), com zoom na roda, arrasto, clique
+para o centro e alça para o tamanho. **A área é um retângulo**: o servidor sorteia dentro de `vPos ± vExts/2`
+(`npcgenerator.cpp:4348-4367`; `iType` 0 sobre o terreno, 1 caixa 3D) — o npcgen não tem polígono. Gravar o lugar põe
+`vPos_x/z`, `vExts_x/z` e a altura do chão (`altura`, B248) em `vPos_y`. Quantidade = `dwNum` do monstro nos `filhos`;
+remover tira o monstro da área e só apaga a área se ele for o único; spawner novo = clone de uma área deste monstro no
+mapa (ou da primeira área de monstro, `iNPCType` 0) com o lugar e só este monstro. Tudo pelas rotas do npcgen dos
+Editores (B243), no rascunho.
+
 ### 9.7 De onde vem o item (B369)
 
 Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstros e a chance na lista de drops),

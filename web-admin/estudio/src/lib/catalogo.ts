@@ -41,7 +41,9 @@ export const CATEGORIAS: Categoria[] = [
     ],
   },
   { chave: "npcs", nome: "NPCs", icone: "npc", pronta: false, subcategorias: [] },
-  { chave: "monstros", nome: "Monstros", icone: "monstro", pronta: false, subcategorias: [] },
+  { chave: "monstros", nome: "Monstros", icone: "monstro", pronta: true, subcategorias: [
+    { chave: "monstros", nome: "Monstros", tabela: "MONSTER_ESSENCE", maior: "MONSTER_TYPE", pronta: true },
+  ] },
   { chave: "mascotes", nome: "Mascotes", icone: "pata", pronta: false, subcategorias: [] },
   { chave: "itens", nome: "Itens", icone: "caixa", pronta: false, subcategorias: [] },
 ];

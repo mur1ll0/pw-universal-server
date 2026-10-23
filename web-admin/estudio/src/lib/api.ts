@@ -209,3 +209,42 @@ export interface Origens {
   forjado_por: (RefDeOrigem & { chance: number | null; forjas: (RefDeOrigem & { paginas: PaginaDeOrigem[]; npcs: RefDeOrigem[] })[] })[];
 }
 export const origensDoItem = (id: number) => api<Origens>(rota(`origens/${id}`));
+
+/* ---- B371: monstros — habilidades, onde nasce e as áreas do npcgen (rotas dos Editores, B243/B248/B284) ---- */
+export interface Habilidade { id: number; nome: string; type: number; cls: number; max_level: number }
+export const buscarHabilidades = (busca: string) =>
+  api<{ habilidades: Habilidade[]; total: number }>(rota("habilidades", { busca }));
+
+const cacheDeHabilidade = new Map<number, Promise<Habilidade | null>>();
+/** Nome e tipo de uma habilidade pelo id exato (a busca também acha ids que contêm o número). */
+export function habilidadePorId(id: number): Promise<Habilidade | null> {
+  if (!cacheDeHabilidade.has(id)) {
+    cacheDeHabilidade.set(id, buscarHabilidades(String(id)).then((r) => r.habilidades.find((h) => h.id === id) ?? null).catch(() => null));
+  }
+  return cacheDeHabilidade.get(id)!;
+}
+
+export interface Local { area: number; caminho: string; mapa: string; quantidade: number; tipo: string; x: number; z: number }
+export const nascimentos = (id: number) => api<{ id: number; locais: Local[] }>(rota("nascimentos", { id }));
+
+export interface MapaDoRealm { caminho: string; id: number; nome: string; colunas: number; linhas: number; npcgen: boolean }
+export const mapasDoRealm = () => api<MapaDoRealm[]>(rota("mapas", {}, false));
+
+export interface Area { indice: number; campos: Record<string, number | boolean>; filhos: Record<string, number | boolean>[] }
+export const lerArea = (caminho: string, indice: number) => api<Area>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`));
+export const salvarArea = (caminho: string, indice: number, campos: Record<string, number | boolean>, filhos?: Record<string, number | boolean>[]) =>
+  api<{ resultado?: unknown }>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`), {
+    method: "PUT", body: JSON.stringify({ campos, filhos: filhos ?? null }),
+  });
+export const clonarArea = (caminho: string, indice: number) =>
+  api<{ resultado?: { indice?: number }; indice?: number }>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}/clonar`), { method: "POST" });
+export const removerArea = (caminho: string, indice: number) =>
+  api(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`), { method: "DELETE" });
+export const alturaDoChao = (caminho: string, x: number, z: number) =>
+  api<{ tem_terreno: boolean; y: number }>(rota(`mapas/${encodeURIComponent(caminho)}/altura`, { x, z }, false));
+export const npcgenDoMapa = (caminho: string) => api<any>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen`));
+export const urlDaPeca = (caminho: string, peca: string) =>
+  `/api/realms/${encodeURIComponent(contexto.realm)}/estudio/mapas/${encodeURIComponent(caminho)}/pecas/${peca}.png`;
+
+/** Ponto (centro) e tamanho da área de um spawner, em unidades do mundo (`vPos_x/z`, `vExts_x/z`). */
+export interface EscolhaNoMapa { x: number; z: number; largura: number; altura: number }
