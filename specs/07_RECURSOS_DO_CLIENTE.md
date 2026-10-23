@@ -839,12 +839,22 @@ ação.
   `world_targets.txt`, mapa do `instance.txt`, chegada do `world_targets.sev`, preço, nível; "ver no mapa" abre a vista
   Mapas com a camada de teleportes no destino). Listas achatadas do layout começam em 1 (v7 e v156) — o código aceita 0
   ou 1. Outra tabela → 400. "Onde nasce" já existia (B284).
+- **De onde vem o item (B369, só leitura)** — `GET estudio/origens/{id}?rascunho=` (`Estudio::origens_do_item`; painel
+  `GET /api/realms/{r}/estudio/origens/{id}`; id ≤ 0 → 400), tudo do rascunho, até 300 por lista:
+  `dropado_de` (`MONSTER_ESSENCE.drop_matters_N_id` = item, com a soma dos `drop_matters_N_probability` das linhas),
+  `recompensa_de` (missões do `tasks.data` com o item num grupo do prêmio de sucesso ou de falha, e nas escalas por
+  tempo/itens do v129; `quando`, quantidade, se é sorteado), `vendido_por` (`NPC_SELL_SERVICE.pages_P_goods_G_id` →
+  páginas com título e os `NPC_ESSENCE.id_sell_service` = a loja), `loja_gold` (ofertas do `gshop.data`,
+  `gshop1.data`, `gshop2.data` que existirem, pelo `id` no byte 140), `forjado_por` (`RECIPE_ESSENCE.targets_N_id_to_make`
+  → `NPC_MAKE_SERVICE.pages_P_id_goods_G` = a receita → `NPC_ESSENCE.id_make_service` = a forja).
 - **Alinhamento aplicado (decisão do Murillo, 2026-10-23: vale o cliente nos dois)** — rascunhos **58** (1.5.5: a25, a32,
   a40, a43, a61, a70, b01, random03; só `precinct.sev`) e **59** (1.2.6: a12, a25, a27, a31; `precinct.sev` e
   `region.sev`), com zero desalinhados no rascunho. **Não publicados**: a publicação foi barrada pela proteção de deploy.
 
 Testes: `tests/estudio.rs` (regiões criar/editar/remover e publicar em par; nome do controlador; diagnóstico de
-habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6) e
+habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6; B369:
+as origens pelo caminho inverso das telas — item da loja → loja, item da receita → receita e forja, item do drop →
+monstro) e
 `aipolicy_editavel::testes_b365` (os dois realms).
 
 ## 7. Testes

@@ -291,6 +291,7 @@ textos, modelos) no rascunho escolhido no topo. Única rota nova, só leitura: `
 | Item novo em outra aba (`#/itens/novo?retorno=`), id devolvido por `BroadcastChannel("pw-estudio")` | `testado` numa aba (envio e recepção da mensagem); **falta** ver com duas abas de verdade |
 | B367: descrição dos efeitos como o cliente mostra ("Ataque físico +2"), pela rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209; valor do GS, então do `elements` publicado); tipo de munição pelo nome com modal de `PROJECTILE_TYPE`; "Abrir nos Editores" com o registro | `testado` (navegador, origem real) |
 | B368: escolher efeito nas listas da arma = **todos** os que servem na família da peça, pela regra do GS da edição de personagem (`/api/realms/{r}/efeitos?item=<1º registro da tabela>&ids=` com todos os ids ≤ 8191 do `EQUIPMENT_ADDON`, em lotes de 180; fora: outra família, refino/pedra/temporário, inexistente no GS); filtro na tela por texto, habilidade, nome interno ou id (`lib/efeitos.ts`) | `testado` (1.5.5: 1.299 de 2.977; Mordaz id 1286 achado por "Mordaz" e por "Garra") |
+| B369: embaixo da edição, 4 cards — Dropado de, Recompensa de, Vendido por (lojas de NPC e Loja Gold), Forjado por (NPC → forja → receita) — por `GET /api/realms/{r}/estudio/origens/{id}` (spec 07 §6c); cada registro abre nos Editores | `testado` |
 | Enviar ícone novo (gravar célula no atlas) | `falta` (bloco próprio, combinado) |
 | Brilho do refino no 3D | `falta` (GFX do cliente, `EC_Player.cpp:9299-9316`; sem renderizador de GFX) |
 

@@ -547,3 +547,11 @@ peça de referência = 1º registro da tabela (publicado), e filtra na tela. 1.5
 (1.213 de outra família, 389 fora da busca, 76 sem tratador no GS). Carrega uma vez por realm/rascunho/tabela
 (~1–6 s). Vale o `elements` publicado: efeito novo só do rascunho entra depois de publicar. O seletor do refino
 continua no espaço `ADDON` inteiro (o refino é "fora da busca").
+
+### 9.7 De onde vem o item (B369)
+
+Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstros e a chance na lista de drops),
+**Recompensa de** (missões e se é no sucesso, na falha ou numa escala), **Vendido por** (NPC → loja e página; Loja
+Gold com o arquivo e o preço da 1ª opção) e **Forjado por** (NPC → forja e página → receita, com a chance). Rota e
+regra na spec 07 §6c. Cada monstro, NPC, loja, forja e receita abre nos Editores em outra aba. Não cobre: drop pelo
+`npcgen` (os monstros só citam a própria essência), drops do GS fora do `elements` e as listas de "item especial".

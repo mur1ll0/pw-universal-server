@@ -17317,3 +17317,28 @@ comparação lado a lado.
     - `pw-admin-api` publicado.
     ### d. Falta
     - Murillo ver no painel. Não commitado.
+
+369. **Sessão 2026-10-23: de onde vem o item — 4 cards na edição do Estúdio.** Pedido do Murillo: Dropado de,
+     Recompensa de, Vendido por (NPC ou Loja Gold), Forjado por (NPC e forja).
+    ### a. O que mudou
+    - `pw-recursos`: `Estudio::origens_do_item` + `GET /admin/{v}/estudio/origens/{id}` (só leitura, do rascunho, até 300
+      por lista): drops do `MONSTER_ESSENCE.drop_matters_N` (soma das chances das linhas), prêmios do `tasks.data`
+      (`TaskReward.grupos_de_itens` do sucesso e da falha e as escalas do v129), lojas `NPC_SELL_SERVICE` → NPCs pelo
+      `id_sell_service`, Loja Gold (`gshop*.data`, id no byte 140 da oferta) e receitas `RECIPE_ESSENCE.targets_N` → forjas
+      `NPC_MAKE_SERVICE.pages_P_id_goods_G` → NPCs pelo `id_make_service`.
+    - Painel: `GET /api/realms/{r}/estudio/origens/{id}` (repasse). Estúdio: `componentes/Origens.svelte` embaixo da
+      edição; cada registro abre nos Editores (link direto do B367).
+    ### b. Provas
+    - `pw-recursos` com `TEST_DATABASE_URL`: **29 passaram, 0 falharam**; o `tests/estudio.rs` ganhou as origens pelo
+      caminho inverso das telas no `elements` real do 1.2.6 (loja → item → loja; forja → receita → item → receita e
+      forja; monstro → drop → monstro; id 0 → 400).
+    - Estúdio: `svelte-check` 0/0, `vitest` 25/25, build OK.
+    - `pw-recursos` e `pw-admin-api` publicados; navegador em `localhost:8000` (1.5.5): Marreta (id 11) — recompensa da
+      missão 1059 "Armas Elementares" (sorteada), vendida por 2 lojas "Produtos à Venda" de ferreiros; Punho da Luz Fixa
+      (id 8292) — 3 receitas (100%) em "Forjar Arma"/"Cartão Novato Europa"/"Armas Divinas" com os NPCs Armas
+      Sagradas, MR.19th e Emissário Divino do Vazio; id 6 — dropado pelo "Monstro para o Teste de Queda" (0,34%); Tintura
+      de Roupa (15609) na Loja Gold `gshop.data` e `gshop1.data`.
+    - Ajustes vistos no teste: o nome de missão/NPC vem com o código de cor `^RRGGBB` (agora tirado na tela) e o ícone
+      de NPC não é do atlas de itens (agora não desenha nada no lugar).
+    ### c. Falta
+    - Murillo ver no painel. Drop por `npcgen`/GS fora do `elements` não entra. Não commitado.
