@@ -1,16 +1,18 @@
 <script lang="ts">
-  /* Edição de Arma (`WEAPON_ESSENCE`, `ExpTypes.h:177-305`), B366. Os campos são os aprovados pelo Murillo em
+  /* Edição de Equipável: B366 (Armas, `WEAPON_ESSENCE`, `ExpTypes.h:177-305`); B370 todas as subcategorias com as
+     mesmas boxes (o campo que a tabela não tem não aparece; `lib/catalogo.ts::BOXES_DO_EQUIPAVEL`). Os campos são os aprovados pelo Murillo em
      2026-10-23 (`ESTUDIO_DO_PAINEL.md` §9); o que não existe no layout da versão (v156 / v7) não aparece, e o resto
      fica nos Editores. Gravar = `PUT tabelas/WEAPON_ESSENCE/{i}` com os campos mudados, no rascunho do alto. */
   import { onDestroy } from "svelte";
   import { buscarIcones, buscarNoEspaco, definirTexto, descreverEfeitos, ficha as lerFicha, linkDosEditores, listar, novoTexto, salvar, textoDaChave, type Campo, type Ficha, type Registro } from "../lib/api";
-  import { BOXES_DA_ARMA, CHANCES_SIMPLES, DISTANCIAS, ITENS_LIGADOS, LISTAS_DA_ARMA, REGRAS_DO_ITEM, classesDaVersao, subcategoriaPorTabela } from "../lib/catalogo";
-  import { acharLista, gravarLista, lerLista, paraGravar, type Cartao, type Lista } from "../lib/chances";
+  import { BOXES_DO_EQUIPAVEL, CHANCES_SIMPLES, DISTANCIAS, EFEITOS_FIXOS, GENEROS, ITENS_LIGADOS, LISTAS_DA_ARMA, PARTES_DO_MODELO, REGRAS_DO_ITEM, camposDaBox, classesDaVersao, MODOS_DE_VOO, rotuloGerado, subcategoriaPorTabela } from "../lib/catalogo";
+  import { acharLista, gravarLista, lerLista, paraGravar, type Cartao, type EfeitoFixo, type Lista } from "../lib/chances";
   import { NOME_DO_CANAL, avisar, estudio, ir, parametros, rota, type MensagemDeItem } from "../lib/estado.svelte";
   import ChancesSimples from "../componentes/ChancesSimples.svelte";
   import Icone from "../componentes/Icone.svelte";
   import IconeItem from "../componentes/IconeItem.svelte";
   import ListaDeChances from "../componentes/ListaDeChances.svelte";
+  import ListaDeEfeitosFixos from "../componentes/ListaDeEfeitosFixos.svelte";
   import ModalCategoria from "../componentes/ModalCategoria.svelte";
   import ModalIcone from "../componentes/ModalIcone.svelte";
   import ModalMascara from "../componentes/ModalMascara.svelte";
@@ -78,7 +80,7 @@
   const pedidos = new Set<number>();
   $effect(() => {
     if (!f) return;
-    const ids = [...listas.flatMap(({ lista }) => lerLista(lista, num).map((l) => l.id)), num("levelup_addon")]
+    const ids = [...listas.flatMap(({ lista }) => lerLista(lista, num).map((l) => l.id)), ...fixos.map(num), num("levelup_addon")]
       .filter((id) => id && !pedidos.has(id));
     if (!ids.length) return;
     ids.forEach((id) => pedidos.add(id));
@@ -92,6 +94,7 @@
   listar("PROJECTILE_TYPE", "", 0, 200)
     .then((r) => (tiposDeMunicao = r.registros.filter((x) => x.id != null).map((x) => ({ id: x.id!, nome: x.nome }))))
     .catch(() => {});
+  let campoDaMunicao = $state("require_projectile");
   const nomeDaMunicao = (id: number) => (id ? tiposDeMunicao.find((t) => t.id === id)?.nome ?? `id ${id} (não existe)` : "nenhuma (não exige)");
 
   /* ---- listas (id, chance) ---- */
@@ -110,6 +113,23 @@
   function mudarLista(lista: Lista, linhas: Cartao[]) {
     for (const l of linhas) if (l.nome) nomes[`efeito:${l.id}`] = l.nome;
     Object.assign(valores, gravarLista(lista, linhas));
+  }
+
+  /* ---- boxes (B370) ---- */
+  const nomesDaFicha = $derived(Object.keys(porNome));
+  const bx = (titulo: string) => {
+    const b = BOXES_DO_EQUIPAVEL.find((x) => x.titulo === titulo)!;
+    return { titulo, campos: camposDaBox(b, nomesDaFicha) };
+  };
+
+  /* ---- efeitos fixos (só ids): livros, munição, cartas ---- */
+  const fixos = $derived(EFEITOS_FIXOS.map((e) => camposDaBox({ titulo: "", campos: [e] }, nomesDaFicha)).find((c) => c.length) ?? []);
+  function linhasFixas(): EfeitoFixo[] {
+    return fixos.map((c) => num(c)).filter((id) => id).map((id) => ({ id, nome: nomes[`efeito:${id}`] ?? "", descricao: efeitosTexto[id]?.texto || "" }));
+  }
+  function mudarFixos(l: EfeitoFixo[]) {
+    for (const x of l) if (x.nome) nomes[`efeito:${x.id}`] = x.nome;
+    fixos.forEach((c, k) => (valores[c] = k < l.length ? l[k].id : 0));
   }
 
   /* ---- chances simples (furos, quantidade de efeitos) ---- */
@@ -216,7 +236,7 @@
     return sim.length === classes.length ? "Todas as classes" : sim.length ? sim.join(", ") : "Nenhuma classe";
   });
   const resumoDeRegras = $derived(REGRAS_DO_ITEM.filter(([b]) => num("proc_type") & b).map(([, n]) => n));
-  const modelos = $derived([["Mão direita", "file_model_right"], ["Mão esquerda", "file_model_left"], ["No chão", "file_matter"]]
+  const modelos = $derived([["Mão direita", "file_model_right"], ["Mão esquerda", "file_model_left"], ["Modelo", "file_model"], ["Modelo 2", "file_model2"], ["No chão", "file_matter"]]
     .filter(([, c]) => existe(c)).map(([rotulo, c]) => ({ rotulo, caminho: String(valores[c] ?? "") })));
   const alterado = (n: string) => valores[n] !== originais[n];
 </script>
@@ -225,10 +245,20 @@
   {#if existe(n)}
     {@const c = porNome[n]}
     <label title={n}>
-      <span>{c.rotulo || n}</span>
-      {#if n === "require_projectile"}
+      <span>{c.rotulo || rotuloGerado(n) || n}</span>
+      {#if n === "require_projectile" || (n === "type" && tabela === "PROJECTILE_ESSENCE")}
         <button class="campo escolha" type="button" class:alterado={alterado(n)} title="Escolher em PROJECTILE_TYPE"
-          onclick={() => (modal = "municao")}>{nomeDaMunicao(num(n))}</button>
+          onclick={() => { campoDaMunicao = n; modal = "municao"; }}>{nomeDaMunicao(num(n))}</button>
+      {:else if n === "fly_mode"}
+        <select class="campo" class:alterado={alterado(n)} disabled={!editavel} value={String(valores[n])}
+          onchange={(e) => (valores[n] = Number((e.target as HTMLSelectElement).value))}>
+          {#each MODOS_DE_VOO as g, k (k)}<option value={String(k)}>{g}</option>{/each}
+        </select>
+      {:else if n === "gender"}
+        <select class="campo" class:alterado={alterado(n)} disabled={!editavel} value={String(valores[n])}
+          onchange={(e) => (valores[n] = Number((e.target as HTMLSelectElement).value))}>
+          {#each GENEROS as g, k (k)}<option value={String(k)}>{g}</option>{/each}
+        </select>
       {:else if n === "short_range_mode"}
         <select class="campo" class:alterado={alterado(n)} disabled={!editavel} value={String(valores[n])}
           onchange={(e) => (valores[n] = Number((e.target as HTMLSelectElement).value))}>
@@ -240,7 +270,7 @@
       {:else}
         <input class="campo" class:alterado={alterado(n)} disabled={!editavel} value={valores[n]} oninput={(e) => (valores[n] = (e.target as HTMLInputElement).value)} />
       {/if}
-      {#if n !== "require_projectile" && c.referencia?.nome && valores[n] === originais[n]}<span class="mini">{c.referencia.nome}</span>{/if}
+      {#if n !== "require_projectile" && n !== "type" && c.referencia?.nome && valores[n] === originais[n]}<span class="mini">{c.referencia.nome}</span>{/if}
     </label>
   {/if}
 {/snippet}
@@ -275,6 +305,13 @@
               {nomes.id_major_type ?? `id ${valores.id_major_type}`} › {nomes.id_sub_type ?? `id ${valores.id_sub_type}`}
             </button>
             <span class="mini">{sub?.nome}</span>
+            {#if existe("equip_location")}
+              <label class="mini">Cobre
+                <select class="campo pequeno-select" class:alterado={alterado("equip_location")} disabled={!editavel} value={String(valores.equip_location)}
+                  onchange={(e) => (valores.equip_location = Number((e.target as HTMLSelectElement).value))} title="equip_location (EC_Player.h:94-104)">
+                  {#each PARTES_DO_MODELO as g, k (k)}<option value={String(k)}>{g}</option>{/each}
+                </select></label>
+            {/if}
           </div>
           <label class="desc">
             <span class="mini">Descrição (item_ext_desc.txt do cliente; os códigos ^RRGGBB mudam a cor)</span>
@@ -285,22 +322,27 @@
 
       <!-- 2. Requisitos -->
       <section class="caixa">
-        <h3>{BOXES_DA_ARMA[0].titulo}</h3>
+        <h3>Requisitos para equipar</h3>
         <div class="linha classes">
           <button class="botao pequeno" type="button" class:alterado={alterado("character_combo_id")} onclick={() => (modal = "classes")}>Classes</button>
           <span class="suave">{resumoDeClasses}</span>
         </div>
-        <div class="grade-campos">{#each BOXES_DA_ARMA[0].campos as n (n)}{@render campo(n)}{/each}</div>
+        <div class="grade-campos">{#each bx("Requisitos para equipar").campos as n (n)}{@render campo(n)}{/each}</div>
       </section>
 
-      <!-- 3. Combate e 4. Comércio -->
+      <!-- 3. Combate, Voo e 4. Comércio -->
+      {#each ["Combate", "Voo"] as t (t)}
+        {@const b = bx(t)}
+        {#if b.campos.length}
+          <section class="caixa">
+            <h3>{b.titulo}</h3>
+            <div class="grade-campos">{#each b.campos as n (n)}{@render campo(n)}{/each}</div>
+          </section>
+        {/if}
+      {/each}
       <section class="caixa">
-        <h3>{BOXES_DA_ARMA[1].titulo}</h3>
-        <div class="grade-campos">{#each BOXES_DA_ARMA[1].campos as n (n)}{@render campo(n)}{/each}</div>
-      </section>
-      <section class="caixa">
-        <h3>{BOXES_DA_ARMA[2].titulo}</h3>
-        <div class="grade-campos">{#each BOXES_DA_ARMA[2].campos as n (n)}{@render campo(n)}{/each}</div>
+        <h3>Comércio</h3>
+        <div class="grade-campos">{#each bx("Comércio").campos as n (n)}{@render campo(n)}{/each}</div>
         {#if existe("proc_type")}
           <div class="linha regras">
             <button class="botao pequeno" type="button" class:alterado={alterado("proc_type")} onclick={() => (modal = "regras")}>Regras do item</button>
@@ -311,8 +353,8 @@
 
       <!-- 5. Durabilidade e fabricação -->
       <section class="caixa">
-        <h3>{BOXES_DA_ARMA[3].titulo}</h3>
-        <div class="grade-campos">{#each BOXES_DA_ARMA[3].campos as n (n)}{@render campo(n)}{/each}</div>
+        <h3>Durabilidade e fabricação</h3>
+        <div class="grade-campos">{#each bx("Durabilidade e fabricação").campos as n (n)}{@render campo(n)}{/each}</div>
         <div class="ligados">
           {#each ITENS_LIGADOS.filter((x) => existe(x.campo)) as l (l.campo)}
             <div class="ligado">
@@ -377,6 +419,12 @@
     {/each}
   </div>
 
+  {#if fixos.length}
+    <div class="listas">
+      <ListaDeEfeitosFixos titulo="Efeitos" {tabela} maximo={fixos.length} linhas={linhasFixas()} {editavel} aoMudar={mudarFixos} />
+    </div>
+  {/if}
+
   <!-- 8. De onde vem o item (B369) -->
   {#if f.id}<Origens id={f.id} />{/if}
 {/if}
@@ -399,8 +447,8 @@
     <p class="mini">A arma só atira a munição cujo tipo é este (ExpTypes.h:185); 0 = não exige munição.</p>
     <ul class="escolhas">
       {#each [{ id: 0, nome: "nenhuma (não exige)" }, ...tiposDeMunicao] as t (t.id)}
-        <li><button type="button" class:ativo={num("require_projectile") === t.id} disabled={!editavel}
-          onclick={() => { valores.require_projectile = t.id; modal = ""; }}>{t.nome} <span class="mini">id {t.id}</span></button></li>
+        <li><button type="button" class:ativo={num(campoDaMunicao) === t.id} disabled={!editavel}
+          onclick={() => { valores[campoDaMunicao] = t.id; modal = ""; }}>{t.nome} <span class="mini">id {t.id}</span></button></li>
       {/each}
     </ul>
     {#if !editavel}<p class="mini">Escolha um rascunho no alto para mudar.</p>{/if}

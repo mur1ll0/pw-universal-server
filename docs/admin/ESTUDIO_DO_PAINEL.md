@@ -548,6 +548,22 @@ peça de referência = 1º registro da tabela (publicado), e filtra na tela. 1.5
 (~1–6 s). Vale o `elements` publicado: efeito novo só do rascunho entra depois de publicar. O seletor do refino
 continua no espaço `ADDON` inteiro (o refino é "fora da busca").
 
+### 9.8 Todos os Equipáveis (B370)
+
+Uma tela só (`telas/EdicaoEquipavel.svelte`) para as 11 subcategorias; as boxes são uma lista única
+(`lib/catalogo.ts::BOXES_DO_EQUIPAVEL`, entradas por nome ou por expressão sobre o layout) e o que a tabela ou a versão
+não tem não aparece. Campos novos, com a evidência:
+
+| campo | como aparece | evidência |
+| :--- | :--- | :--- |
+| `equip_location` (armadura, moda) | lista "Cobre": 0 nenhuma … 8 corpo+baixo+pulso, 9 capacete, 10 mão | **não é máscara**: índice do `enumSkinShow*` (`EC_Player.h:94-104`; `EC_Player.cpp:4633-4640`; moda 9/10 em `EC_IvtrFashion.cpp:191-216`); nos dados: armadura 1, perneira 3, sapato 4, vestido 8 |
+| `gender` (moda) | 0 masculino, 1 feminino | `ExpTypes.h:776` |
+| `fly_mode` (voo) | 0 espada voadora, 1 asas, 2 rodas de fogo | `ExpTypes.h:1594` |
+| `type` (munição) | nome do `PROJECTILE_TYPE`, modal | `ExpTypes.h:1951` |
+| `magic_defences_N_low/high`, `magic_N`, `magic_defence_N` | "Defesa de Metal/Madeira/Água/Fogo/Terra" | 金木水火土, `ExpTypes.h:368` |
+| `id_addons_N` (livro), `id_addonN` (munição), `addon_N` (carta) | box "Efeitos" (só ids, sem chance), mesmo seletor da família | layout |
+| voo, munição, carta, Daimon | rótulos do comentário de cada campo | `ExpTypes.h` (linha no `ROTULOS_EXTRA`) |
+
 ### 9.7 De onde vem o item (B369)
 
 Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstros e a chance na lista de drops),

@@ -85,6 +85,13 @@ export interface Cartao extends Linha {
   descricao?: string;
 }
 
+/** Efeito fixo (lista só de ids): B370. */
+export interface EfeitoFixo {
+  id: number;
+  nome: string;
+  descricao?: string;
+}
+
 export interface Lista {
   /** campos de id e de chance, na ordem do arquivo (o número do layout começa em 1, B365) */
   ids: string[];

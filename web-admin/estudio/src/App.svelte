@@ -8,7 +8,7 @@
   import { avisos, definirRascunho, estudio, rota } from "./lib/estado.svelte";
   import Topo from "./componentes/Topo.svelte";
   import Principal from "./telas/Principal.svelte";
-  import EdicaoArma from "./telas/EdicaoArma.svelte";
+  import EdicaoEquipavel from "./telas/EdicaoEquipavel.svelte";
   import NovoItem from "./telas/NovoItem.svelte";
 
   let pronto = $state(false);
@@ -42,7 +42,7 @@
     <p class="suave">Carregando…</p>
   {:else if rota.caminho[0] === "equipaveis" && rota.caminho[1] && rota.caminho[2] !== undefined}
     {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
-      <EdicaoArma tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
+      <EdicaoEquipavel tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
     {/key}
   {:else if rota.caminho[0] === "itens" && rota.caminho[1] === "novo"}
     <NovoItem />

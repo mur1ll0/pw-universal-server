@@ -17342,3 +17342,20 @@ comparação lado a lado.
       de NPC não é do atlas de itens (agora não desenha nada no lugar).
     ### c. Falta
     - Murillo ver no painel. Drop por `npcgen`/GS fora do `elements` não entra. Não commitado.
+
+370. **Sessão 2026-10-23: Estúdio — todas as subcategorias de Equipáveis.** Pedido do Murillo: "implemente todos os
+     outros Equipáveis seguindo os mesmos padrões".
+    ### a. O que mudou
+    - `EdicaoArma.svelte` → `EdicaoEquipavel.svelte`, guiada por `BOXES_DO_EQUIPAVEL` (nome ou expressão sobre o layout;
+      campo ausente some). Box Voo nova; "Cobre" (`equip_location`), gênero, modo de voo, munição (`type`) pelo
+      `PROJECTILE_TYPE`; rótulos gerados (defesas mágicas pelo elemento, refino do voo) e `ROTULOS_EXTRA` do `ExpTypes.h`;
+      `ListaDeEfeitosFixos.svelte` (livro, munição, carta). Modelos 3D também de `file_model`/`file_model2`.
+    - Achado: o `equip_location` não é máscara de `EQUIP_MASK` (como eu tinha posto no primeiro rascunho) e sim o índice
+      `enumSkinShow*` (`EC_Player.h:94-104`, `EC_Player.cpp:4633-4640`) — os dados (1, 3, 4, 5, 8) confirmaram.
+    ### b. Provas
+    - `vitest` **31/31** (6 novos: `camposDaBox`, `rotuloGerado`); `svelte-check` 0/0.
+    - Navegador (dev): as 9 tabelas novas abrem no 1.5.5 com as boxes certas e **nenhum campo sem rótulo** (armadura 35
+      campos, ornamento 35, moda 7, voo 44, asa 7, munição 8, livro 3, carta 29, Daimon 13); 1.2.6: "Perneiras de Aço
+      Prateado" com "Cobre: 3 · parte de baixo", voo com a box Voo. `pw-admin-api` publicado.
+    ### c. Falta
+    - Murillo ver no painel.
