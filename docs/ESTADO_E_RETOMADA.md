@@ -320,6 +320,9 @@ continua no mundo 1; para testar o nascimento no 161, criar um novo.
 
 ### 3.1 Confirmado em jogo pelo Murillo
 
+**2026-10-23 (B364):** DLL de dados do 1.2.6 (`pw-recursos` 1.2.6 versão 4) — launcher atualizou para a 4 e as
+habilidades funcionam com vários personagens. O DLL de dados (spec 08) está concluído no 1.5.5 e no 1.2.6.
+
 **Rodada de 2026-10-21 (B326):** o Murillo testou o 1.5.5 e o 1.2.6 e relatou "está tudo funcionando". Passam a
 confirmados: B320/B322 (organizar a bolsa, no jogo e no painel), B321 (DLL de dados pelo launcher), B323
 (descrições), B325 (edição completa das habilidades no Estúdio), o 1.2.6 em geral (§5D) e os roteiros do painel
