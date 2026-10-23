@@ -17161,3 +17161,17 @@ comparação lado a lado.
       `daimon_pilula_bonus_de_nivel_e_seguranca`, `armazem_de_cartas_portatil`, `transferir_refino_e_furar_acessorio`,
       `pele_de_pedra_e_escudo_de_fogo_155/126`, `monstro_imune_a_lento_recusa_a_lentidao`, `amizade_com_o_banco`,
       `comandos_de_gm_no_link` e os unitários de `efeitos.rs` (lotes 1–4, imunidades, penas/montaria).
+
+364. **Sessão 2026-10-23: DLL de dados do 1.2.6 publicado; specs do Estúdio corrigidas.**
+
+    - Análise do que falta no Estúdio (pedido do Murillo): S1–S7 feitos, S8 no essencial. Docs desatualizados
+      corrigidos: `ESTUDIO_DO_PAINEL.md` (cabeçalho "nada implementado", linha do S8; o frontend saiu em JS puro e
+      WebGL próprio, não Svelte/three.js) e `specs/07_RECURSOS_DO_CLIENTE.md` (cabeçalho e §8 davam como faltando o
+      envio do cliente, B332, e o `tasks`, S7).
+    - **Publicado o rascunho 57** (autorizado pelo Murillo): `POST /admin/1.2.6/publicar {rascunhos: [57]}` de dentro
+      do `pw-admin-api` → `{aplicados: [], numero: 4}`.
+    - Provas: `versao.json` do 1.2.6 com `atual: 4`; manifesto 4 (61.157 arquivos, SHA `5aade4cf…` igual ao do
+      `versao.json`) com `elementskill.dll` 144.384 `affb6098…` e `habilidades.pwsk` 872.356 `a89e94e4…`; os dois
+      objetos respondem 200 em `/atualizacao/1.2.6/objetos/<sha>` (não descomprimidos aqui: sem zstd na máquina).
+    - **Confirmado em jogo pelo Murillo (2026-10-23):** cliente 1.2.6 com vários personagens; o launcher atualizou para
+      a versão 4 e as habilidades funcionam. DLL de dados (spec 08, fases 1–7) concluído nas duas versões.

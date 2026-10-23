@@ -6,7 +6,7 @@
 > launcher distribui), e o Estúdio lê e edita os números do cliente no `.pwsk`. Decisão do Murillo (2026-10-20): seguir a opção D do
 > `docs/admin/ESTUDO_HABILIDADES_DO_CLIENTE.md`, começando pelo 1.5.5, e distribuir o nosso DLL pelo launcher.
 > Fases: 1 contrato · 2 gabarito (medir o original inteiro) · 3 DLL de dados + diferencial 100% · 4 jogo · 5 Estúdio ·
-> 6 habilidade nova · 7 1.2.6. **Fase 7 (B327): DLL de dados do 1.2.6 com diferencial 0 (§13); falta publicar.**
+> 6 habilidade nova · 7 1.2.6. **Fase 7 (B327): DLL de dados do 1.2.6 com diferencial 0 (§13); publicada como versão 4 do `pw-recursos` 1.2.6 em 2026-10-23 (B364) e confirmada em jogo pelo Murillo.**
 > **Fase 6 (B328): habilidade nova pelo Estúdio (§14).**
 
 Objetivo: um `elementskill.dll` nosso que o `ELEMENTCLIENT.EXE` 1.5.5 BR (v156) carregue no lugar do original, com o
@@ -408,7 +408,10 @@ alteração plantada). Nenhum texto do 1.2.6 consome além dos argumentos.
 
 **Distribuição.** Rascunho **57** no `pw-recursos` 1.2.6 com os dois arquivos (DLL `affb6098…`, `.pwsk` `a89e94e4…`);
 pelo rascunho a ficha da habilidade 1 vem com `fonte: pwsk`, descrição `2, 9, 74,7` e alcance `a = 1, b = 0`, iguais ao
-servidor. **A publicar** (precisa da autorização do Murillo).
+servidor. **Publicado em 2026-10-23 (B364), autorizado pelo Murillo: versão 4 do 1.2.6** — o manifesto 4 traz
+`elementskill.dll` (144.384, `affb6098…`) e `habilidades.pwsk` (872.356, `a89e94e4…`), os dois objetos servidos por
+HTTP; nada gravado no realm (itens só `cliente`). **Confirmado em jogo pelo Murillo (2026-10-23):** o launcher
+atualizou para a 4 e as habilidades funcionam com vários personagens. Com isso as fases 1–7 estão concluídas.
 
 **Diferenças conhecidas:** nível abaixo de 1 nas estáticas e o nível aprendido acima do máximo + 1 no
 `GetAbilityPercent` (o original calcula a fórmula do stub fora da tabela; o nosso usa o nível válido mais próximo). Os
@@ -430,6 +433,6 @@ O id: o pedido, ou o maior em uso + 1. Tem de estar livre nos três (`skillstr` 
 `LoadSkillData` lê o id do `cmd_skill_data` em 2 bytes com sinal (§10 e §13). Tudo é conferido antes de gravar; o
 ensino vem primeiro porque é o que mais pode faltar. A nova herda da base o modelo, o efeito visual, o ícone e o roteiro
 do servidor — o resto se edita como qualquer habilidade (números, descrição, alcance, nos dois). Vale para o 1.5.5 e o
-1.2.6 (no 1.2.6 o `.pwsk` só existe depois de publicar o rascunho 57 da fase 7). Teste de integração: a nova da 1 no
+1.2.6 (no 1.2.6 o `.pwsk` existe desde a versão 4, B364). Teste de integração: a nova da 1 no
 `elements` real do 1.2.6 (ensinada por 3 serviços), nome, descrição, números do cliente e do servidor, a busca, e as
 recusas (id em uso, id acima de 32.767, base inexistente).

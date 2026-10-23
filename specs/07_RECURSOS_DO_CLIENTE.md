@@ -5,7 +5,8 @@
 > (versão 0 + pacotes + HTTP) no B233, confirmado em jogo nas duas versões; P2 (núcleo do launcher
 > `pw-atualizador` + app `tools/pw-launcher`, Tauri no B234 e Win32 nativo desde o B275) no B234, confirmado em jogo; usabilidade do launcher e P3
 > (rascunho, publicar e reverter pelo painel) no B235; Estúdio S1 (editor genérico do `elements.data`) e a gravação
-> no realm ao publicar no B237**; telas próprias por área (S2+) e o envio do cliente original pelo painel faltam.
+> no realm ao publicar no B237**; Estúdio S2–S8 (B238–B328) e envio do cliente original pelo painel (B332) feitos —
+> o que falta está no §8.
 
 ## 1. Serviço
 
@@ -882,8 +883,11 @@ Confirmado pelo Murillo num Windows 7 real (2026-10-19). Conferir depois de comp
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias, `tasks` (a Loja Gold é do B254); no mapa, regiões (`[region]`) editáveis, nome de controlador (o
-  `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta, B253).
+- Estúdio: telas próprias com regras por área (hoje a ficha genérica com rótulos cobre Armas/Armaduras/Consumíveis/
+  Monstros/NPCs/Receitas); diferenças lado a lado na publicação; no mapa, regiões (`[region]`) editáveis, nome de
+  controlador (o `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta,
+  B253); nomes de ação de habilidade no diagnóstico do 3D
+  (sobra do S5). (`tasks` editável: S7, B255–B270.)
 - ~~Envio do cliente original pelo painel~~ (B332, abaixo).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
 - Troca de chave (`chaves.json` assinado pela anterior, §7.2).
