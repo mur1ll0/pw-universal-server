@@ -188,7 +188,7 @@ ser o mesmo arquivo (spec 03 §3.8); há `gshop1`/`gshop2` (segunda loja, `globa
 ## 5. Arquitetura e tecnologia
 
 ```text
-navegador: Estúdio (Svelte + TypeScript + Vite, three.js) ── em static/estudio/, mesma origem e CSP
+navegador: Estúdio (Svelte + TypeScript + Vite; WebGL próprio, sem three.js — B366) ── em static/estudio/, mesma origem e CSP
    │
 pw-admin-api (FastAPI) — sessão GM, CSRF; repassa /api/realms/{realm}/estudio/* (realm explícito)
    │
@@ -466,3 +466,84 @@ o editor **gera os arquivos do servidor a partir do que se edita** e publica os 
   e os parâmetros de `Pixel Size`/`Submap` já aparecem na spec 03 §3.6c).
 - Quanto custa reassar o mapa de luz e se dá para reaproveitar a rotina do pré-processador de mapas aleatórios.
 - Desempenho do terreno inteiro do `world` (88 blocos) no navegador.
+
+## 9. Estúdio em Svelte — fase 1: Equipáveis → Armas (B366, 2026-10-23)
+
+O editor em JS puro passou a se chamar **Editores** (mesmas rotas e comportamento). O **Estúdio** é o front novo
+em Svelte 5 + TypeScript + Vite (`web-admin/estudio/`), saída em `static/estudio/`, gerada no estágio Node do
+Dockerfile do painel; contrato no `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md` ("Estúdio em Svelte"). Ele só chama as rotas
+que os Editores já usam: as alterações são idênticas, no rascunho escolhido no topo.
+
+### 9.1 Decisões do Murillo (2026-10-23)
+
+- Subcategorias de Equipáveis (compartimentos `EC_IvtrTypes.h:56-95`, máscaras `ExpTypes.h:312-324, 736-741`): Armas
+  (`WEAPON_ESSENCE`), Armaduras, Ornamentos, Moda, Voo, Asas, Munição, Livros, e só no 1.5.5 Cartas de General
+  (`POKER_ESSENCE`) e Equipamento de Daimon (`GOBLIN_EQUIP_ESSENCE`). Fora: alto-falante, poções automáticas, bolso,
+  certificado, ficha de força, astrolábio, aljava e o compartimento `RUNE` (tabela não identificada). Nesta fase só
+  Armas tem tela; as outras abrem a busca e apontam para os Editores.
+- **Novo** = clonar o registro de menor id da subcategoria, nome "Novo …", listas de efeitos limpas na tela (só
+  valem ao gravar).
+- **Ícone**: só escolher um que o atlas já tem. Enviar ícone novo fica para um bloco próprio: o cliente lê só o
+  atlas `Surfaces\IconSet\IconList_Ivtr{M,F}.dds` + `.txt` (`EC_GameUIMan.cpp:588-640`; célula pelo nome em
+  minúsculas, `SetCover` `:6204-6208`); o atlas tem 69 × 128 células de 32 px (8.832; 8.749 nomes), a textura DXT1
+  4096² comporta até 128 linhas. Enviar = gravar uma célula (64 blocos DXT1) nos dois atlas e o nome no `.txt`.
+- **Item ligado → Criar**: abre `#/itens/novo?retorno=…` em outra aba (clona um item base, nome e preço), e o id volta
+  pelo `BroadcastChannel("pw-estudio")`. O resto do item se edita nos Editores.
+- Embaixo, no lugar de "Drops" (arma não tem drop): **Efeitos add-on** (`addons`, sorteados ao nascer,
+  `generate_item_temp.h:234-246`), **Efeitos aleatórios** (`rands`, reforja, `itemdataman.cpp:1059-1072`) e **Efeitos
+  únicos** (`uniques` + `probability_unique`). Os ocultos (`hiddens`, só v156) ficam nos Editores.
+
+### 9.2 Campos da Arma (aprovados)
+
+| box | campos (v156; os que faltam no v7 somem sozinhos) |
+| :--- | :--- |
+| Principal | `Name`, `file_icon` (modal), `id_major_type`/`id_sub_type` (modal; criar = clonar `WEAPON_MAJOR_TYPE`/`WEAPON_SUB_TYPE`), descrição do `item_ext_desc.txt` |
+| Requisitos | `character_combo_id` (caixas por classe), `require_level/strength/agility/energy/tili`, `require_reputation` (só v156), `require_projectile` |
+| Combate | `level`, dano físico e mágico (mín., faixa do máx.), `attack_range`, `short_range_mode` (0 longe, 1 perto, 2 assassino) |
+| Comércio | `price`, `shop_price`, `repairfee`, `pile_num_max`, `proc_type` (caixas: `ITEM_PROC_TYPE_*`, `cgame/gs/item.h:309-326`) |
+| Durabilidade e fabricação | `durability_min/max`, `durability_drop_min/max`, `decompose_price/time`, `element_id`+`element_num` (cartão), `id_drop_after_damaged`+`num_drop_after_damaged` (só v156), `levelup_addon`+`material_need` (efeito do refino: id do espaço `ADDON`, `get_item_refine_addon` `itemdataman.cpp:205`), furos no drop/ao fabricar e quantos efeitos (chances) |
+| Visual 3D | `file_model_right`, `file_model_left`, `file_matter` (GLB dos Editores) |
+| Listas | `addons_N`, `rands_N`, `uniques_N` |
+
+Ficam nos Editores: `fixed_props`, `has_guid`, `hiddens_N`, `probability_hidden`.
+
+### 9.3 Chances que somam 100% (regra do servidor)
+
+Cada chance é `float` 0–1. Ao carregar, o GS tira as linhas de id 0 e compacta (`eliminate_zero_item`,
+`cgame/gs/template/elementdataman.cpp:270-296`) e divide cada peso pela soma (`NormalizeRandom`, `:298-320`; soma
+≤ 0,00001 → `[1, 0, …]`); o mesmo para furos (3), quantidade de efeitos (6 no v156) e as listas (`:626-645`). O
+sorteio subtrai até achar (`RandSelect`, `itemdataman.h:33-46`). A tela grava pesos que somam 1 (cada um com
+`Math.fround`, a sobra na última linha com peso) e a lista compactada, zeros no fim (`web-admin/estudio/src/lib/
+chances.ts`, 18 testes em `chances.test.ts`). Mexer num controle reparte o resto entre os outros na proporção que
+tinham.
+
+### 9.4 Faltas registradas
+
+- Brilho do refino no 3D: GFX que o cliente escolhe pela cor e nível (`EC_Player.cpp:9299-9316`); sem renderizador
+  de GFX, o botão fica desligado.
+- O GLB de arma (ex.: `工锤.ecm`, Marreta) sai com 1 malha de 65 vértices e aparece em pedaços — o conversor
+  (`pw-data-loader/src/glb.rs`, o mesmo dos Editores) não monta o modelo de arma inteiro; a conferir num bloco próprio.
+- ~~Os nomes do `EQUIPMENT_ADDON` são internos (`A_MD00`)~~ — B367: cartões e seletor mostram o texto do cliente com
+  o valor, pela rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209): quem calcula o valor é o
+  GS do realm, então vale o `elements` **publicado** (efeito criado só no rascunho aparece pelo nome interno). O
+  refino (`levelup_addon`, ex.: 1712) não tem texto no `item_ext_prop.txt`: o cartão mostra os parâmetros (7, 0).
+
+### 9.5 Ajustes do B367 (pedido do Murillo, 2026-10-23)
+
+- "Abrir nos Editores" abre, em outra aba, `/#editores?realm=…&tabela=…&indice=…&rascunho=…` (spec 06).
+- `require_projectile` aparece pelo nome do `PROJECTILE_TYPE` ("Flechas para Arco de Nível 1-3"; 0 = não exige,
+  `ExpTypes.h:185`: "从弹药类型中选取") e escolhe-se num modal com os tipos da versão.
+- Efeitos: texto do cliente com o valor (ver §9.4).
+
+### 9.6 Busca de efeitos da arma (B368)
+
+Antes, o seletor buscava pelo nome interno do `EQUIPMENT_ADDON` e pelo catálogo de texto do cliente com parâmetros 0
+(`/api/efeitos`); efeito de habilidade (tipo 55, ex.: **Mordaz**, id 1286) só tem texto com o valor do id, então
+nunca aparecia, e efeitos de armadura/ornamento apareciam. Agora as listas da arma usam a regra da edição de
+personagem: o GS diz, por id, se serve na família da peça (`validar_efeito`, `crates/pw-gs/src/bus_server/
+item_editado.rs:47`; família por `TabelaDeAddons::ligar_familias`, `crates/pw-data-loader/src/addons.rs:306-338`) e
+se entra na busca. O Estúdio pede **todos** os ids ≤ 8191 (13 bits no item) do `EQUIPMENT_ADDON` do rascunho, com a
+peça de referência = 1º registro da tabela (publicado), e filtra na tela. 1.5.5: 2.977 efeitos → 1.299 de arma
+(1.213 de outra família, 389 fora da busca, 76 sem tratador no GS). Carrega uma vez por realm/rascunho/tabela
+(~1–6 s). Vale o `elements` publicado: efeito novo só do rascunho entra depois de publicar. O seletor do refino
+continua no espaço `ADDON` inteiro (o refino é "fora da busca").

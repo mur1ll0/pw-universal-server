@@ -257,12 +257,44 @@ na versão publicada do cliente. O painel só repassa ao `pw-recursos` (8101) �
 `specs/07_RECURSOS_DO_CLIENTE.md` §6. `LimitarEntrada` aceita até 512 MiB só em
 `PUT /api/recursos/{v}/rascunhos/{id}/arquivo`.
 
-### Estúdio (B237, fase S1)
+### Editores (B237, fase S1; chamado "Estúdio" até o B366)
 
-Item "Estúdio" no grupo do realm: escolher (ou criar) um rascunho da versão de cliente do realm; tabelas do
-`elements.data` com filtro, registros com busca e páginas, ficha genérica por tipo de campo, salvar no rascunho,
-clonar (id novo do espaço) e remover. Sem rascunho é somente leitura. Repasse em `/api/realms/{realm}/estudio/…`
-(a versão sai de `realms.version`); motor e regras em `specs/07_RECURSOS_DO_CLIENTE.md` §6b.
+Item **"Editores"** no grupo do realm (ícone `editores`; página interna `estudio`, código em `static/estudio.js`,
+`mapa.js`, `modelos.js`, `missoes.js`, `loja.js`, `comportamento.js`, `habilidades.js`, `textos.js`): escolher (ou
+criar) um rascunho da versão de cliente do realm; tabelas do `elements.data` com filtro, registros com busca e
+páginas, ficha genérica por tipo de campo, salvar no rascunho, clonar (id novo do espaço) e remover. Sem rascunho é
+somente leitura. Repasse em `/api/realms/{realm}/estudio/…` (a versão sai de `realms.version`); motor e regras em
+`specs/07_RECURSOS_DO_CLIENTE.md` §6b. O B366 só trocou nome, títulos e ícone — rotas e comportamento iguais.
+**Link direto (B367):** `/#editores?realm=<id>&tabela=<T>&indice=<i>[&rascunho=<n>]` — depois da primeira carga dos
+realms o painel escolhe o realm e abre os Editores na vista Tabelas com o rascunho, a tabela, a busca pelo id e a
+ficha (`painel.js::abrirLinkDireto` → `estudio.pedido`, aplicado em `carregarEstudio`). O "Abrir nos Editores" do
+Estúdio usa esse link, em outra aba.
+
+### Estúdio em Svelte (B366, fase 1: Equipáveis → Armas)
+
+Item **"Estúdio"** no grupo do realm (ícone `estudio`): link para `/static/estudio/index.html#/?realm=<id>` — página
+à parte, mesma origem, mesma sessão (cookie do painel; CSRF de `GET /api/sessao`). Fonte em `web-admin/estudio/`
+(Svelte 5 + TypeScript + Vite); a saída da build vai para `web-admin/backend/static/estudio/` (fora do git) e é
+gerada no **estágio Node do `web-admin/backend/Dockerfile`** (`npm ci`, `npm test`, `npm run build`); em execução o
+FastAPI só serve arquivos estáticos (CSP `self`: sem script/estilo embutido, polyfill de modulepreload desligado).
+Desenvolvimento: `npm run dev` (porta 5173; o proxy fala com o painel em 8000 com a origem dele — só no dev).
+
+**Não tem caminho de escrita próprio:** chama as mesmas rotas dos Editores (ficha, `PUT` de campos, clonar, espaços,
+textos, modelos) no rascunho escolhido no topo. Única rota nova, só leitura: `GET /api/icones/{m|f}?busca=&limite=`
+(1–200) → `{total, icones: [{arquivo, hex}]}` — nomes das células do atlas (`painel/icones.py::buscar_icones`).
+
+| tela | estado |
+| :--- | :--- |
+| Principal: Equipáveis, NPCs, Monstros, Mascotes, Itens (só Equipáveis ativo) | `testado` (navegador, 1.5.5 e 1.2.6) |
+| Busca de Equipáveis: subcategoria, busca paginada com ícone, Abrir/duplo clique, Clonar, Novo (clona o de menor id e limpa as listas de efeitos na tela) | `testado` |
+| Edição de Arma: boxes, modais (ícone, categoria, classes, regras, refino, item ligado), chances que somam 100%, 3D, gravar campos + descrição (`item_ext_desc.txt`) | `testado` no rascunho de teste #60 (1.5.5) |
+| Item novo em outra aba (`#/itens/novo?retorno=`), id devolvido por `BroadcastChannel("pw-estudio")` | `testado` numa aba (envio e recepção da mensagem); **falta** ver com duas abas de verdade |
+| B367: descrição dos efeitos como o cliente mostra ("Ataque físico +2"), pela rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209; valor do GS, então do `elements` publicado); tipo de munição pelo nome com modal de `PROJECTILE_TYPE`; "Abrir nos Editores" com o registro | `testado` (navegador, origem real) |
+| B368: escolher efeito nas listas da arma = **todos** os que servem na família da peça, pela regra do GS da edição de personagem (`/api/realms/{r}/efeitos?item=<1º registro da tabela>&ids=` com todos os ids ≤ 8191 do `EQUIPMENT_ADDON`, em lotes de 180; fora: outra família, refino/pedra/temporário, inexistente no GS); filtro na tela por texto, habilidade, nome interno ou id (`lib/efeitos.ts`) | `testado` (1.5.5: 1.299 de 2.977; Mordaz id 1286 achado por "Mordaz" e por "Garra") |
+| Enviar ícone novo (gravar célula no atlas) | `falta` (bloco próprio, combinado) |
+| Brilho do refino no 3D | `falta` (GFX do cliente, `EC_Player.cpp:9299-9316`; sem renderizador de GFX) |
+
+Detalhe das telas e da regra das chances: `docs/admin/ESTUDIO_DO_PAINEL.md` §9.
 
 ## 2. Patcher (`tools/pw-patch-tool/`) — protótipo
 

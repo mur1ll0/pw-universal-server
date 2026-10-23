@@ -17222,3 +17222,98 @@ comparação lado a lado.
     - (Commitado: código em `d88a283`, documentação no commit seguinte.)
     - Publicar `pw-recursos` e `pw-admin-api`; publicar os rascunhos 58 e 59 e recarregar os mundos; ver no painel e em jogo
       (roteiro no ESTADO §3.3, B365).
+
+366. **Sessão 2026-10-23: Estúdio em Svelte (fase 1: Equipáveis → Armas) e o Estúdio antigo renomeado para
+     "Editores".** Pedido do Murillo; plano, subcategorias e tabela de campos aprovados por ele antes de codificar.
+    ### a. Editores
+    - Menu, títulos e avisos do JS atual: "Estúdio" → "Editores" (`static/*.js`, `index.html`, `painel.js`); ícone
+      novo `editores` (antes a espada dos Templates). Rotas, ids de elemento e comportamento iguais.
+    ### b. Estúdio em Svelte
+    - `web-admin/estudio/` (Svelte 5.19, TypeScript 5.7, Vite 6.0, Vitest 3.0, versões fixas), saída em
+      `web-admin/backend/static/estudio/` (fora do git). Dockerfile do painel ganhou o estágio `estudio`
+      (`node:22-bookworm-slim`: `npm ci`, `npm test`, `npm run build`); `.dockerignore` deixa entrar o fonte e tira
+      `node_modules` e a saída local. CSP `self` respeitada (sem script/estilo embutido; `style:` do Svelte usa CSSOM).
+    - Link "Estúdio" no grupo do realm (ícone `estudio`) → `/static/estudio/index.html#/?realm=<id>`; rota por hash
+      com realm e rascunho, para abrir outra aba no mesmo contexto.
+    - Sem caminho de escrita novo: ficha, `PUT` campos, clonar, espaços, textos, GLB. Rota nova só de leitura:
+      `GET /api/icones/{m|f}?busca=&limite=` (`painel/icones.py::buscar_icones`, teste
+      `test_busca_de_nomes_do_atlas_para_o_estudio`).
+    - Telas: principal (5 categorias, só Equipáveis ativa); busca (subcategorias com evidência em
+      `EC_IvtrTypes.h:56-95`/`ExpTypes.h:312-324, 736-741`, só as que existem na versão); edição de Arma com as boxes
+      aprovadas (`ESTUDIO_DO_PAINEL.md` §9.2); modais de ícone (atlas), categoria (clonar `WEAPON_MAJOR/SUB_TYPE`),
+      classes (`1 << classe`, 12 no 1.5.5 / 8 no 1.2.6), regras (`ITEM_PROC_TYPE_*`, `item.h:309-326`), efeito do
+      refino (`levelup_addon`, espaço `ADDON`, descrição pelo `/api/efeitos` com os parâmetros do `EQUIPMENT_ADDON`),
+      item ligado (`element_id`, `id_drop_after_damaged`) com "Criar" em outra aba e devolução por `BroadcastChannel`.
+    - Chances: `src/lib/chances.ts` porta a regra do GS (`NormalizeRandom` + `eliminate_zero_item`,
+      `elementdataman.cpp:270-320, 626-645`; `RandSelect`, `itemdataman.h:33-46`): float 0–1, soma 1 com `Math.fround`
+      e sobra na última linha, lista compactada com zeros no fim.
+    - Visualizador 3D: o de `modelos.js` portado para `src/lib/glb.ts`.
+    ### c. Evidência nova
+    - `proc_type`: bits `ITEM_PROC_TYPE_*` do `cgame/gs/item.h:309-326` (1.5.5).
+    - O brilho do refino é GFX do cliente (`EC_Player.cpp:9299-9316`), não vem no GLB.
+    - Atlas de ícones: 69 × 128 células de 32 px, 8.749 nomes; textura DXT1 4096² (cabe até 128 linhas).
+    ### d. Provas
+    - `chances.test.ts`: **18/18** (local e no estágio Node do Docker; build do estágio OK).
+    - `svelte-check`: 0 erros, 0 avisos.
+    - `pw-recursos` com `TEST_DATABASE_URL`: **29 passaram, 0 falharam** (nenhum Rust mudou).
+    - Painel no `pw-admin-api` (cópia em `/tmp/tp`): 89 testes, 2 falhas + 12 erros — os mesmos 14 de ambiente do
+      B342; os 2 de ícone com `ICONES_DIR=/app/data/icones`: **2/2**.
+    - Navegador (Vite dev com proxy para o painel em 8000): 1.5.5 e 1.2.6 (no v7 somem reputação, "cai ao quebrar" e
+      ficam 4 posições de quantidade de efeitos); no rascunho de teste #60 do 1.5.5: nome + 5 chances gravados (soma
+      0,99999999 em dupla), descrição nova no `item_ext_desc.txt` (`acrescentar`), item novo 50997 criado pela aba
+      "Item novo" e a mensagem do canal recebida. Rascunho #60 **descartado** ao fim.
+    - Achado e corrigido no teste: a busca de texto por id devolve antes os textos que contêm o número; a tela agora
+      percorre as páginas até a chave exata (`textoDaChave`).
+    ### e. Falta
+    - ~~Publicar o `pw-admin-api`~~ — publicado a pedido do Murillo (`docker compose … up -d --build pw-admin-api`;
+      estágio Node com 18/18); conferido em `localhost:8000`: Estúdio servido, sem bloqueio de CSP, `/api/icones/m`
+      respondendo. Falta o Murillo ver no painel; ver o "Criar" com duas abas.
+    - Envio de ícone novo (gravar célula no atlas); brilho do refino no 3D; o GLB de arma sai com 1 malha de 65
+      vértices (`工锤.ecm`) e aparece em pedaços — conversor, não o Estúdio.
+    - Próximas subcategorias (Armaduras, Ornamentos, Moda…) e as outras categorias.
+    - Não commitado.
+
+367. **Sessão 2026-10-23: ajustes do Estúdio pedidos pelo Murillo (depois de testar o B366).**
+    ### a. O que mudou
+    - **Abrir nos Editores:** levava à tela inicial. Agora o Estúdio abre em outra aba
+      `/#editores?realm=<id>&tabela=<T>&indice=<i>&rascunho=<n>`; o painel (`painel.js::abrirLinkDireto`, depois da
+      primeira carga dos realms) escolhe o realm e deixa o pedido em `estudio.pedido`, que o `carregarEstudio`
+      (`estudio.js`) aplica: rascunho, vista Tabelas, tabela, ficha e a busca pelo id.
+    - **Tipo de munição:** `require_projectile` mostra o nome do `PROJECTILE_TYPE` e abre um modal com os tipos
+      (`ExpTypes.h:185`, "需要的弹药类型(从弹药类型中选取)"); 0 = não exige.
+    - **Descrição dos efeitos:** os cartões mostravam o nome interno do `EQUIPMENT_ADDON` (`A_A24`, `Y_E23`). A edição
+      de personagem usa `GET /api/realms/{r}/efeitos?item=&ids=` (B209): o GS devolve o valor de cada id e o painel
+      monta o texto do cliente. O Estúdio passou a usar a mesma rota (`api.ts::descreverEfeitos`, em lotes de 150 ids),
+      nos cartões, no seletor de efeitos e no refino. Ex. (Marreta, id 11): "Ataque físico +2", "Ataque Máx +3", "HP +15",
+      "Constituição +1". Limite: o valor vem do GS, logo do `elements` publicado. O refino 1712 não tem texto no cliente:
+      mostra os parâmetros (7, 0).
+    ### b. Provas
+    - `svelte-check` 0/0; `chances.test.ts` 18/18; build OK.
+    - Navegador (dev e, depois de publicar, `localhost:8000`): descrições nos cartões; munição "nenhuma (não exige)" e o
+      modal com "Flechas para Arco de Nível 1-3" (id 8), "…4-6" (392), "Dardos para Besta…" (393)…; o link abriu
+      "Editores", realm 1.5.5, ficha "☆Marreta do Trabalhador · id 11".
+    - `pw-admin-api` publicado (a pedido, continuação do B366).
+    ### c. Falta
+    - Murillo ver no painel. Não commitado.
+
+368. **Sessão 2026-10-23: busca de efeitos da arma com todos os que servem na família (Mordaz).** Relato do Murillo:
+     o "Punho da Luz Fixa" tem o efeito Mordaz, que nunca aparecia na busca, e a busca não trazia todos os efeitos.
+    ### a. Causa
+    - O seletor do Estúdio procurava pelo nome interno (`espacos/ADDON`) e pelo catálogo `/api/efeitos` (texto com
+      parâmetros 0). O Mordaz (id 1286) é efeito de habilidade (tipo 55): o texto vem da introdução da habilidade, com o
+      valor do id (B213/B214), então não estava em nenhum dos dois. E não havia filtro por família.
+    ### b. Correção
+    - `web-admin/estudio/src/lib/efeitos.ts`: lista todos os ids do `EQUIPMENT_ADDON` (≤ 8191) e pergunta ao GS, pela
+      rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209), quais servem na família da peça e
+      entram na busca — a mesma regra (`validar_efeito` + `ligar_familias`). Filtro na tela por texto do cliente, nome
+      da habilidade, nome interno ou id; cache por realm/rascunho/tabela.
+    - `SeletorDeEfeito.svelte` nas listas da arma (add-on, aleatórios, únicos); o refino continua no seletor do espaço.
+    ### c. Provas
+    - `vitest`: **25/25** (7 novos de `filtrarEfeitos`); `svelte-check` 0/0.
+    - Navegador (dev, rascunho de teste #61 do 1.5.5, descartado): Punho da Luz Fixa (id 8292) mostra "Mordaz: Aumenta
+      seu poder de ataque físico." · habilidade Garra · id 1286; o seletor lista **1.299 de 2.977** efeitos (1.213 de
+      outra família, 389 fora da busca, 76 inexistentes); "Mordaz" e "Garra" acham o 1286; "Crítico" dá 51. 1.2.6:
+      1.649 efeitos, a rota responde com a mesma classificação.
+    - `pw-admin-api` publicado.
+    ### d. Falta
+    - Murillo ver no painel. Não commitado.
