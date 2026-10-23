@@ -17175,3 +17175,50 @@ comparação lado a lado.
       objetos respondem 200 em `/atualizacao/1.2.6/objetos/<sha>` (não descomprimidos aqui: sem zstd na máquina).
     - **Confirmado em jogo pelo Murillo (2026-10-23):** cliente 1.2.6 com vários personagens; o launcher atualizou para
       a versão 4 e as habilidades funcionam. DLL de dados (spec 08, fases 1–7) concluído nas duas versões.
+
+365. **Sessão 2026-10-23: o que faltava no Estúdio.** Pedido do Murillo: implementar tudo da lista do B364.
+
+    ### a. Alinhamento cliente × servidor
+    - Medido pela ferramenta do B253: 9 mapas desalinhados no 1.5.5 (a25, a32, a40, a43, a61, a70, b01, random03 duas
+      vezes no `instance.txt`) — sempre o cliente com distritos a mais e o **mesmo** carimbo (a61: 27 × 25); 4 no 1.2.6
+      (a12 carimbo diferente; a25 9 × 1 distritos; a27 cliente 1 distrito × servidor 12 com carimbo mais novo, e
+      `region` 6 × 1; a31 `region` 34 × 33). **Decisão do Murillo: vale o cliente nos dois.**
+    - Rascunho **58** (1.5.5, 8 `precinct.sev`) e **59** (1.2.6, a12/a25/a27/a31), zero desalinhados no rascunho.
+      **Publicar foi barrado pela proteção de deploy** — ficam para o Murillo autorizar. O §5D citava também a nc01,
+      que o alinhamento não lista (não está no `instance.txt` do cliente).
+
+    ### b. Regiões (`[region]`)
+    - Evidência: o tipo da região existe só no cliente — `0` PK, `1` santuário (`EL_Region.h:86-91`); o cliente testa o
+      santuário (`IsPointInSanctuary`, `EL_Region.cpp:382-392`) e manda `C2S::ENTER_SANCTUARY`, que o servidor só aceita
+      (`playercmd.cpp:2812-2827`). No `.sev` a região é só o polígono.
+    - `Estudio::editar_regiao/nova_regiao/remover_regiao` em par `.clt`+`.sev` (exige o `.clt` alinhado); rotas
+      `…/regioes`; camada "Regiões" no mapa.
+
+    ### c. Itens pequenos
+    - Nome do controlador do `npcgen` (`szName[128]`, GBK): `npcgen_editavel::definir_nome_do_controlador`, campo no editor.
+    - Comportamento: `renomear_gatilho`, `envolver_condicao`, `remover_condicao`, `criar_gatilho`, a árvore regravada como
+      `SaveConditonTree` (`policy.cpp:110-149`). Medidas novas: o Não usa só o filho **direito** (113 no 1.2.6, 1.672 no
+      1.5.5); E/Ou sempre com os dois (9 e 770); versão única dos gatilhos por arquivo (1 e 23). O leitor passou a
+      decodificar o nome do gatilho em GBK (era UTF-8 com perdas).
+    - Ações de habilidade no diagnóstico 3D: `GetNativeName` + `_ambiente_` + `吟唱`/`施放起`/`施放落`
+      (`EC_NPCModel.cpp:624-670`); o nome nativo vem do `habilidades.pwsk` (hex GBK); as habilidades, dos campos
+      `*id_skill` do registro e das operações de habilidade da política `common_strategy`.
+
+    ### d. Diferenças lado a lado e telas próprias
+    - Página Recursos: "Diferenças (N)" por item (onde · campo · antes · depois, do `resumo`); a confirmação de publicar
+      conta arquivos e diferenças.
+    - `GET estudio/telas/{T}/{i}`: loja (`NPC_SELL_SERVICE`), forja (`NPC_MAKE_SERVICE` → `RECIPE_ESSENCE`) e teleporte
+      (`NPC_TRANSMIT_SERVICE` → `world_targets`), com "ver no mapa". Tropeço: as listas achatadas do layout começam em
+      **1** (`pages_1_goods_1_id`), não em 0 — o primeiro teste não achou nenhuma loja; `indices_da_lista` aceita os dois.
+    - Tropeço no teste: reusei o `operacao_id` "t_p4_r11" (idempotente) e o rascunho da Loja Gold voltou o meu já publicado.
+
+    ### e. Provas
+    - `tests/estudio.rs` passa (regiões, controlador, diagnóstico de habilidade, telas) e
+      `aipolicy_editavel::testes_b365` (os dois realms: envolver/tirar = arquivo idêntico; gatilho do zero relê).
+    - `cargo test --workspace` com `TEST_DATABASE_URL`: **1.249 passaram, 0 falharam**. Painel: 88 testes, 74 ok; as
+      **14 falhas são as mesmas de `teste_base`** do B342 (binário `pw-gs` Linux e daemon real fora do contêiner).
+
+    ### f. Falta
+    - (Commitado: código em `d88a283`, documentação no commit seguinte.)
+    - Publicar `pw-recursos` e `pw-admin-api`; publicar os rascunhos 58 e 59 e recarregar os mundos; ver no painel e em jogo
+      (roteiro no ESTADO §3.3, B365).

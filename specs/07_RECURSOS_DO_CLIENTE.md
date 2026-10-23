@@ -809,6 +809,44 @@ seletor de perfil ganha "como modelo de voo — espada/asa/rodas". A ficha de `F
 abre o modelo já no perfil de voo, com o `fly_mode` do registro. Para cada nome que falta, o "Criar" do B280 cria a
 ação.
 
+## 6c. Estúdio: o que faltava (B365)
+
+- **Regiões (`[region]`)** — `POST estudio/mapas/{c}/regioes {campos: {nome, tipo, vertices}}`,
+  `PUT …/regioes/{i} {campos}` e `DELETE …/regioes/{i}`, sempre em par (`region.clt` + `region.sev`, exige o `.clt`
+  alinhado). Nome e tipo só existem no cliente (`CELRegion::Load`, `EL_Region.cpp:80-83`); o polígono vai aos dois. Tipo:
+  `0` PK, `1` santuário (`EL_Region.h:86-91`) — é o **cliente** que testa o santuário (`IsPointInSanctuary`,
+  `EL_Region.cpp:382-392`) e manda `C2S::ENTER_SANCTUARY` (`playercmd.cpp:2812-2827`); no servidor o polígono só serve
+  aos pontos de passagem. Região nova entra no fim dos dois arquivos (os índices dos portais não mudam). `GET …/portais`
+  traz por região `indice`, `nome`, `tipo` e `tipo_nome`. Painel: camada "Regiões" no mapa (vermelho PK, verde
+  santuário), clicar abre nome/tipo, "Redesenhar polígono", "Nova região (desenhar)" e "Remover região".
+- **Nome do controlador do `npcgen`** — `PUT …/npcgen/controladores/{i} {campos: {nome}}` grava `szName[128]` (GBK,
+  até 127 bytes, resto zerado; `npcgen_editavel::definir_nome_do_controlador`). Rótulo do editor: o GS não lê.
+- **Comportamento** — no `PUT estudio/comportamentos/{id}`: `nome` (renomear gatilho), `envolver {caminho, operador
+  5|6|7, folha?}`, `remover_condicao "<caminho>"` e `novo_gatilho {nome, condicao, operacao, id_gatilho?, id?}` (sem
+  `gatilho`). Regras e medidas na spec 03 (aipolicy, B365). Painel: "Renomear", por nó "Envolver" (Não/E/Ou) e "Tirar
+  nó", e "Novo gatilho (do zero)" no topo da política.
+- **Ações de habilidade no diagnóstico do 3D** (sobra do S5) — `GET estudio/modelos/ficha?caminho=<.ecm>&habilidades=1,2
+  &politica=N`: para cada habilidade (as dos campos `*id_skill` do registro e as que a política `common_strategy` manda
+  usar), o nome que o cliente pede: `GetNativeName(id)` (do `habilidades.pwsk`, hex GBK) + `_<ambiente>_` (só mascote) +
+  `吟唱` / `施放起` / `施放落` (`EC_NPCModel.cpp:624-670`), com o mesmo estado e o mesmo "Criar"/"Copiar" do diagnóstico de
+  monstro. Habilidade sem nome nativo no `.pwsk` aparece como tal (o cliente não acha ação).
+- **Diferenças lado a lado** — página Recursos: cada item de rascunho e do histórico tem "Diferenças (N)", uma tabela
+  onde · campo · antes · depois montada do `resumo` (`campos`/`registros` do elements, `mudancas` dos outros editores);
+  a confirmação de publicar diz quantos arquivos e diferenças vão.
+- **Telas próprias** (só leitura; edita-se nos campos da ficha) — `GET estudio/telas/{T}/{i}`: `NPC_SELL_SERVICE` (loja
+  por página: item com nome, ícone, `price` do item, contribuição), `NPC_MAKE_SERVICE` (forja por página: receita, o que
+  faz com a chance, materiais e quantidades, preço, nível) e `NPC_TRANSMIT_SERVICE` (destinos: nome do
+  `world_targets.txt`, mapa do `instance.txt`, chegada do `world_targets.sev`, preço, nível; "ver no mapa" abre a vista
+  Mapas com a camada de teleportes no destino). Listas achatadas do layout começam em 1 (v7 e v156) — o código aceita 0
+  ou 1. Outra tabela → 400. "Onde nasce" já existia (B284).
+- **Alinhamento aplicado (decisão do Murillo, 2026-10-23: vale o cliente nos dois)** — rascunhos **58** (1.5.5: a25, a32,
+  a40, a43, a61, a70, b01, random03; só `precinct.sev`) e **59** (1.2.6: a12, a25, a27, a31; `precinct.sev` e
+  `region.sev`), com zero desalinhados no rascunho. **Não publicados**: a publicação foi barrada pela proteção de deploy.
+
+Testes: `tests/estudio.rs` (regiões criar/editar/remover e publicar em par; nome do controlador; diagnóstico de
+habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6) e
+`aipolicy_editavel::testes_b365` (os dois realms).
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -883,11 +921,10 @@ Confirmado pelo Murillo num Windows 7 real (2026-10-19). Conferir depois de comp
 - ("Aguarda reinício" e reiniciar pelo painel: feitos no B249, spec 06.) Rascunho só de servidor continua gerando
   versão nova do cliente com o manifesto igual — **decisão do B250, mantido**: o launcher só baixa o manifesto e termina,
   e a versão é o que guarda o `publicada_em` do aviso de reinício e o que o reverter usa.
-- Estúdio: telas próprias com regras por área (hoje a ficha genérica com rótulos cobre Armas/Armaduras/Consumíveis/
-  Monstros/NPCs/Receitas); diferenças lado a lado na publicação; no mapa, regiões (`[region]`) editáveis, nome de
-  controlador (o `szName` é só leitura); decidir e aplicar o alinhamento dos 14 pares que diferem (ferramenta pronta,
-  B253); nomes de ação de habilidade no diagnóstico do 3D
-  (sobra do S5). (`tasks` editável: S7, B255–B270.)
+- Estúdio: ~~telas próprias, diferenças lado a lado, regiões, nome de controlador, ações de habilidade no 3D, árvore e
+  gatilho do zero no comportamento~~ (B365, §6c). Falta **publicar os rascunhos 58 e 59** (alinhamento cliente × servidor,
+  já decidido: vale o cliente) e recarregar os mundos. Telas próprias que editam no próprio desenho (arrastar item na
+  grade da loja, editar receita na forja) não existem: a edição continua na ficha.
 - ~~Envio do cliente original pelo painel~~ (B332, abaixo).
 - Pacotes novos de tempos em tempos (hoje a versão N reaproveita os da 0 e o resto vai por objeto).
 - Troca de chave (`chaves.json` assinado pela anterior, §7.2).

@@ -1,7 +1,9 @@
 # Estúdio do painel: editor de conteúdo do jogo (B231, revisto em 2026-10-14)
 
 Viabilidade, desenho e tecnologia do **Estúdio** — a área do painel web onde se edita o conteúdo do jogo.
-Estado (2026-10-23): S1–S7 feitos, S8 feito no essencial (B301–B328; a fazer: §6 e `specs/07_RECURSOS_DO_CLIENTE.md` §8).
+Estado (2026-10-23): S1–S8 feitos; as sobras (telas próprias de loja/forja/teleporte, diferenças lado a lado, regiões,
+nome de controlador, ações de habilidade no 3D, árvore e gatilho do zero no comportamento) no **B365**
+(`specs/07_RECURSOS_DO_CLIENTE.md` §6c). Falta publicar os rascunhos 58/59 do alinhamento (vale o cliente).
 O frontend saiu em JS puro (`web-admin/backend/static/*.js`, CSP `self`, sem build) e o 3D num WebGL próprio (B272),
 não em Svelte/three.js como decidido abaixo. Base: `RECURSOS_VERSIONAMENTO_E_ATUALIZADOR.md` §8 (cliente solto,
 zip, registro de alterações, Blender).

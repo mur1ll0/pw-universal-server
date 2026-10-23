@@ -290,6 +290,15 @@ folha do mesmo papel que já apareça no arquivo (o 1.2.6 só tem 0-8), com par�
 tamanho de `tamanho_do_parametro` (respeitando `le_parametro_nesta_versao`; falas vazias com NUL) e, para
 rodar/parar/ativar gatilho, um id de gatilho da política (zero cairia em `GetTriggerPtr(-1)`); `remover_operacao`
 recusa a última do gatilho. Testado nos dois realms: trocar e voltar = arquivo idêntico; outra política igual.
+**Árvore, nome e gatilho do zero (B365):** a árvore se regrava inteira como `SaveConditonTree` (`policy.cpp:110-149`:
+tipo, tamanho, parâmetro; folha → `3`; senão `1`+esquerda, `2`+direita e `4`). `envolver_condicao` põe Não (5)/Ou (6)/E (7)
+em volta de um nó de **condição** — o Não leva o nó no filho **direito** (medido: 113 Não no 1.2.6 e 1.672 no 1.5.5, todos
+só com o direito); E/Ou levam o nó à esquerda e uma folha nova (tipo do arquivo, parâmetro zerado) à direita (medido:
+E/Ou sempre com os dois filhos, 9 e 770). `remover_condicao` tira um Não (fica o filho) ou um filho de E/Ou (fica o
+irmão). `renomear_gatilho` grava `szName[128]` em GBK (o leitor agora decodifica o nome em GBK; antes era UTF-8 com
+perdas). `criar_gatilho` acrescenta no fim da política: versão do arquivo (medido: única — 1 no 1.2.6, 23 no 1.5.5),
+id pedido ou maior + 1, ativo/não rodando/só em combate, uma folha de condição e uma operação (alvo 0). Testado nos dois
+realms: envolver e tirar devolvem o arquivo idêntico; o gatilho novo relê e as outras políticas não mudam.
 
 ### 3.5 `ptemplate.conf` (`ptemplate.rs`)
 
