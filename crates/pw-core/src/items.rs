@@ -12,6 +12,9 @@ pub enum ContainerType {
     /// cliente, `EC_IvtrTypes.h:39`). No banco é o `container_type` **5**: o 2 já era o
     /// armazém quando ela entrou.
     TaskInventory,
+    /// B363 — o armazém de cartas (`IL_TRASH_BOX4` = 7, portátil, `TRASHBOX_BASE_SIZE4` 120 slots,
+    /// `gs/playertrashbox.h:19-67`, `gs/config.h:18`). No banco o `container_type` **6**. Só o 1.5.5.
+    ArmazemDeCartas,
 }
 
 impl ContainerType {
@@ -23,6 +26,7 @@ impl ContainerType {
             ContainerType::Fashion => 3,
             ContainerType::PetCorral => 4,
             ContainerType::TaskInventory => 5,
+            ContainerType::ArmazemDeCartas => 6,
         }
     }
 
@@ -34,6 +38,7 @@ impl ContainerType {
             3 => ContainerType::Fashion,
             4 => ContainerType::PetCorral,
             5 => ContainerType::TaskInventory,
+            6 => ContainerType::ArmazemDeCartas,
             _ => ContainerType::Inventory,
         }
     }
@@ -46,6 +51,7 @@ impl ContainerType {
             ContainerType::Fashion => "FASHION",
             ContainerType::PetCorral => "PET_CORRAL",
             ContainerType::TaskInventory => "TASK_INVENTORY",
+            ContainerType::ArmazemDeCartas => "CARD_STOREHOUSE",
         }
     }
 
@@ -68,6 +74,7 @@ impl ContainerType {
             "FASHION" | "3" => Some(ContainerType::Fashion),
             "PET_CORRAL" | "4" => Some(ContainerType::PetCorral),
             "TASK_INVENTORY" | "5" => Some(ContainerType::TaskInventory),
+            "CARD_STOREHOUSE" | "6" => Some(ContainerType::ArmazemDeCartas),
             _ => None,
         }
     }

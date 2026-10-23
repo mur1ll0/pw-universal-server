@@ -67,6 +67,10 @@ pub struct ServicosDoNpc {
     /// 1.2.6 o mesmo bit, lido em `NPC_ESSENCE+0x348` (`npc_stubs_manager::LoadTemplate`, VA
     /// 0x80efff8) — o campo que o layout v7 chama `combined_services` desde o B163.
     pub refinar: bool,
+    /// B363 — `combined_services & 0x10000` → `service_refine_transmit` (serviço 45, `npcgenerator.cpp:988-991`) e
+    /// `combined_services2 & 0x80000` → `service_make_slot_for_decoration` (serviço 96, `:1222-1225`).
+    pub transferir_refino: bool,
+    pub furar_acessorio: bool,
     /// `NPC_TASK_MATTER_SERVICE.tasks[16]` (via `id_task_matter_service`) — serviço 8, item de
     /// missão pelo NPC: `(id_task, [(id_matter, num_matter); 4])` **na ordem do arquivo**, zeros
     /// inclusive (`OnNPCDeliverTaskItem` para no primeiro `id_task` 0, `TaskServer.cpp:706-760`).
@@ -166,6 +170,8 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 incrustar: i(npc, "id_install_service") != 0,
                 remover_pedras: i(npc, "id_uninstall_service") != 0,
                 refinar: i(npc, "combined_services") & 0x4000 != 0,
+                transferir_refino: i(npc, "combined_services") & 0x10000 != 0,
+                furar_acessorio: i(npc, "combined_services2") & 0x80000 != 0,
                 itens_de_missao: itens_de_missao(itens.get(&i(npc, "id_task_matter_service"))),
                 missoes_com_item: Vec::new(),
             };

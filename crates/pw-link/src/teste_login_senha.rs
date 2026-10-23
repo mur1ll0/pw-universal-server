@@ -94,6 +94,8 @@ async fn verificar_fluxo(criar: bool) {
             uplink: None,
             uplinks_por_mundo: HashMap::new(),
             jogadores_visiveis: RwLock::new(HashMap::new()),
+            amizades: crate::amizade::Amizades::default(),
+            gm: crate::gm::EstadoDeGm::default(),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let mut sessao =

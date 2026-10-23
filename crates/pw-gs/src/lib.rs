@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod barraca;
 pub mod administracao;
 pub mod bus_server;
 pub mod cartas_de_general;
@@ -21,6 +22,7 @@ pub mod navegacao;
 pub mod planta;
 pub mod npc;
 pub mod politica;
+pub mod pk;
 pub mod pq;
 pub mod progressao;
 pub mod refino;

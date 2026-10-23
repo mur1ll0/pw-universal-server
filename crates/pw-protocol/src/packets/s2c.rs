@@ -1182,6 +1182,186 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `PLAYER_OPEN_BOOTH` (166; `player_open_market`, `protocol_imp.h:2375-2389`) — a quem vê:
+    /// `{int pid; u8 market_crc; u8 name_len; char name[]}`, o nome cortado em 127. Igual no `gs`
+    /// 1.2.6 (VA da `Make<player_open_market>`: `<<i <<h <<h push_back`). B363.
+    pub fn player_open_booth(pid: i32, market_id: u8, nome: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(166);
+        stream.write_i32_le(pid);
+        stream.write_u8(market_id);
+        let n = nome.len().min(127);
+        stream.write_u8(n as u8);
+        stream.write_raw_bytes(&nome[..n]);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `SELF_OPEN_BOOTH` (167; `self_open_market`, `protocol_imp.h:2391-2406`) — ao dono:
+    /// `{u16 count; {int type; u16 index; u32 count; u32 price}[count]}` (`index` 0xFFFF = compra).
+    pub fn self_open_booth(itens: &[(i32, u16, u32, u32)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(167);
+        stream.write_u16_le(itens.len() as u16);
+        for &(tipo, indice, n, preco) in itens {
+            stream.write_i32_le(tipo);
+            stream.write_u16_le(indice);
+            stream.write_u32_le(n);
+            stream.write_u32_le(preco);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_CLOSE_BOOTH` (168; `player_cancel_market`) — `{int pid}`, a quem vê e ao dono.
+    pub fn player_close_booth(pid: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(168);
+        stream.write_i32_le(pid);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_BOOTH_INFO` (169; `player_market_info`, `protocol_imp.h:2338-2373`) — a vitrine para
+    /// quem abriu: `{int pid; int market_id; u32 count}` e cada `market_goods`: venda
+    /// `{int type; int count; u32 price; int expire_date; u16 len; content}`, compra
+    /// `{int type; int -count; u32 price}`, esgotado ou mudado `{int 0}`. Igual no 1.2.6.
+    pub fn player_booth_info(pid: i32, market_id: i32, itens: &[ItemDaVitrine]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(169);
+        stream.write_i32_le(pid);
+        stream.write_i32_le(market_id);
+        stream.write_u32_le(itens.len() as u32);
+        for it in itens {
+            match it {
+                ItemDaVitrine::Vende { tipo, quantidade, preco, validade, conteudo } => {
+                    stream.write_i32_le(*tipo);
+                    stream.write_i32_le(*quantidade as i32);
+                    stream.write_u32_le(*preco);
+                    stream.write_i32_le(*validade);
+                    stream.write_u16_le(conteudo.len() as u16);
+                    stream.write_raw_bytes(conteudo);
+                }
+                ItemDaVitrine::Compra { tipo, quantidade, preco } => {
+                    stream.write_i32_le(*tipo);
+                    stream.write_i32_le(-(*quantidade as i32));
+                    stream.write_u32_le(*preco);
+                }
+                ItemDaVitrine::Vazio => stream.write_i32_le(0),
+            }
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `BOOTH_TRADE_SUCCESS` (170; `player_market_trade_success`) — `{int trader}`, aos dois lados.
+    pub fn booth_trade_success(trader: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(170);
+        stream.write_i32_le(trader);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `BOOTH_NAME` (171; `player_market_name`, `protocol_imp.h:2429-2443`) —
+    /// `{int pid; u8 market_id; u8 name_len; char name[]}`, resposta ao `QUERY_BOOTH_NAME` (78).
+    pub fn booth_name(pid: i32, market_id: u8, nome: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(171);
+        stream.write_i32_le(pid);
+        stream.write_u8(market_id);
+        let n = nome.len().min(127);
+        stream.write_u8(n as u8);
+        stream.write_raw_bytes(&nome[..n]);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `OPEN_BOOTH_TEST` (188; `personal_market_available`) — só cabeçalho: pode abrir barraca.
+    pub fn open_booth_test() -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(188);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `BOOTH_SELL_ITEM` (191; `trade_away_item`, `protocol_imp.h:2655-2663`) — ao dono da barraca:
+    /// `{short inv_index; int item_type; u32 item_count; int buyer}`. Igual no 1.2.6 (`<<s <<i <<j <<i`).
+    pub fn booth_sell_item(inv_index: i16, tipo: i32, quantidade: u32, comprador: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(191);
+        stream.write_i16_le(inv_index);
+        stream.write_i32_le(tipo);
+        stream.write_u32_le(quantidade);
+        stream.write_i32_le(comprador);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PURCHASE_ITEM` (72) da barraca (`Make<player_purchase_item>`, `protocol_imp.h:1346-1376`):
+    /// `tipo` 0 quando o jogador comprou da barraca, 1 quando a barraca comprou dele; por item o
+    /// `stall_index`.
+    pub fn purchase_item_da_barraca(cost: u32, yinpiao: u32, tipo: u8, itens: &[(i32, i32, u32, u16, u8)]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(72);
+        stream.write_u32_le(cost);
+        stream.write_u32_le(yinpiao);
+        stream.write_u8(tipo);
+        stream.write_u16_le(itens.len() as u16);
+        for &(tid, expira, n, slot, vaga) in itens {
+            stream.write_i32_le(tid);
+            stream.write_i32_le(expira);
+            stream.write_u32_le(n);
+            stream.write_u16_le(slot);
+            stream.write_u8(vaga);
+        }
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PLAYER_USE_ITEM_WITH_ARG` (258; `player_use_item_with_arg`, `common/protocol.h:2916-2925`): `{u8 where;
+    /// u8 index; int item_id; u16 use_count; u16 arg_size; arg}` ao próprio, depois do `UseItemWithArg`
+    /// (`player.cpp:18362-18388`). B363.
+    pub fn player_use_item_with_arg(onde: u8, slot: u8, item_id: i32, gastos: u16, arg: &[u8]) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(258);
+        stream.write_u8(onde);
+        stream.write_u8(slot);
+        stream.write_i32_le(item_id);
+        stream.write_u16_le(gastos);
+        stream.write_u16_le(arg.len() as u16);
+        stream.write_raw_bytes(arg);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `INVADER_RISE` (117), `INVADER_FADE` (119) — `{int id}` (`common/protocol.h:1941-1958`): o jogador
+    /// ficou rosa / voltou a branco, a quem vê e a ele (`AutoBroadcastCSMsg(..., -1)`). Iguais no 1.2.6. B363.
+    pub fn invader_rise(id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(117);
+        stream.write_i32_le(id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    pub fn invader_fade(id: i32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(119);
+        stream.write_i32_le(id);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `PARIAH_RISE` (118) — `{int id; char pariah_state}`: vermelho com o grau. B363.
+    pub fn pariah_rise(id: i32, grau: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(118);
+        stream.write_i32_le(id);
+        stream.write_u8(grau);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
+    /// `REVIVAL_INQUIRE` (197) — `{ float exp_reduce }` (`cmd_revival_inquire`,
+    /// `EC_GPDataType.h:3236-3239`; no servidor `ENABLE_RESURRECT_STATE`,
+    /// `gplayer_dispatcher::enable_resurrect_state`, `gs/player.cpp:5197-5203`): o jogador morto
+    /// pode aceitar o reviver de outro (a janela do cliente mostra a perda) e responde com o C2S 87.
+    /// Mesmo id e 4 B no 1.2.6 (`gplayer_dispatcher::enable_resurrect_state(float)`, VA 0x8070034).
+    pub fn revival_inquire(exp_reduce: f32) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(197);
+        stream.write_f32_le(exp_reduce);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `SET_COOLDOWN` (198) — `{ int cooldown_index; int cooldown_time; }`. O índice de
     /// habilidade é `id + COOLINGID_BEGIN` (1024, `playerwrapper.cpp:170`).
     pub fn set_cooldown(index: i32, time_ms: i32) -> Self {
@@ -1679,6 +1859,9 @@ impl S2CGamedataSend {
         if v.estados_visiveis.iter().any(|&e| e != 0) { state |= est::PROPRIEDADE_ESTENDIDA; }
         if v.em_grupo { state |= est::EM_GRUPO; }
         if v.lider_do_grupo { state |= est::LIDER_DO_GRUPO; }
+        if v.barraca.is_some() { state |= est::BARRACA; }
+        match v.pk { 1 => state |= est::AGRESSOR, 2 => state |= est::PARIA, _ => {} }
+        if v.pvp { state |= est::PVP; }
         stream.write_i32_le(state);            // int state (4B)
         // `state2`. O único bit que este servidor sabe preencher é o do sexo — e ele não
         // é enfeite: `info_player_1::GetGender()` (`EC_GPDataType.h:709-711`) lê o sexo de
@@ -1701,6 +1884,12 @@ impl S2CGamedataSend {
             for e in v.estados_visiveis {
                 stream.write_u32_le(e);        // int extend_state[6] (24B)
             }
+        }
+        if let Some(id) = v.barraca {
+            stream.write_u8(id);               // unsigned char market_id (1B)
+        }
+        if v.pk == 2 {
+            stream.write_u8(v.grau_paria);     // char pariah_state (1B)
         }
         if let Some((cor, modelo)) = v.montaria {
             stream.write_u16_le(cor);          // unsigned short mount_color (2B)
@@ -3267,20 +3456,20 @@ impl S2CGamedataSend {
     }
 
     /// `EXG_TRASHBOX_ITEM` (133): `u8 where, idx1, idx2` (2+3).
-    pub fn exg_trashbox_item(a: u8, b: u8) -> Self {
+    pub fn exg_trashbox_item(onde: u8, a: u8, b: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(133);
-        stream.write_u8(3);
+        stream.write_u8(onde);
         stream.write_u8(a);
         stream.write_u8(b);
         Self { data: stream.into_bytes().to_vec() }
     }
 
     /// `MOVE_TRASHBOX_ITEM` (134): `u8 where, src, dest; size_t amount` (2+7).
-    pub fn move_trashbox_item(src: u8, dest: u8, amount: u32) -> Self {
+    pub fn move_trashbox_item(onde: u8, src: u8, dest: u8, amount: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(134);
-        stream.write_u8(3);
+        stream.write_u8(onde);
         stream.write_u8(src);
         stream.write_u8(dest);
         stream.write_u32_le(amount);
@@ -3288,20 +3477,20 @@ impl S2CGamedataSend {
     }
 
     /// `EXG_TRASHBOX_IVTR` (135): `u8 where, idx_tra, idx_inv` (2+3).
-    pub fn exg_trashbox_ivtr(idx_tra: u8, idx_inv: u8) -> Self {
+    pub fn exg_trashbox_ivtr(onde: u8, idx_tra: u8, idx_inv: u8) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(135);
-        stream.write_u8(3);
+        stream.write_u8(onde);
         stream.write_u8(idx_tra);
         stream.write_u8(idx_inv);
         Self { data: stream.into_bytes().to_vec() }
     }
 
     /// `IVTR_ITEM_TO_TRASH` (136): `u8 where, src (bolsa), dest (armazém); size_t amount` (2+7).
-    pub fn ivtr_item_to_trash(idx_inv: u8, idx_tra: u8, amount: u32) -> Self {
+    pub fn ivtr_item_to_trash(onde: u8, idx_inv: u8, idx_tra: u8, amount: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(136);
-        stream.write_u8(3);
+        stream.write_u8(onde);
         stream.write_u8(idx_inv);
         stream.write_u8(idx_tra);
         stream.write_u32_le(amount);
@@ -3309,10 +3498,10 @@ impl S2CGamedataSend {
     }
 
     /// `TRASH_ITEM_TO_IVTR` (137): `u8 where, src (armazém), dest (bolsa); size_t amount` (2+7).
-    pub fn trash_item_to_ivtr(idx_tra: u8, idx_inv: u8, amount: u32) -> Self {
+    pub fn trash_item_to_ivtr(onde: u8, idx_tra: u8, idx_inv: u8, amount: u32) -> Self {
         let mut stream = OctetsStream::new();
         stream.write_u16_le(137);
-        stream.write_u8(3);
+        stream.write_u8(onde);
         stream.write_u8(idx_tra);
         stream.write_u8(idx_inv);
         stream.write_u32_le(amount);
@@ -3417,30 +3606,6 @@ impl S2CGamedataSend {
         stream.write_u16_le(271);              // CMD_S2C_MALL_ITEM_BUY_FAILED = 271
         stream.write_i16_le(index);
         stream.write_u8(reason);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando INVADER_RISE (Comando 117) ativando nick rosa
-    pub fn invader_rise(role_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(117);              // CMD_S2C_INVADER_RISE = 117
-        stream.write_i32_le(role_id);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando PARIAH_RISE (Comando 118) ativando nick vermelho / PK
-    pub fn pariah_rise(role_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(118);              // CMD_S2C_PARIAH_RISE = 118
-        stream.write_i32_le(role_id);
-        Self { data: stream.into_bytes().to_vec() }
-    }
-
-    /// Cria o comando INVADER_FADE (Comando 119) limpando status PK
-    pub fn invader_fade(role_id: i32) -> Self {
-        let mut stream = OctetsStream::new();
-        stream.write_u16_le(119);              // CMD_S2C_INVADER_FADE = 119
-        stream.write_i32_le(role_id);
         Self { data: stream.into_bytes().to_vec() }
     }
 
@@ -4012,3 +4177,11 @@ impl S2CPlayerLogout {
 
 
 
+
+/// Um item da vitrine da barraca (`INFO::market_goods`, `protocol_imp.h:2338-2362`). B363.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemDaVitrine {
+    Vende { tipo: i32, quantidade: u32, preco: u32, validade: i32, conteudo: Vec<u8> },
+    Compra { tipo: i32, quantidade: u32, preco: u32 },
+    Vazio,
+}

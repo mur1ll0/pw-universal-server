@@ -802,6 +802,10 @@ fn o_sexo_do_jogador_viaja_no_bit_do_state2() {
         estados_visiveis: [0; 6],
         em_grupo: false,
         lider_do_grupo: false,
+        barraca: None,
+        pk: 0,
+        grau_paria: 0,
+        pvp: false,
     };
     let p = S2CGamedataSend::player_enter_slice(42, mulher);
 
@@ -853,6 +857,10 @@ fn os_bits_do_estado_acrescentam_os_campos_que_o_cliente_espera() {
         estados_visiveis: [0; 6],
         em_grupo: false,
         lider_do_grupo: false,
+        barraca: None,
+        pk: 0,
+        grau_paria: 0,
+        pvp: false,
     };
     // 2 de cabeçalho + 30 da `info_player_1` fixa.
     const FIXO: usize = 32;
@@ -1087,6 +1095,10 @@ fn o_info_player_1_do_126_leva_a_forma() {
         estados_visiveis: [0; 6],
         em_grupo: false,
         lider_do_grupo: false,
+        barraca: None,
+        pk: 0,
+        grau_paria: 0,
+        pvp: false,
     };
     let v = V126Protocol;
     let normal = v.player_enter_slice(42, vista(None)).data;
@@ -1195,6 +1207,10 @@ fn o_info_player_1_leva_efeitos_visiveis_voo_e_grupo() {
         estados_visiveis: [0; 6],
         em_grupo: false,
         lider_do_grupo: false,
+        barraca: None,
+        pk: 0,
+        grau_paria: 0,
+        pvp: false,
     };
     let muralha = pw_core::VistaDoJogador { estados_visiveis: [1 << 3, 0, 0, 0, 0, 0], voando: true, ..base };
     let v126 = V126Protocol;

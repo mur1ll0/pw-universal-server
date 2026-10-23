@@ -46,6 +46,40 @@ pub struct BaseParaMascote {
     pub grau_de_defesa: i32,
 }
 
+/// `_resurrect_state` e os três fatores do `gplayer_imp` (`gs/player.cpp:142-145`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ReviverPorOutro {
+    pub pronto: bool,
+    /// A perda de experiência já em fração (0 a 1); o C2S 87 a converte (`/ 0,05 × base`).
+    pub perda: f32,
+    pub vida: f32,
+    pub mana: f32,
+}
+
+impl ReviverPorOutro {
+    /// Na morte (`gplayer_imp::OnDeath`, `gs/player.cpp:7260-7263`).
+    pub fn ao_morrer(&mut self) {
+        *self = ReviverPorOutro { pronto: false, perda: 1.0, vida: 0.0, mana: 0.0 };
+    }
+
+    /// `gplayer_imp::EnterResurrectReadyState` (`gs/player.cpp:12666-12694`; o mesmo no `gs` 1.2.6,
+    /// VA 0x807bfee): só morto; cada fator preso em 0..1; a perda (e com ela vida e mana) só troca
+    /// se a nova for **menor**. Devolve a perda a avisar (`enable_resurrect_state`).
+    pub fn armar(&mut self, morto: bool, perda: f32, vida: f32, mana: f32) -> Option<f32> {
+        if !morto {
+            return None;
+        }
+        self.pronto = true;
+        let (perda, vida, mana) = (perda.clamp(0.0, 1.0), vida.clamp(0.0, 1.0), mana.clamp(0.0, 1.0));
+        if self.perda > perda {
+            self.perda = perda;
+            self.vida = vida;
+            self.mana = mana;
+        }
+        Some(self.perda)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerEntity {
     pub role_id: RoleId,
@@ -302,6 +336,25 @@ pub struct PlayerEntity {
     /// (`UpdateElfVigor`: `100 + vitalidade final`, `1 + energia final × 0,02` por segundo, `player.cpp:21671-21678`,
     /// `item_elf.h:19-20`), vai a 0 na morte (`player.cpp:14111-14115`) e é o que a habilidade do Daimon gasta.
     pub vigor_do_daimon: f32,
+    /// O reviver de outro jogador (`_resurrect_state`, `_resurrect_exp_reduce`, `_resurrect_hp_factor`,
+    /// `_resurrect_mp_factor`, `gs/player_imp.h:1558`): pronto quando uma habilidade de reviver o pegou
+    /// morto; a morte o desarma com perda 1,0 (`gs/player.cpp:7260-7263`).
+    pub reviver_por_outro: ReviverPorOutro,
+    /// B363 — a barraca aberta (`_stall_obj`, `PLAYER_STATE_MARKET`).
+    pub barraca: Option<crate::barraca::Barraca>,
+    /// `_stall_trade_id` (`playerstall.cpp:142-144`) e o segundo da última abertura
+    /// (`_stall_trade_timer`, `:113-117`).
+    pub seq_da_barraca: i32,
+    pub ultima_barraca_s: i64,
+    /// B363 — o PK (`player_invade`) e o `_kill_by_player` da última morte (sem perda de experiência
+    /// ao renascer, `player.cpp:8716-8720`).
+    pub pk: crate::pk::EstadoPk,
+    pub morto_por_jogador: bool,
+    /// B363 — no santuário (`pvp_limit_filter`, `gs/pvplimit_filter.cpp`): o contador do batimento que
+    /// confere a saída de 7 em 7 s. E a checagem do servidor (`player_sanctuary_check`): contador, esperas,
+    /// vezes e o modo de trapaça.
+    pub santuario: Option<i32>,
+    pub checagem_de_santuario: (i32, i32, i32, bool),
     /// B360 — o efeito do refino do Daimon ligado (`_cur_elf_info.refine_effect_active`): soma a vida e os graus da
     /// tabela do refino (`ElfRefineActivate`, `player.cpp:21820-21836`) e gasta resistência a cada segundo.
     pub refino_do_daimon_ativo: bool,
@@ -340,6 +393,15 @@ pub struct MontariaAtiva {
     pub cor: u16,
     /// A velocidade que a montaria impõe, já com o nível dentro.
     pub velocidade: f32,
+}
+
+/// B363 — `UpdateSpeed` com `_en_point.override_speed` (a montaria, `playertemplate.h:1039-1075`): corre na
+/// velocidade da montaria, anda a 2,5, e os dois × `(enh + 100)%` com `enh = _en_percent.mount_speed` — somando a
+/// redução de velocidade (`en_percent.run/walk_speed < 0`), nunca o ganho. Devolve `(andando, correndo)`.
+pub fn velocidade_montado(da_montaria: f32, r: &crate::efeitos::Realce) -> (f32, f32) {
+    let enh = r.velocidade_de_montaria;
+    let fator = 0.01 * (r.velocidade.min(0) + enh + 100) as f32;
+    ((2.5 * fator).max(0.1), (da_montaria * fator).max(0.1))
 }
 
 /// Uma conjuração aberta.
@@ -1218,6 +1280,9 @@ impl PlayerEntity {
             };
             self.walk_speed = (cfg.velocidade_andando * fator + ponto).max(0.1);
             self.move_speed = (cfg.velocidade_correndo * fator + ponto).max(0.1);
+            if let Some(m) = self.montaria {
+                (self.walk_speed, self.move_speed) = velocidade_montado(m.velocidade, &r);
+            }
             // `swim_speed × (en_percent.swim_speed + 100)%`, até `MAX_SWIM_SPEED` 15
             // (`playertemplate.h:1104-1108`, `config.h:115`).
             self.swim_speed = (cfg.velocidade_nadando * 0.01 * (100 + r.natacao) as f32).min(15.0);
@@ -1384,6 +1449,10 @@ impl PlayerEntity {
             // O grupo vive no mundo: quem monta a visão preenche (`WorldInstance::vista_de`).
             em_grupo: false,
             lider_do_grupo: false,
+            barraca: self.barraca.as_ref().map(|b| b.market_id()),
+            pk: self.pk.estado,
+            grau_paria: self.pk.grau,
+            pvp: self.pvp_ligado,
         }
     }
 }
@@ -1408,6 +1477,8 @@ pub struct MonsterEntity {
     /// `_cur_prop.resistance[0..4]`: metal, madeira, água, fogo, terra. Substituiu o
     /// `def_magic` de valor único, que não tinha correspondente no original.
     pub resistances: [i32; 5],
+    /// B363 — `_immune_state = immune_type` do modelo (`npcgenerator.cpp:2059`): a máscara `IMMUNE*` do `elements`.
+    pub imunidades: i32,
     /// `attack_degree` / `_defend_degree`, que ajustam o dano no fim do cálculo.
     pub attack_degree: i32,
     pub defend_degree: i32,
@@ -1726,6 +1797,14 @@ impl PlayerEntity {
             auto_mp: None,
             daimon: None,
             vigor_do_daimon: 0.0,
+            reviver_por_outro: ReviverPorOutro::default(),
+            barraca: None,
+            seq_da_barraca: 0,
+            ultima_barraca_s: 0,
+            pk: crate::pk::EstadoPk::default(),
+            morto_por_jogador: false,
+            santuario: None,
+            checagem_de_santuario: (0, 0, 0, false),
             refino_do_daimon_ativo: false,
             colecao_de_cartas: Vec::new(),
             recarga_do_auto_hp_s: 0,
@@ -1839,6 +1918,7 @@ impl MonsterEntity {
             armor: modelo.armadura,
             attack_rate: modelo.taxa_de_ataque,
             resistances: modelo.resistencias,
+            imunidades: modelo.imunidades,
             attack_degree: modelo.grau_de_ataque,
             defend_degree: modelo.grau_de_defesa,
             attack_min: modelo.dano_fisico.minimo,
@@ -1896,6 +1976,7 @@ impl MonsterEntity {
             armor: 50,
             attack_rate: 100,
             resistances: [50; 5],
+            imunidades: 0,
             attack_degree: 0,
             defend_degree: 0,
             attack_min: 20,
@@ -2227,9 +2308,22 @@ pub struct DaimonVestido {
     pub estado: Daimon,
     /// O bloco mudou e ainda não foi gravado.
     pub sujo: bool,
+    /// B363 — o `rand_prop` do modelo: o bônus de atributo sorteado a cada 10 níveis (`LevelUp`).
+    pub sorteio: [(i32, f32); 10],
 }
 
 impl DaimonVestido {
+    /// B363 — `UpdateElfSecureStatus` (`item_elf.cpp:818-826`), no batimento (`player.cpp:9219-9224`): a transformação
+    /// vencida (`status_value` > 0 e já passado) vira negociável (−1). `true` se mudou.
+    pub fn vencer_transformacao(&mut self, agora_s: i32) -> bool {
+        if self.estado.status > 0 && self.estado.status <= agora_s {
+            self.estado.status = -1;
+            self.sujo = true;
+            return true;
+        }
+        false
+    }
+
     /// `elf_item::InsertExp` (`gs/item/item_elf.cpp:692-750`).
     ///
     /// `exp_do_nivel` é a experiência que o **jogador** precisa para subir do nível do
@@ -2291,6 +2385,22 @@ impl DaimonVestido {
                     break;
                 }
                 d.subir_de_nivel();
+                // B363 — `if ((ess.level + 1) % 10 == 0)`: `RandSelect` no `rand_prop` (taxas > 0, o 10º com 1,0
+                // para fechar) e `inc_attribute += rand_num` (`item_elf.cpp:779-796`).
+                if d.nivel % 10 == 0 {
+                    let mut prob = [0.0f32; 10];
+                    for (i, &(_, taxa)) in self.sorteio.iter().enumerate() {
+                        if taxa > 0.0 {
+                            prob[i] = taxa;
+                        }
+                    }
+                    prob[9] = 1.0;
+                    let escolhido = crate::pk::sortear(&prob, rand::random::<f32>());
+                    let n = self.sorteio[escolhido].0;
+                    if n > 0 {
+                        d.total_de_atributos += n as i16;
+                    }
+                }
                 subiu = true;
                 let gasto = ((ate_subir as f64) / fator).ceil() as u32;
                 exp = exp.saturating_sub(gasto);
@@ -2312,9 +2422,7 @@ impl Daimon {
     /// nível e dá **um** ponto de atributo, mais um de gênio a cada 5 níveis até o 100 (e um
     /// por nível depois disso).
     ///
-    /// `falta`: o bônus de atributo sorteado de 10 em 10 níveis (`rand_prop` do
-    /// `GOBLIN_ESSENCE` com `abase::RandSelect`, `item_elf.cpp:779-796`) — a semântica do
-    /// sorteio não está medida.
+    /// O bônus sorteado de 10 em 10 níveis fica no [`DaimonVestido::inserir_exp`], que tem o `rand_prop` (B363).
     /// B345 — `ATTRIBUTE_UPPER_LIMIT`, `GENIUS_UPPER_LIMIT`, `MAX_ELF_SKILL_CNT` (`gs/item/item_elf.h`).
     pub const LIMITE_DE_ATRIBUTO: i32 = 40;
     pub const LIMITE_DE_GENIO: i16 = 8;
@@ -2474,5 +2582,28 @@ impl Daimon {
         if proximo > 100 || proximo % 5 == 0 {
             self.total_de_genios += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod testes_do_reviver {
+    use super::ReviverPorOutro;
+
+    /// `EnterResurrectReadyState` (`gs/player.cpp:12666-12694`): vivo não arma; os fatores são presos
+    /// em 0..1; um segundo reviver só troca se a perda for menor; a morte volta a perda a 1,0.
+    #[test]
+    fn o_reviver_guarda_a_menor_perda_e_a_morte_o_desarma() {
+        let mut r = ReviverPorOutro::default();
+        r.ao_morrer();
+        assert_eq!(r.armar(false, 0.03, 0.1, 0.1), None, "vivo não arma");
+        assert!(!r.pronto);
+        assert_eq!(r.armar(true, 0.05, 0.1, 0.2), Some(0.05));
+        assert!(r.pronto);
+        assert_eq!(r.armar(true, 0.04, 2.0, -1.0), Some(0.04), "menor perda troca, fatores presos");
+        assert_eq!((r.vida, r.mana), (1.0, 0.0));
+        assert_eq!(r.armar(true, 0.05, 0.3, 0.3), Some(0.04), "maior perda não troca");
+        assert_eq!((r.vida, r.mana), (1.0, 0.0));
+        r.ao_morrer();
+        assert_eq!(r, ReviverPorOutro { pronto: false, perda: 1.0, vida: 0.0, mana: 0.0 });
     }
 }

@@ -66,6 +66,21 @@ pub mod ids {
     /// `RESURRECT_BY_ITEM` — o pergaminho de renascer, `{int param}` (`common/protocol.h:4665`,
     /// IR `REVIVE_ITEM` 5). B155.
     pub const REVIVE_ITEM: u16 = 5;
+    /// `REVIVAL_AGREE` (87; no servidor `RESURRECT_AT_ONCE`, `common/protocol.h`) — `{int param}`
+    /// (`cmd_revive`, `EC_GPDataType.h:6674-6677`; `EC_SendC2SCmds.cpp:655-670`): aceitar o reviver de
+    /// outro jogador. B363.
+    pub const REVIVAL_AGREE: u16 = 87;
+    /// B363 — a barraca: `OPEN_BOOTH` (76, `OPEN_PERSONAL_MARKET`), `CLOSE_BOOTH` (77,
+    /// `CANCEL_PERSONAL_MARKET`, só cabeçalho), `QUERY_BOOTH_NAME` (78, `{u16 count; int list[]}`) e
+    /// `OPEN_BOOTH_TEST` (84, só cabeçalho) — `common/protocol.h:5485-5509`, `EC_SendC2SCmds.cpp:1281-1364`.
+    /// B363 — `USE_ITEM_WITH_ARG` (109, `{u8 where; u8 count; u16 index; int item_id; char arg[]}`,
+    /// `common/protocol.h:5667-5675`) e `ELF_CHANGE_SECURE_STATUS` (115, `{u8 status}`, `:5706-5710`).
+    pub const USE_ITEM_WITH_ARG: u16 = 109;
+    pub const ELF_CHANGE_SECURE_STATUS: u16 = 115;
+    pub const OPEN_BOOTH: u16 = 76;
+    pub const CLOSE_BOOTH: u16 = 77;
+    pub const QUERY_BOOTH_NAME: u16 = 78;
+    pub const OPEN_BOOTH_TEST: u16 = 84;
     /// `SRV::C2S::CMD::get_item_info`
     pub const GET_ITEM_INFO: u16 = 9;
     /// `SRV::C2S::CMD::get_inventory_detail`
@@ -528,8 +543,7 @@ impl GetIvtrDetail {
 pub struct MoveIvtrItem {
     pub src: u8,
     pub dest: u8,
-    /// Quantos da pilha. O tratamento atual ignora este campo e troca os slots
-    /// inteiros — ver a nota em `BusServer::mover_item`.
+    /// Quantos da pilha (`item_list::MoveItem`, B363).
     pub amount: u32,
 }
 
@@ -922,6 +936,55 @@ mod tests {
 
 /// O que um comando faz com o jogador **sentado** — `gplayer_controller::StayInCommandHandler`
 /// (`gs/playercmd.cpp:873-1015`), para onde o `DispatchCommand` manda todo comando no
+/// B363 — o que fazer com um comando com a barraca aberta (`gplayer_controller::MarketCommandHandler`,
+/// `gs/playercmd.cpp:477-602`; no 1.2.6 a tabela de saltos em 0x84f4068 aceita os mesmos ids tratados
+/// aqui: 2, 8-18, 21, 22, 27-34, 38, 39; 1 fecha e segue; 77 fecha).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NaBarraca {
+    Aceita,
+    /// `CANCEL_PERSONAL_MARKET`.
+    Fecha,
+    /// `LOGOUT`: `CancelPersonalMarket()` e depois o comando normal.
+    FechaESegue,
+    Ignora,
+}
+
+pub fn na_barraca(id: u16) -> NaBarraca {
+    match id {
+        ids::CLOSE_BOOTH => NaBarraca::Fecha,
+        ids::LOGOUT => NaBarraca::FechaESegue,
+        ids::GET_ITEM_INFO
+        | ids::GET_IVTR_DETAIL
+        | ids::GET_EXT_PROP
+        | ids::TEAM_INVITE
+        | ids::TEAM_AGREE_INVITE
+        | ids::TEAM_REJECT_INVITE
+        | ids::TEAM_LEAVE_PARTY
+        | ids::GET_OTHER_EQUIP
+        | ids::GET_ALL_DATA
+        | ids::SET_STATUS_POINT
+        | ids::UNSELECT
+        | ids::SELECT_TARGET
+        | ids::EXG_IVTR_ITEM
+        | ids::MOVE_IVTR_ITEM
+        | ids::DROP_IVTR_ITEM
+        | ids::EXG_EQUIP_ITEM
+        | ids::MOVE_ITEM_TO_EQUIP
+        | ids::EQUIP_ITEM
+        | ids::DROP_EQUIP_ITEM
+        | ids::ELF_ADD_ATTRIBUTE
+        | ids::ELF_ADD_GENIUS
+        | ids::ELF_PLAYER_INSERT_EXP
+        | ids::ELF_EQUIP_ITEM
+        | ids::CAST_ELF_SKILL
+        | ids::CHECK_SECURITY_PASSWD
+        | ids::MULTI_EXCHANGE_ITEM
+        | ids::CALC_NETWORK_DELAY
+        | ids::ACTIVATE_REGION_WAYPOINTS => NaBarraca::Aceita,
+        _ => NaBarraca::Ignora,
+    }
+}
+
 /// `PLAYER_SIT_DOWN` (`gs/player.cpp:8797-8800`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sentado {

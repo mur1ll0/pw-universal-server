@@ -1,3 +1,5 @@
+pub mod amizade;
+pub mod gm;
 pub mod gateway;
 pub mod session;
 pub mod uplink;

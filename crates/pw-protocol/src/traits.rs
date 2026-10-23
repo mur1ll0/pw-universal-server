@@ -71,6 +71,47 @@ pub trait WorldProtocol: Send + Sync {
         true
     }
 
+    /// B363 — o C2S `ENTER_SANCTUARY` (75): `{int id}` no 1.5.5 (`size != sizeof(es)` → `ERR_FATAL_ERR`,
+    /// `playercmd.cpp:2812-2835`). `None` é o erro; `Some(true)` quando o id é o do próprio jogador. O 1.2.6
+    /// sobrescreve.
+    fn pedido_de_santuario(&self, corpo: &[u8], roleid: i32) -> Option<bool> {
+        (corpo.len() == 4).then(|| i32::from_le_bytes(corpo[..4].try_into().unwrap()) == roleid)
+    }
+
+    /// B363 — o servidor também procura o santuário sozinho, de 8 em 8 s (`player_sanctuary_check`,
+    /// `gs/playersanctuarycheck.cpp`); o `gs` 1.2.6 não tem isso (só o C2S 75). O 1.2.6 sobrescreve.
+    fn santuario_conferido_pelo_servidor(&self) -> bool {
+        true
+    }
+
+    /// B363 — as tabelas de perda na morte e os bonecos de proteção ([`TabelasDePerda`]).
+    fn tabelas_de_perda(&self) -> TabelasDePerda {
+        TabelasDePerda::DO_155
+    }
+
+    /// B363 — as regras da barraca que mudam por versão ([`RegrasDaBarraca`]).
+    fn regras_da_barraca(&self) -> RegrasDaBarraca {
+        RegrasDaBarraca::DO_155
+    }
+
+    /// `SELF_OPEN_BOOTH` (167). O 1.2.6 sobrescreve (contagem `u16`).
+    fn self_open_booth(&self, itens: &[(i32, u16, u32, u32)]) -> S2CGamedataSend {
+        S2CGamedataSend::self_open_booth(itens)
+    }
+
+    /// `PURCHASE_ITEM` (72) da barraca. O 1.2.6 sobrescreve (sem `yinpiao`, contagem `u16`).
+    fn purchase_item_da_barraca(&self, cost: u32, tipo: u8, itens: &[(i32, i32, u32, u16, u8)]) -> S2CGamedataSend {
+        S2CGamedataSend::purchase_item_da_barraca(cost, 0, tipo, itens)
+    }
+
+    /// Vida e mana (fração do máximo) de quem aceita o reviver de outro jogador. No 1.5.5 saem do
+    /// roteiro da habilidade: `SetResurrect` → `object.Resurrect(ratio, value, amount)`
+    /// (`cskill/skill/playerwrapper.cpp:742-751`) → `EnterResurrectReadyState(exp, hp, mp)`
+    /// (`gs/player.cpp:12666-12694`). O 1.2.6 sobrescreve.
+    fn vida_e_mana_do_reviver(&self, valor: f32, quantia: f32) -> (f32, f32) {
+        (valor, quantia)
+    }
+
     /// Chi por batimento de 1 s meditando: `ModifyAP(15)` no `sit_down_filter::Heartbeat` do
     /// 1.5.5 (`gs/sitdown_filter.cpp:19-34`). O 1.2.6 sobrescreve.
     fn chi_por_meditacao(&self) -> i32 {
@@ -623,4 +664,109 @@ pub fn entrada_da_loja_gold(corpo: &[u8], bytes: usize, ler: impl Fn(&[u8]) -> i
     let c = bytes / 3;
     let e = &corpo[4..4 + bytes];
     Some((ler(&e[0..c]), ler(&e[c..2 * c]), ler(&e[2 * c..3 * c])))
+}
+
+/// B363 — o que a barraca faz diferente em cada versão.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegrasDaBarraca {
+    /// Bytes do nome no C2S `OPEN_BOOTH` (76): 62 no 1.5.5 (`open_personal_market::name`,
+    /// `common/protocol.h:5485-5497`), 28 no 1.2.6 (o tamanho mínimo do pedido é `0x20` = 2 + 2 + 28,
+    /// `gplayer_controller::CommandHandler`, VA 0x80d095a-0x80d0977).
+    pub nome_no_pedido: usize,
+    /// O teto do preço de cada item: `2000000000u` (`playerstall.cpp:59`); `0xbebc200` = 200.000.000
+    /// no 1.2.6 (VA 0x8130658).
+    pub preco_maximo: u32,
+    /// O 1.5.5 confere o tamanho do nome (`_stall_info.max_name_length`), as vagas de venda e de
+    /// compra e o dinheiro (`playerstall.cpp:37-41`, `:104-110`); o `PlayerOpenPersonalMarket` do
+    /// 1.2.6 (VA 0x81304f4) não tem nenhuma das três.
+    pub confere_nome_vagas_e_dinheiro: bool,
+    /// O pedido de compra traz `yinpiao` (`trade_request`, `playerstall.h:27-41`: 16 B de cabeçalho);
+    /// no 1.2.6 o cabeçalho é de 12 B (`length != 0xc + count·12`, VA 0x8130e16-0x8130e2e).
+    pub pedido_com_yinpiao: bool,
+    /// Vendedor que passaria do teto de dinheiro: o 1.5.5 recusa e avisa o comprador
+    /// (`ERR_TRADER_MONEY_REACH_UPPER_LIMIT`, `playerstall.cpp:615-620`); o 1.2.6 **fecha a barraca**
+    /// (`CancelPersonalMarket` em `CheckMarketTradeRequest`, VA 0x8131c93-0x8131cae).
+    pub teto_do_vendedor_fecha_a_barraca: bool,
+}
+
+impl RegrasDaBarraca {
+    pub const DO_155: RegrasDaBarraca = RegrasDaBarraca {
+        nome_no_pedido: 62,
+        preco_maximo: 2_000_000_000,
+        confere_nome_vagas_e_dinheiro: true,
+        pedido_com_yinpiao: true,
+        teto_do_vendedor_fecha_a_barraca: false,
+    };
+    pub const DO_126: RegrasDaBarraca = RegrasDaBarraca {
+        nome_no_pedido: 28,
+        preco_maximo: 200_000_000,
+        confere_nome_vagas_e_dinheiro: false,
+        pedido_com_yinpiao: false,
+        teto_do_vendedor_fecha_a_barraca: true,
+    };
+}
+
+/// B363 — as tabelas de perda na morte (`player_template::Get*DropRate`, `gs/playertemplate.h:668-723`):
+/// para cada estado de PK, as probabilidades de cair 0..9 itens da bolsa e do corpo (`RandSelect(prop, 10)`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabelasDePerda {
+    pub branco_bolsa: [f32; 10],
+    pub branco_corpo: [f32; 10],
+    pub rosa_bolsa: [f32; 10],
+    pub rosa_corpo: [f32; 10],
+    pub vermelho_bolsa: [[f32; 10]; 3],
+    pub vermelho_corpo: [[f32; 10]; 3],
+    pub monstro_branco: [f32; 10],
+    pub monstro_rosa: [f32; 10],
+    pub monstro_vermelho: [[f32; 10]; 3],
+    /// Morte com a chave de PvP desligada: o 1.2.6 ainda sorteia pela tabela de monstro do branco
+    /// (`GetMobNormalInventoryDropRate` → `DropItemOnDeath`, `gplayer_imp::OnDeath`, VA 0x8071762); no
+    /// 1.5.5 o trecho está comentado (`player.cpp:7184-7192`).
+    pub sem_pvp: Option<[f32; 10]>,
+    /// `ITEM_POPPET_DUMMY_ID2`, `_ID` e `_ID3` na ordem da procura (`player.cpp:7143-7153`); só o 12361
+    /// no 1.2.6 (`push 0x3049`, VA 0x80716a1).
+    pub bonecos: &'static [u32],
+}
+
+const fn t10(v: [f32; 7]) -> [f32; 10] {
+    [v[0], v[1], v[2], v[3], v[4], v[5], v[6], 0.0, 0.0, 0.0]
+}
+
+impl TabelasDePerda {
+    /// `gs/playertemplate.h:668-723` (o branco zerado em 2013: "20130107").
+    pub const DO_155: TabelasDePerda = TabelasDePerda {
+        branco_bolsa: t10([1.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        branco_corpo: t10([1.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        rosa_bolsa: t10([0.80, 0.21, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        rosa_corpo: t10([1.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        vermelho_bolsa: [
+            t10([0.40, 0.0, 0.3, 0.20, 0.11, 0.0, 0.0]),
+            t10([0.20, 0.0, 0.40, 0.0, 0.30, 0.0, 0.11]),
+            [0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.3, 0.0, 0.0, 0.11],
+        ],
+        vermelho_corpo: [
+            t10([0.50, 0.51, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            t10([0.30, 0.50, 0.21, 0.0, 0.0, 0.0, 0.0]),
+            t10([0.0, 0.60, 0.30, 0.11, 0.0, 0.0, 0.0]),
+        ],
+        monstro_branco: t10([1.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        monstro_rosa: t10([0.99, 0.011, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        monstro_vermelho: [
+            t10([0.99, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            t10([0.99, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            t10([0.99, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ],
+        sem_pvp: None,
+        bonecos: &[31878, 12361, 36309],
+    };
+
+    /// Os `prop` estáticos do `gs` 1.2.6 (`_ZZN15player_template*DropRate*E4prop`): iguais ao 1.5.5 menos o
+    /// branco, que perde 1 item com 1,1 % (por jogador ou por monstro).
+    pub const DO_126: TabelasDePerda = TabelasDePerda {
+        branco_bolsa: t10([0.99, 0.011, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        monstro_branco: t10([0.99, 0.011, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        sem_pvp: Some(t10([0.99, 0.011, 0.0, 0.0, 0.0, 0.0, 0.0])),
+        bonecos: &[12361],
+        ..TabelasDePerda::DO_155
+    };
 }

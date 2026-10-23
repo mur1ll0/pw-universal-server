@@ -369,6 +369,34 @@ impl Bolsa {
         self.alterados.insert(slot);
     }
 
+    /// `item_list::Push(item&)` (`gs/item_list.cpp:107`): um item que já existe (com o conteúdo dele)
+    /// entra na bolsa — empilhável junta no mesmo tipo até a pilha e o resto vai ao primeiro vazio;
+    /// o resto vai inteiro ao primeiro vazio. Devolve o último slot em que entrou (B363).
+    pub fn empurrar(&mut self, item: ItemRecord, dados: &GameDataManager) -> Option<usize> {
+        let pilha = dados.limite_de_pilha(item.item_id);
+        let mut falta = item.count;
+        let mut ultimo = None;
+        if pilha > 1 {
+            for s in 0..self.slots.len() {
+                if let Some(i) = &mut self.slots[s] {
+                    if i.item_id == item.item_id && i.count < pilha && falta > 0 {
+                        let cabe = (pilha - i.count).min(falta);
+                        i.count += cabe;
+                        falta -= cabe;
+                        self.alterados.insert(s);
+                        ultimo = Some(s);
+                    }
+                }
+            }
+            if falta == 0 {
+                return ultimo;
+            }
+        }
+        let s = self.slots.iter().position(Option::is_none)?;
+        self.por(s, Some(ItemRecord { id: None, count: falta, slot: s as u16, character_id: self.dono, container_type: self.tipo, ..item }));
+        Some(s)
+    }
+
     /// `item_list::ExchangeItem`: troca dois slots da mesma bolsa. `false` fora da bolsa.
     pub fn trocar(&mut self, a: usize, b: usize) -> bool {
         if a >= self.slots.len() || b >= self.slots.len() {

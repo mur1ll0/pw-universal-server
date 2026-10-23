@@ -266,6 +266,7 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 | 3 | `NORMAL_ATTACK` | 37 | `SEVNPC_SERVE` (loja, treinador, missão…) |
 | 4 | `REVIVE_VILLAGE` | 39 | `GET_ALL_DATA` |
 | 5 | `REVIVE_ITEM` (`RESURRECT_BY_ITEM`) `{int param}` → sessão de 99 tiques e `PLAYER_REVIVAL` 1/2 (B155) | | |
+| 87 | `REVIVAL_AGREE` (`RESURRECT_AT_ONCE`) `{int param}` → aceita o reviver armado por habilidade; S2C `REVIVAL_INQUIRE` (197) `{float exp_reduce}` = 6 B nas duas versões (B363) | | |
 | 7 | `STOP_MOVE` | 40 | `USE_ITEM` |
 | 8 | `UNSELECT` | 41, 80 | `CAST_SKILL`, `CAST_INSTANT_SKILL` |
 | 9 | `GET_ITEM_INFO` | 42 | `CANCEL_ACTION` |
@@ -304,9 +305,16 @@ Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
 `pw-link/tests/subcomandos_c2s_contra_o_ir.rs::os_comandos_ja_migrados_nao_sobraram_no_gateway`
 lê o `match` do mundo e cobra (B49). C2S 23–26 são `GET_EXT_PROP_BASE/MOVE/ATK/DEF`, não voo.
 
-**Sem tratamento:** `OPEN_BOOTH` (76),
-dividir pilha (`amount` do 13 ignorado), `pvp_mode` (79), e todo o
-resto do enum (o mundo registra "subcomando ainda não tratado").
+**Barraca (B363):** C2S `OPEN_BOOTH` 76 (`{u16 count; char name[62]; {int type; u32 index; u32 count; u32 price}[]}` no
+1.5.5; **nome de 28 B no 1.2.6**, cabeçalho mínimo `0x20`), `CLOSE_BOOTH` 77, `QUERY_BOOTH_NAME` 78 (`{u16 count; int list[]}`),
+`OPEN_BOOTH_TEST` 84; a barraca atende `SEVNPC_HELLO`/`GET_CONTENT`/`SERVE` 19 e 21 com o `trade_request`
+`{int trade_id; u32 money; u32 yinpiao (só 1.5.5); u32 count; {int type; u16 index; u16 inv_index; u32 count}[]}`. S2C:
+166 `{pid; u8 market_id; u8 len; name}`, 167 `{u16 count; {int; u16; u32 count; u32 price}}` (**`u16 count` no 1.2.6**),
+168 `{pid}`, 169 vitrine (`{pid; int market_id; u32 count}` + `market_goods`), 170 `{trader}`, 171 como o 166, 188 vazio,
+191 `{short; int; u32; int}`; `PURCHASE_ITEM` 72 com o byte 0/1 e o `stall_index` (1.2.6 sem `yinpiao`, contagem `u16`).
+`info_player_1`: bit `0x1000` + `u8 market_id` depois do estendido e antes da montaria, nas duas versões.
+
+**Sem tratamento:** `pvp_mode` (79) e todo o resto do enum (o mundo registra "subcomando ainda não tratado").
 
 Cinco opcodes GNET do `codec.rs` seguem sem correspondência no IR (`opcodes::nao_no_ir`,
 A21); o `adapter.rs` ainda é uma segunda implementação de layouts GNET (A24).

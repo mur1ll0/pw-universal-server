@@ -242,6 +242,11 @@ pub struct GameDataManager {
     /// As caixas de transporte de `<mapa>/region.sev` (os portais de região, B208), na ordem do
     /// índice que o cliente manda no `ENTER_INSTANCE`. Ver [`crate::regioes`].
     pub caixas_de_transporte: HashMap<i32, Vec<crate::regioes::CaixaDeTransporte>>,
+    /// B363 — as regiões (`i32 0`) de `<mapa>/region.sev`: o santuário é estar em qualquer uma delas
+    /// (`city_region::IsInSanctuary` → `CELRegionSet::IsPointInRegion`, `template/city_region.cpp:59-70`; o mesmo
+    /// no `gs` 1.2.6, VA 0x819db88). O teste de ponto é o do distrito (`CELRegion::IsPointIn` =
+    /// `CELPrecinct::IsPointIn`), daí guardá-las como [`crate::precinct::Distrito`].
+    pub santuarios: HashMap<i32, Vec<crate::precinct::Distrito>>,
     /// `dwTimeStamp` de `<mapa>/precinct.sev`, mesma história do campo acima.
     pub precinct_timestamps: HashMap<i32, u32>,
     /// Os distritos de cada mapa, com o ponto de cidade onde se renasce — ver
@@ -818,6 +823,11 @@ impl GameDataManager {
         self.proc_types.get(&item_id).is_some_and(|p| p & PROC_VINCULA_AO_VESTIR != 0)
     }
 
+    /// B363 — o ponto está num santuário do mapa (`player_template::IsInSanctuary`).
+    pub fn no_santuario(&self, mapa: i32, x: f32, z: f32) -> bool {
+        self.santuarios.get(&mapa).is_some_and(|v| v.iter().any(|d| d.contem(x, z)))
+    }
+
     /// O `require_level` de um `FACETICKET_ESSENCE` (o bilhete de troca de rosto); `None` se o
     /// item não é um. Os layouts v7 (1.2.6) e v156/v159 (1.5.5) têm o campo. B199.
     pub fn nivel_do_bilhete_de_rosto(&self, item_id: u32) -> Option<i32> {
@@ -879,6 +889,35 @@ impl GameDataManager {
     /// janela do Daimon quando é `false` (B218).
     pub fn versao_tem_daimon(&self) -> bool {
         self.elements_generic.as_ref().map_or(false, |g| g.tables.contains_key("GOBLIN_ESSENCE"))
+    }
+
+    /// B363 — o sorteio de atributo de 10 em 10 níveis do Daimon: `rand_prop[10] {rand_num; rand_rate}` do
+    /// `GOBLIN_ESSENCE` (`exptypes.h:3122-3125`; no layout `rand_prop_1_rand_num`..`rand_prop_10_rand_rate`).
+    pub fn sorteio_do_daimon(&self, item_id: u32) -> [(i32, f32); 10] {
+        let mut t = [(0, 0.0); 10];
+        let Some(r) = self.elements_generic.as_ref().and_then(|g| {
+            g.get("GOBLIN_ESSENCE").iter().find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32)).cloned()
+        }) else {
+            return t;
+        };
+        let f = |n: &str| match r.get(n) {
+            Some(crate::generic_elements::FieldValue::Float(f)) => *f,
+            Some(crate::generic_elements::FieldValue::Int(i)) => *i as f32,
+            _ => 0.0,
+        };
+        for (i, e) in t.iter_mut().enumerate() {
+            *e = (f(&format!("rand_prop_{}_rand_num", i + 1)) as i32, f(&format!("rand_prop_{}_rand_rate", i + 1)));
+        }
+        t
+    }
+
+    /// B363 — a pílula de experiência do Daimon (`GOBLIN_EXPPILL_ESSENCE`): `(exp, level)` do modelo, o conteúdo
+    /// que o `generate_elf_exppill` grava (`template/generate_item_temp.h:2571-2610`).
+    pub fn pilula_do_daimon(&self, item_id: u32) -> Option<(u32, i32)> {
+        let g = self.elements_generic.as_ref()?;
+        let r = g.get("GOBLIN_EXPPILL_ESSENCE").iter().find(|r| r.get("ID").and_then(|v| v.as_i32()) == Some(item_id as i32))?;
+        let i = |n: &str| r.get(n).and_then(|v| v.as_i32()).unwrap_or(0);
+        Some((i("exp").max(0) as u32, i("level")))
     }
 
     /// O `exp_factor` e as habilidades iniciais de um Daimon (`GOBLIN_ESSENCE`).
@@ -1169,6 +1208,19 @@ impl GameDataManager {
                     self.caixas_de_transporte.insert(world_id, c);
                 }
                 Err(e) => rel.falhou(&format!("{region_nome} (caixas de transporte)"), e),
+            }
+            if let Ok(r) = crate::regioes::RegioesEditavel::ler(&data) {
+                let areas = r
+                    .registros
+                    .into_iter()
+                    .filter_map(|reg| match reg {
+                        crate::regioes::RegistroDeRegiao::Regiao(v) => {
+                            Some(crate::precinct::Distrito::novo(0, world_id, world_id, 0, false, [0.0; 3], v))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                self.santuarios.insert(world_id, areas);
             }
         }
 

@@ -299,6 +299,169 @@ pub enum Efeito {
     /// fica o ícone `HSTATE_DECREGIONDMG` 328 pelo tempo. `UNIQUE|REMOVE_ON_DEATH`; a máscara de
     /// bênção/maldição vem do `amount` (> 1: nenhuma — o caso da 330). Não existe no `gs` 1.2.6.
     Decregiondmg,
+    /// B363 — o lote dos `Set*` que faltavam no 1.2.6 (e no 1.5.5), cada um a classe `filter_<Nome>` de
+    /// `cskill/skill/skillfilter.h` com o setter de `playerwrapper.cpp`; ícones e estados medidos no `gs` 1.2.6
+    /// (`OnAttach`, `push` antes de `InsertTeamVisibleState`/`IncVisibleState`), iguais ao 1.5.5 salvo os escudos.
+    /// `filter_Sharpblade`: `UNIQUE|BUFF`, `EnhanceScaleDamage(ratio × 100)`; HSTATE 83, `VSTATE_BLESSED`.
+    Sharpblade,
+    /// `filter_Reduce{gold,water,fire,soil}`: `MERGE|DEBUFF` com `Merge` vazio (como o `Reducewood`, por isso
+    /// [`Convivencia::Fraco`]); `ImpairScaleResistance(0/2/3/4, ratio × 100)`; HSTATE 53/55/56/57. Os setters
+    /// recusam com `IMMUNEMETAL/WATER/FIRE/SOIL | IMMUNEALL` (`playerwrapper.cpp`).
+    Reducegold,
+    Reducewater,
+    Reducefire,
+    Reducesoil,
+    /// `filter_Enhance{gold,wood,water,fire,soil}`: `MERGE|BUFF` com `Merge` vazio; `EnhanceScaleResistance(i,
+    /// ratio × 100)`; HSTATE 48–52.
+    Enhancegold,
+    Enhancewood,
+    Enhancewater,
+    Enhancefire,
+    Enhancesoil,
+    /// `filter_Fasthpgen/Fastmpgen`: `MERGE|BUFF`, `EnhanceHPGen/MPGen((int)value)`; HSTATE 26/27, `VSTATE_BLESSED`.
+    /// O `Merge` fica com o tempo e o ponto do novo. `razao` = o ponto.
+    Fasthpgen,
+    Fastmpgen,
+    /// `filter_Fireblade/Iceblade` (`TranslateSendAttack`): `MERGE|BUFF`; o golpe físico soma `ratio × 0,5 ×
+    /// (dano baixo + alto da arma)` ao fogo (`magic_damage[3]`) / água (`[2]`), como o `Toxicblade`. HSTATE 39 /
+    /// 38 e, só a de gelo, `VSTATE_ICEBLADE` 16.
+    Fireblade,
+    Iceblade,
+    /// `filter_Incmp`: `MERGE|BUFF`, `EnhanceScaleMaxMP(ratio × 100)`; HSTATE 29, `VSTATE_BLESSED`.
+    Incmp,
+    /// `filter_Stoneskin`: `UNIQUE|BUFF`, `EnhanceScaleDefense(ratio × 100)`; HSTATE 64, `VSTATE_BLESSED`.
+    Stoneskin,
+    /// `filter_Blessmagic`: `UNIQUE|BUFF`, `EnhanceScaleMagicDamage(ratio × 100)`; HSTATE 68, `VSTATE_BLESSED`.
+    Blessmagic,
+    /// `filter_Yijin(object, ratio × 100, amount × 100, time)`: `UNIQUE|BUFF`, todas as resistências +`ratio`%,
+    /// defesa −`amount`%; HSTATE 62, sem estado. `razao` = o ganho, `escala_defesa` = a perda.
+    Yijin,
+    /// `filter_Xisui`: o avesso — defesa +`ratio`%, resistências −`amount`%; HSTATE 61.
+    Xisui,
+    /// `filter_Fireshield/Iceshield/Soilshield` — os três com `_filter_id = FILTER_MAGICSHIELD` (um tira o
+    /// outro): `UNIQUE|BUFF`. Fogo: resistência ao fogo +`ratio`% e `EnhanceHPGen((int)amount)`; gelo: à água e
+    /// `EnhanceMPGen`; terra (`(ratio × 100, 100 × amount)`): à terra e defesa +`amount`%. HSTATE 6/7/11;
+    /// `VSTATE_FIRESHIELD/ICESHIELD/SOILSHIELD` 24/25/26 no 1.5.5 e 28/29/30 no `gs` 1.2.6.
+    /// `por_segundo` = o ponto de regeneração, `escala_defesa` = a defesa da terra.
+    Fireshield,
+    Iceshield,
+    Soilshield,
+    /// `filter_Eaglecurse(object, ratio × 100, time, damage)` (`skillfilter.h`, `SetEaglecurse`
+    /// `playerwrapper.cpp:2359-2397`): lento (`ImpairSpeed(ratio)`) e dano de **metal** no tempo
+    /// (`CalcMagicDamage(0, amount)`, ¼ entre jogadores, punição de nível contra monstro; `damage > 1`),
+    /// `_damage = damage / period` e o `Heartbeat` do `Wounded` a cada 3 s. HSTATE 71, sem estado. Sem
+    /// `UNIQUE/MERGE` (só jogador contra jogador funde); imune com `IMMUNEMETAL | IMMUNEALL`.
+    Eaglecurse,
+    /// `SetFlower1..4` (`playerwrapper.cpp:2569-2588`): `filter_Icon(object, time, 0, VSTATE_FLOWER1..4,
+    /// FILTER_FLOWER, UNIQUE)` — só o estado 19–22 (o `gs` 1.2.6 empurra 0x13–0x16, VA 0x83060d6), um tira o outro.
+    Flower1,
+    Flower2,
+    Flower3,
+    Flower4,
+    /// `filter_Feathershield(object, ratio, value, time)` (`SetFeathershield`, `playerwrapper.cpp:1301-1307`, sem
+    /// dado): `UNIQUE|BUFF|HEARTBEAT|REMOVE_ON_DEATH|ADJUST_DAMAGE`. No `AdjustDamage` o físico recebido perde
+    /// `dec = (int)(físico × ratio)` e a mana paga `(int)(dec × cost × damage_adjust)`; sem mana bastante, paga a
+    /// que tem, `dec = mp / cost` e o filtro acaba. HSTATE 5, `VSTATE_FEATHERSHIELD` 28 (31 no `gs` 1.2.6).
+    /// `fator` = `ratio`, `fator_de_habilidade` = `cost`.
+    Feathershield,
+    /// `filter_Fastride(object, (int)(ratio × 100), time)` (`SetFastride` com dado): `UNIQUE|HEARTBEAT|
+    /// REMOVE_ON_DEATH|TRANSFERABLE_BUFF` — **sem** `FILTER_MASK_BUFF`, o `Clearbuff` não o tira.
+    /// `EnhanceMountSpeed(ratio)`: `_en_percent.mount_speed`, que só vale montado ([`Realce::velocidade_de_montaria`]).
+    /// HSTATE 82, sem estado.
+    Fastride,
+    /// B363 — as imunidades: `filter_Baseimmune` (`skillfilter.h`, `WEAK|BUFF|TRANSFERABLE_BUFF|HEARTBEAT|
+    /// REMOVE_ON_DEATH`) e `filter_Baseimmune2` (`:14477`, `UNIQUE|…` e `BUFF` só com `value > 0,5`): `IncImmuneMask`
+    /// no `OnAttach`, o `HSTATE` sempre e o `VSTATE` só com `showicon` (`insertvstate`). Máscara, estado e ícone de cada
+    /// classe em [`Efeito::mascara_de_imunidade`] e na ficha, extraídos do fonte. `Immunemagical2` é o
+    /// `filter_Immunemagical` com `FILTER_IMMUNEMAGICAL2` e `UNIQUE` (máscara pelo `amount`). `escala_defesa` = `showicon`.
+    Immunesealed,
+    Immunesleep,
+    Immuneslowdizzy,
+    Immunewound,
+    Immuneall,
+    Immunephysical,
+    Immunefire,
+    Immunewater,
+    Immunemetal,
+    Immunewood,
+    Immunesoil,
+    Immunemagical,
+    Immuneblooding,
+    Immuneweak,
+    Immunephysical2,
+    Immunefire2,
+    Immunewater2,
+    Immunemetal2,
+    Immunewood2,
+    Immunesoil2,
+    Immunemagical2,
+    /// B363 — lote 3 do 1.5.5 (`filter_<Nome>` de `skillfilter.h`, setter de `playerwrapper.cpp`). `razao` guarda o
+    /// `ratio × 100` ou o `(int)value` do construtor; `escala_defesa` = `showicon` onde o estado depende dele.
+    /// `Incmagic2`: `EnhanceScaleMagicDamage(ratio × 100)`, estado com `showicon`.
+    Incmagic2,
+    /// `Inchp2`: `EnhanceScaleMaxHP(ratio × 100 + 0,00001)`, estado com `showicon`.
+    Inchp2,
+    /// `Decdefence2`: `ImpairScaleDefense(ratio × 100)`.
+    Decdefence2,
+    /// `Speedup2`: `EnhanceSpeed(ratio × 100)`, estado com `showicon`.
+    Speedup2,
+    /// `Incsmite2`: `EnhanceCrit((int)value)`.
+    Incsmite2,
+    /// `Incsmite3`: `EnhanceCrit((int)value)`.
+    Incsmite3,
+    /// `Incattack2`: `EnhanceScaleDamage(ratio × 100)`, estado com `showicon`.
+    Incattack2,
+    /// `Fastpray2`: `DecPrayTime(ratio × 100)`.
+    Fastpray2,
+    /// `Fastmpgen2`: `EnhanceMPGen((int)value)` (sem `FILTER_MASK_BUFF`).
+    Fastmpgen2,
+    /// `Incresist2`: as cinco resistências +`ratio × 100`; bênção só com `value > 0,5`.
+    Incresist2,
+    /// `Reducefire2`: `ImpairScaleResistance(3, ratio × 100)`, `Merge` vazio.
+    Reducefire2,
+    /// `Reducegold3`: `ImpairScaleResistance(0, ratio × 100)`; bênção/maldição pela `amount`.
+    Reducegold3,
+    /// `Reducewater3`: `ImpairScaleResistance(2, ratio × 100)`; bênção/maldição pela `amount`.
+    Reducewater3,
+    /// `Inccritdamage`: `EnhanceCritDamage(ratio × 100)` (sem `FILTER_MASK_BUFF`).
+    Inccritdamage,
+    /// `Deccritresistance`: `ImpairCritResistance((int)value)`.
+    Deccritresistance,
+    /// `Dechurt2`: `AdjustDamage`: todo dano × `(1 − ratio)`; bênção só com `value > 0,5`.
+    Dechurt2,
+    /// `Dechurt3`: como o `Dechurt2`.
+    Dechurt3,
+    /// `Inchurt2`: `AdjustDamage`: × `(1 + ratio)`; maldição só com `value > 0,5`, estado com `showicon`.
+    Inchurt2,
+    /// `Inchurt3`: empilha até `amount` vezes: o `Merge` soma `ratio` ao fator (`skillfilter.h`).
+    Inchurt3,
+    /// `Subattackdegree`: `ImpairAttackDegree((int)value)`.
+    Subattackdegree,
+    /// `Subdefencedegree`: `ImpairDefendDegree((int)value)`.
+    Subdefencedegree,
+    /// `Subdefencedegree2`: `ImpairDefendDegree((int)value)`.
+    Subdefencedegree2,
+    /// `Adddefencedegree`: `EnhanceDefendDegree((int)value)`, estado com `showicon`.
+    Adddefencedegree,
+    /// `Addattackdegree`: `EnhanceAttackDegree((int)value)`, estado com `showicon`.
+    Addattackdegree,
+    /// B363 — lote 4 do 1.5.5.
+    /// `Befrozen`: `IncIdleSealMode(MODE_INDEX_STUN)` (não age, como a tontura); estado com `showicon`.
+    Befrozen,
+    /// `Dizzyinchurt`: atordoa e `AdjustDamage` × `(1 + ratio)`.
+    Dizzyinchurt,
+    /// `Deeppoision`: `AdjustDamage` × `(1 + ratio)`.
+    Deeppoision,
+    /// `Enhanceskilldamage`: `EnhanceSkillDamage(ratio × 100)` → `_skill_enhance` (`npc.cpp:1767-1768`).
+    Enhanceskilldamage,
+    /// `Enhanceskilldamage2`: o mesmo, outra classe.
+    Enhanceskilldamage2,
+    /// `Enhanceskilldamage3`: o mesmo (`ratio × 100 + 0,00001`).
+    Enhanceskilldamage3,
+    /// `Apgencont`: `_ap = amount / tempo` e `ModifyAP(_ap × _counter)` a cada 3 s; bênção só com `value > 0,5`; estado com `showicon`.
+    Apgencont,
+    /// `Apleakcont`: o avesso: `ModifyAP(−_ap × _counter)`; maldição só com `value > 0,5`.
+    Apleakcont,
 }
 
 /// O que se sabe de cada efeito: convivência, se é bênção (`FILTER_MASK_BUFF`) ou
@@ -393,6 +556,88 @@ impl Efeito {
             "Aurabless" => Aurabless,
             "Rebirth" => Rebirth,
             "Decregiondmg" => Decregiondmg,
+            "Sharpblade" => Sharpblade,
+            "Reducegold" => Reducegold,
+            "Reducewater" => Reducewater,
+            "Reducefire" => Reducefire,
+            "Reducesoil" => Reducesoil,
+            "Enhancegold" => Enhancegold,
+            "Enhancewood" => Enhancewood,
+            "Enhancewater" => Enhancewater,
+            "Enhancefire" => Enhancefire,
+            "Enhancesoil" => Enhancesoil,
+            "Fasthpgen" => Fasthpgen,
+            "Fastmpgen" => Fastmpgen,
+            "Fireblade" => Fireblade,
+            "Iceblade" => Iceblade,
+            "Incmp" => Incmp,
+            "Stoneskin" => Stoneskin,
+            "Blessmagic" => Blessmagic,
+            "Yijin" => Yijin,
+            "Xisui" => Xisui,
+            "Fireshield" => Fireshield,
+            "Iceshield" => Iceshield,
+            "Soilshield" => Soilshield,
+            "Eaglecurse" => Eaglecurse,
+            "Flower1" => Flower1,
+            "Flower2" => Flower2,
+            "Flower3" => Flower3,
+            "Flower4" => Flower4,
+            "Feathershield" => Feathershield,
+            "Fastride" => Fastride,
+            "Immunesealed" => Immunesealed,
+            "Immunesleep" => Immunesleep,
+            "Immuneslowdizzy" => Immuneslowdizzy,
+            "Immunewound" => Immunewound,
+            "Immuneall" => Immuneall,
+            "Immunephysical" => Immunephysical,
+            "Immunefire" => Immunefire,
+            "Immunewater" => Immunewater,
+            "Immunemetal" => Immunemetal,
+            "Immunewood" => Immunewood,
+            "Immunesoil" => Immunesoil,
+            "Immunemagical" => Immunemagical,
+            "Immuneblooding" => Immuneblooding,
+            "Immuneweak" => Immuneweak,
+            "Immunephysical2" => Immunephysical2,
+            "Immunefire2" => Immunefire2,
+            "Immunewater2" => Immunewater2,
+            "Immunemetal2" => Immunemetal2,
+            "Immunewood2" => Immunewood2,
+            "Immunesoil2" => Immunesoil2,
+            "Immunemagical2" => Immunemagical2,
+            "Incmagic2" => Incmagic2,
+            "Inchp2" => Inchp2,
+            "Decdefence2" => Decdefence2,
+            "Speedup2" => Speedup2,
+            "Incsmite2" => Incsmite2,
+            "Incsmite3" => Incsmite3,
+            "Incattack2" => Incattack2,
+            "Fastpray2" => Fastpray2,
+            "Fastmpgen2" => Fastmpgen2,
+            "Incresist2" => Incresist2,
+            "Reducefire2" => Reducefire2,
+            "Reducegold3" => Reducegold3,
+            "Reducewater3" => Reducewater3,
+            "Inccritdamage" => Inccritdamage,
+            "Deccritresistance" => Deccritresistance,
+            "Dechurt2" => Dechurt2,
+            "Dechurt3" => Dechurt3,
+            "Inchurt2" => Inchurt2,
+            "Inchurt3" => Inchurt3,
+            "Subattackdegree" => Subattackdegree,
+            "Subdefencedegree" => Subdefencedegree,
+            "Subdefencedegree2" => Subdefencedegree2,
+            "Adddefencedegree" => Adddefencedegree,
+            "Addattackdegree" => Addattackdegree,
+            "Befrozen" => Befrozen,
+            "Dizzyinchurt" => Dizzyinchurt,
+            "Deeppoision" => Deeppoision,
+            "Enhanceskilldamage" => Enhanceskilldamage,
+            "Enhanceskilldamage2" => Enhanceskilldamage2,
+            "Enhanceskilldamage3" => Enhanceskilldamage3,
+            "Apgencont" => Apgencont,
+            "Apleakcont" => Apleakcont,
             _ => return None,
         })
     }
@@ -482,6 +727,103 @@ impl Efeito {
             Canti => f(Unico, false, 79, 0),
             Noregain => f(Unico, false, 78, 23),
             Apleak => f(Unico, false, 80, 0),
+            Sharpblade => f(Unico, true, 83, VS_BLESSED),
+            Reducegold => f(Fraco, false, 53, 0),
+            Reducewater => f(Fraco, false, 55, 0),
+            Reducefire => f(Fraco, false, 56, 0),
+            Reducesoil => f(Fraco, false, 57, 0),
+            Enhancegold => f(Fraco, true, 48, 0),
+            Enhancewood => f(Fraco, true, 49, 0),
+            Enhancewater => f(Fraco, true, 50, 0),
+            Enhancefire => f(Fraco, true, 51, 0),
+            Enhancesoil => f(Fraco, true, 52, 0),
+            Fasthpgen => f(Fundir, true, 26, VS_BLESSED),
+            Fastmpgen => f(Fundir, true, 27, VS_BLESSED),
+            Fireblade => f(Fundir, true, 39, 0),
+            Iceblade => f(Fundir, true, 38, 16),
+            Incmp => f(Fundir, true, 29, VS_BLESSED),
+            Stoneskin => f(Unico, true, 64, VS_BLESSED),
+            Blessmagic => f(Unico, true, 68, VS_BLESSED),
+            Yijin => f(Unico, true, 62, 0),
+            Xisui => f(Unico, true, 61, 0),
+            Fireshield => f(Unico, true, 6, 24),
+            Iceshield => f(Unico, true, 7, 25),
+            Soilshield => f(Unico, true, 11, 26),
+            Eaglecurse => f(Livre, false, 71, 0),
+            // `filter_Icon`: sem ícone de equipe, nem bênção nem maldição (não sai no `Clearbuff`).
+            Flower1 | Flower2 | Flower3 | Flower4 => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 0,
+                visivel: match self {
+                    Flower1 => 19,
+                    Flower2 => 20,
+                    Flower3 => 21,
+                    _ => 22,
+                },
+            },
+            Feathershield => f(Unico, true, 5, 28),
+            Immunesealed => f(Fraco, true, 84, 34),
+            Immunesleep => f(Fraco, true, 85, 35),
+            Immuneslowdizzy => f(Fraco, true, 86, 0),
+            Immunewound => f(Fraco, true, 87, 0),
+            Immuneall => f(Fraco, true, 88, 0),
+            Immunephysical => f(Fraco, true, 89, 0),
+            Immunefire => f(Fraco, true, 90, 36),
+            Immunewater => f(Fraco, true, 91, 37),
+            Immunemetal => f(Fraco, true, 92, 38),
+            Immunewood => f(Fraco, true, 93, 39),
+            Immunesoil => f(Fraco, true, 94, 40),
+            Immunemagical => f(Fraco, true, 95, 0),
+            Immuneblooding => f(Fraco, true, 126, 56),
+            Immuneweak => f(Fraco, true, 133, 44),
+            Immunephysical2 => f(Unico, true, 247, 0),
+            Immunefire2 => f(Unico, true, 251, 36),
+            Immunewater2 => f(Unico, true, 250, 37),
+            Immunemetal2 => f(Unico, true, 248, 38),
+            Immunewood2 => f(Unico, true, 249, 39),
+            Immunesoil2 => f(Unico, true, 252, 40),
+            Immunemagical2 => f(Unico, true, 95, 0),
+            Incmagic2 => f(Fundir, true, 146, VS_BLESSED),
+            Inchp2 => f(Fundir, true, 144, VS_BLESSED),
+            Decdefence2 => f(Unico, false, 116, 0),
+            Speedup2 => f(Fundir, true, 148, VS_BLESSED),
+            Incsmite2 => f(Fraco, true, 115, 0),
+            Incsmite3 => f(Fraco, true, 239, 0),
+            Incattack2 => f(Fundir, true, 145, VS_BLESSED),
+            Fastpray2 => f(Unico, true, 147, 0),
+            Fastmpgen2 => f(Fundir, false, 198, VS_BLESSED),
+            Incresist2 => f(Unico, true, 235, VS_BLESSED),
+            Reducefire2 => f(Fraco, false, 117, 0),
+            Reducegold3 => f(Unico, false, 292, 0),
+            Reducewater3 => f(Unico, false, 293, 0),
+            Inccritdamage => f(Unico, false, 152, 0),
+            Deccritresistance => f(Unico, false, 206, 96),
+            Dechurt2 => f(Unico, false, 142, 0),
+            Dechurt3 => f(Unico, false, 244, 0),
+            Inchurt2 => f(Unico, false, 143, VS_INFAUST),
+            Inchurt3 => f(Fundir, false, 233, VS_INFAUST),
+            Subattackdegree => f(Unico, false, 136, 0),
+            Subdefencedegree => f(Unico, false, 138, 0),
+            Subdefencedegree2 => f(Unico, false, 237, 0),
+            Adddefencedegree => f(Unico, true, 137, 53),
+            Addattackdegree => f(Fundir, true, 135, 52),
+            Befrozen => f(Fraco, false, 134, 45),
+            Dizzyinchurt => f(Unico, false, 214, 101),
+            Deeppoision => f(Fraco, false, 108, 0),
+            Enhanceskilldamage => f(Unico, false, 196, 0),
+            Enhanceskilldamage2 => f(Unico, false, 212, 0),
+            Enhanceskilldamage3 => f(Unico, false, 282, 0),
+            Apgencont => f(Fraco, false, 102, 50),
+            Apleakcont => f(Fraco, false, 103, 51),
+            Fastride => Ficha {
+                convivencia: Unico,
+                bencao: false,
+                maldicao: false,
+                icone: 82,
+                visivel: 0,
+            },
             Reducewood => f(Fraco, false, 54, 0),
             Freemove => f(Fraco, true, 72, 0),
             Giant => f(Unico, true, 66, VS_BLESSED),
@@ -584,6 +926,51 @@ impl Efeito {
         self == outro
             || matches!((self, outro), (Retort | Retort2 | Jingji, Retort | Retort2 | Jingji))
             || matches!((self, outro), (Canti | Noregain | Apleak, Canti | Noregain | Apleak))
+            // B363 — `FILTER_MAGICSHIELD` dos três escudos e `FILTER_FLOWER` das quatro flores.
+            || matches!((self, outro), (Fireshield | Iceshield | Soilshield, Fireshield | Iceshield | Soilshield))
+            || matches!((self, outro), (Flower1 | Flower2 | Flower3 | Flower4, Flower1 | Flower2 | Flower3 | Flower4))
+    }
+
+    /// B363 — a máscara `IMMUNE*` (`cskill/skill/statedef.h:544-566`: físico 0x1, metal 0x2, madeira 0x4, água 0x8,
+    /// fogo 0x10, terra 0x20, tontura 0x40, sono 0x80, lento 0x100, preso 0x200, maldito/selado 0x400, fraco 0x800,
+    /// ferida 0x2000, sangrar 0x20000, `IMMUNEALL` 0x40000) que o filtro liga (`IncImmuneMask`). O
+    /// `filter_Freemove` liga lento|preso|tontura|sono.
+    /// B363 — os filtros que só ligam o estado visível com `showicon` (`if (_insertvstate) IncVisibleState`).
+    pub fn estado_pelo_icone(self) -> bool {
+        use Efeito::*;
+        matches!(
+            self,
+            Incmagic2 | Inchp2 | Speedup2 | Incattack2 | Inchurt2 | Adddefencedegree | Addattackdegree | Befrozen | Apgencont | Apleakcont
+        )
+    }
+
+    pub fn mascara_de_imunidade(self) -> i32 {
+        use Efeito::*;
+        match self {
+            Freemove => 0x100 | 0x200 | 0x40 | 0x80,
+            Immunesealed => 0x400,
+            Immunesleep => 0x80,
+            Immuneslowdizzy => 0x140,
+            Immunewound => 0x2000,
+            Immuneall => 0x40000,
+            Immunephysical => 0x1,
+            Immunefire => 0x10,
+            Immunewater => 0x8,
+            Immunemetal => 0x2,
+            Immunewood => 0x4,
+            Immunesoil => 0x20,
+            Immunemagical => 0x3e,
+            Immuneblooding => 0x20000,
+            Immuneweak => 0x800,
+            Immunephysical2 => 0x1,
+            Immunefire2 => 0x10,
+            Immunewater2 => 0x8,
+            Immunemetal2 => 0x2,
+            Immunewood2 => 0x4,
+            Immunesoil2 => 0x20,
+            Immunemagical2 => 0x3e,
+            _ => 0,
+        }
     }
 
     /// Dano ao longo do tempo (`filter_Wounded`), com a classe de dano do
@@ -597,6 +984,7 @@ impl Efeito {
             Flood => Some(Some(2)),
             Burning => Some(Some(3)),
             Fallen => Some(Some(4)),
+            Eaglecurse => Some(Some(0)),
             _ => None,
         }
     }
@@ -671,6 +1059,14 @@ pub struct Realce {
     /// `_en_percent.attack_speed` — **negativo** acelera (`EnhanceScaleAttackSpeed` subtrai).
     pub velocidade_de_ataque: i32,
     pub velocidade: i32,
+    /// B363 — `_en_percent.mount_speed` (`EnhanceMountSpeed`, o `filter_Fastride`): só entra montado, no
+    /// `UpdateSpeed` com `override_speed` (`playertemplate.h:1039-1075`).
+    pub velocidade_de_montaria: i32,
+    /// B363 — `_attack_degree`/`_defend_degree` (`Enhance/ImpairAttackDegree`, `…DefendDegree`) e
+    /// `_crit_damage_bonus` (`EnhanceCritDamage`), em pontos.
+    pub grau_de_ataque: i32,
+    pub grau_de_defesa: i32,
+    pub dano_critico: i32,
     pub vida: i32,
     /// `_en_percent.max_mp` (`Enhance/ImpairScaleMaxMP`), aplicado no `UpdateMana`.
     pub mana: i32,
@@ -943,6 +1339,14 @@ impl Efeitos {
                         } else if novo.fator > velho.fator {
                             *velho = novo;
                         }
+                    } else if novo.efeito == Efeito::Inchurt3 {
+                        // B363 — `filter_Inchurt3::Merge`: abaixo do limite do novo, +1 camada e `ratio += novo − 1`;
+                        // o tempo é sempre o do novo.
+                        if velho.contador < novo.contador {
+                            velho.contador += 1;
+                            velho.fator_de_habilidade += novo.fator_de_habilidade - 1.0;
+                        }
+                        velho.restante_s = novo.restante_s;
                     } else if novo.efeito == Efeito::Inchpsteal {
                         // `filter_Inchpsteal::Merge` (`skillfilter.h:8840-8854`): igual renova o
                         // tempo, maior substitui, menor não muda nada.
@@ -961,6 +1365,11 @@ impl Efeitos {
                 }
                 Convivencia::Livre => {}
             }
+        }
+        let mut novo = novo;
+        if novo.efeito == Efeito::Inchurt3 {
+            // `_pile_times = 1` (o limite do novo só vale no `Merge`).
+            novo.contador = 1;
         }
         self.filtros.push(novo);
         true
@@ -1025,7 +1434,13 @@ impl Efeitos {
             let acumula = f.efeito.dano_no_tempo().is_some()
                 || matches!(
                     f.efeito,
-                    Efeito::Hpgen | Efeito::Mpgen | Efeito::Magicleak | Efeito::Apgencont2 | Efeito::Incrementalhpgen
+                    Efeito::Hpgen
+                        | Efeito::Mpgen
+                        | Efeito::Magicleak
+                        | Efeito::Apgencont2
+                        | Efeito::Apgencont
+                        | Efeito::Apleakcont
+                        | Efeito::Incrementalhpgen
                 );
             if acumula {
                 f.contador += 1;
@@ -1042,7 +1457,8 @@ impl Efeitos {
                         // `filter_Magicleak::Heartbeat`: `DrainMana(_damage × _counter)`.
                         Efeito::Magicleak => tiques.push(Tique::Mana(-v)),
                         // `filter_Apgencont2::Heartbeat`: `ModifyAP(_ap × _counter)`.
-                        Efeito::Apgencont2 => tiques.push(Tique::Chi(v)),
+                        Efeito::Apgencont2 | Efeito::Apgencont => tiques.push(Tique::Chi(v)),
+                        Efeito::Apleakcont => tiques.push(Tique::Chi(-v)),
                         _ => tiques.push(Tique::Dano {
                             origem: f.origem,
                             valor: v,
@@ -1081,6 +1497,25 @@ impl Efeitos {
             return None;
         }
         Some(self.filtros.remove(i).fator.clamp(0.01, 1.0))
+    }
+
+    /// B363 — `filter_Feathershield::AdjustDamage` sobre o dano **físico** recebido, com a mana atual:
+    /// devolve `(o físico que sobra, a mana a drenar)`. `damage_adjust` = 1 (o ajuste de PvP não chega aqui).
+    pub fn penas_absorvem(&mut self, fisico: i32, mp: i32) -> (i32, i32) {
+        let Some(f) = self.filtros.iter_mut().find(|f| f.efeito == Efeito::Feathershield) else {
+            return (fisico, 0);
+        };
+        if fisico <= 0 || f.fator_de_habilidade <= 0.0 {
+            return (fisico, 0);
+        }
+        let mut dec = (fisico as f32 * f.fator) as i32 as f32;
+        let mut custo = (dec * f.fator_de_habilidade) as i32;
+        if mp <= custo {
+            f.restante_s = 0;
+            custo = mp;
+            dec = mp as f32 / f.fator_de_habilidade;
+        }
+        (((fisico as f32) - dec).max(0.0) as i32, custo)
     }
 
     pub fn escudo_absorve(&mut self, dano: i32) -> i32 {
@@ -1264,13 +1699,22 @@ impl Efeitos {
 
     /// `filter_Freemove` ligado: a máscara `IMMUNESLOW|FIX|DIZZY|SLEEP` recusa esses quatro
     /// (`SetSlow/Fix/Dizzy/Sleep`, `playerwrapper.cpp`, `GetImmuneMask()`).
+    /// B363 — `_immune_state_adj` (`gactive_imp`): o OU das máscaras dos filtros vivos.
+    pub fn mascara_de_imunidade(&self) -> i32 {
+        self.filtros.iter().fold(0, |m, f| m | f.efeito.mascara_de_imunidade())
+    }
+
     pub fn imune_a(&self, e: Efeito) -> bool {
         self.tem(Efeito::Freemove) && matches!(e, Efeito::Slow | Efeito::Fix | Efeito::Dizzy | Efeito::Sleep)
     }
 
     /// `MODE_INDEX_STUN`/`SLEEP`: não age.
     pub fn sem_acao(&self) -> bool {
-        self.tem(Efeito::Dizzy) || self.tem(Efeito::Sleep) || self.tem(Efeito::Palsy)
+        self.tem(Efeito::Dizzy)
+            || self.tem(Efeito::Sleep)
+            || self.tem(Efeito::Palsy)
+            || self.tem(Efeito::Befrozen)
+            || self.tem(Efeito::Dizzyinchurt)
     }
     /// `MODE_INDEX_ROOT`: não anda.
     pub fn preso(&self) -> bool {
@@ -1322,6 +1766,66 @@ impl Efeitos {
                 Canti => r.dano_recebido *= 1.0 + f.fator,
                 Noregain => r.regen_pct -= 2000,
                 Reducewood => r.resistencias[1] -= k,
+                Sharpblade => r.dano += k,
+                Reducegold => r.resistencias[0] -= k,
+                Reducewater => r.resistencias[2] -= k,
+                Reducefire => r.resistencias[3] -= k,
+                Reducesoil => r.resistencias[4] -= k,
+                Enhancegold => r.resistencias[0] += k,
+                Enhancewood => r.resistencias[1] += k,
+                Enhancewater => r.resistencias[2] += k,
+                Enhancefire => r.resistencias[3] += k,
+                Enhancesoil => r.resistencias[4] += k,
+                Fasthpgen => r.regen_vida += k,
+                Fastmpgen => r.regen_mana += k,
+                Incmp => r.mana += k,
+                Stoneskin => r.defesa += k,
+                Blessmagic => r.magia += k,
+                Yijin => {
+                    r.resistencia += k;
+                    r.defesa -= f.escala_defesa;
+                }
+                Xisui => {
+                    r.defesa += k;
+                    r.resistencia -= f.escala_defesa;
+                }
+                Fireshield => {
+                    r.resistencias[3] += k;
+                    r.regen_vida += f.por_segundo;
+                }
+                Iceshield => {
+                    r.resistencias[2] += k;
+                    r.regen_mana += f.por_segundo;
+                }
+                Soilshield => {
+                    r.resistencias[4] += k;
+                    r.defesa += f.escala_defesa;
+                }
+                Eaglecurse => r.velocidade -= k,
+                Fastride => r.velocidade_de_montaria += k,
+                Incmagic2 => r.magia += k,
+                Inchp2 => r.vida += k,
+                Decdefence2 => r.defesa -= k,
+                Speedup2 => r.velocidade += k,
+                Incsmite2 | Incsmite3 => r.critico += k,
+                Incattack2 => r.dano += k,
+                Fastpray2 => r.conjuracao += k,
+                Fastmpgen2 => r.regen_mana += k,
+                Incresist2 => r.resistencia += k,
+                Reducefire2 => r.resistencias[3] -= k,
+                Reducegold3 => r.resistencias[0] -= k,
+                Reducewater3 => r.resistencias[2] -= k,
+                Inccritdamage => r.dano_critico += k,
+                Deccritresistance => r.resistencia_a_critico -= k,
+                Dechurt2 | Dechurt3 => r.dano_recebido *= 1.0 - f.fator,
+                Inchurt2 => r.dano_recebido *= 1.0 + f.fator,
+                Inchurt3 => r.dano_recebido *= f.fator_de_habilidade,
+                Subattackdegree => r.grau_de_ataque -= k,
+                Subdefencedegree | Subdefencedegree2 => r.grau_de_defesa -= k,
+                Adddefencedegree => r.grau_de_defesa += k,
+                Addattackdegree => r.grau_de_ataque += k,
+                Dizzyinchurt | Deeppoision => r.dano_recebido *= 1.0 + f.fator,
+                Enhanceskilldamage | Enhanceskilldamage2 | Enhanceskilldamage3 => r.realce_de_habilidade2 += k,
                 Giant => r.dano += k,
                 Devilstate => {
                     r.precisao += k;
@@ -1370,6 +1874,9 @@ impl Efeitos {
                 // `if(_insertvstate) IncVisibleState(...)`.
                 Efeito::Apgencont2 if f.escala_defesa != 0 => 50,
                 Efeito::Sealed2 if f.escala_defesa != 0 => 8,
+                // B363 — `insertvstate ? VSTATE_* : -1` das imunidades.
+                e if e.mascara_de_imunidade() != 0 && e != Efeito::Freemove && f.escala_defesa == 0 => 0,
+                e if e.estado_pelo_icone() && f.escala_defesa == 0 => 0,
                 e => e.ficha().visivel as usize,
             };
             if v > 0 && v < 192 {
@@ -2099,6 +2606,170 @@ mod testes {
             fator_de_habilidade: 0.0,
             mascara: None,
         }
+    }
+
+    /// B363 — o lote dos `Set*` do 1.2.6: realces, convivência (`Merge` vazio = Fraco, `FILTER_MAGICSHIELD`,
+    /// `FILTER_FLOWER`) e o dano de metal no tempo do `Eaglecurse`.
+    #[test]
+    fn lote_de_realces_do_126() {
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Sharpblade, 30, 15)));
+        assert!(f.adicionar(filtro(Efeito::Stoneskin, 30, 20)));
+        assert!(f.adicionar(filtro(Efeito::Blessmagic, 30, 25)));
+        assert!(f.adicionar(filtro(Efeito::Reducefire, 30, 10)));
+        assert!(!f.adicionar(filtro(Efeito::Reducefire, 30, 50)), "Merge vazio: o novo some");
+        assert!(f.adicionar(filtro(Efeito::Enhancegold, 30, 12)));
+        let mut y = filtro(Efeito::Yijin, 30, 30);
+        y.escala_defesa = 40;
+        assert!(f.adicionar(y));
+        let r = f.realce();
+        assert_eq!((r.dano, r.magia, r.defesa, r.resistencia), (15, 25, 20 - 40, 30));
+        assert_eq!((r.resistencias[3], r.resistencias[0]), (-10, 12));
+        // Escudos: um tira o outro.
+        let mut fogo = filtro(Efeito::Fireshield, 30, 20);
+        fogo.por_segundo = 7;
+        assert!(f.adicionar(fogo));
+        let mut terra = filtro(Efeito::Soilshield, 30, 15);
+        terra.escala_defesa = 10;
+        assert!(f.adicionar(terra));
+        assert!(!f.tem(Efeito::Fireshield) && f.tem(Efeito::Soilshield));
+        assert_eq!(Efeito::Fireshield.ficha().visivel, 24);
+        // Flores: uma tira a outra, sem ícone.
+        assert!(f.adicionar(filtro(Efeito::Flower1, 30, 0)));
+        assert!(f.adicionar(filtro(Efeito::Flower3, 30, 0)));
+        assert!(!f.tem(Efeito::Flower1) && f.tem(Efeito::Flower3));
+        assert_eq!((Efeito::Flower3.ficha().visivel, Efeito::Flower3.ficha().icone), (21, 0));
+        // Eaglecurse: lento e metal a cada 3 s.
+        assert_eq!(Efeito::Eaglecurse.dano_no_tempo(), Some(Some(0)));
+        let mut g = Efeitos::default();
+        let mut e = filtro(Efeito::Eaglecurse, 9, 30);
+        e.por_segundo = 5;
+        assert!(g.adicionar(e));
+        assert_eq!(g.realce().velocidade, -30);
+        let danos: i32 = (0..9)
+            .flat_map(|_| g.batida().0)
+            .map(|t| match t {
+                Tique::Dano { valor, .. } => valor,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(danos, 45);
+        assert_eq!(Efeito::do_setter("Fasthpgen"), Some(Efeito::Fasthpgen));
+    }
+
+    /// B363 — `filter_Feathershield::AdjustDamage` e o `UpdateSpeed` montado com o `Fastride`.
+    #[test]
+    fn penas_pagam_com_mana_e_fastride_so_montado() {
+        let mut f = Efeitos::default();
+        let mut penas = filtro(Efeito::Feathershield, 20, 50);
+        penas.fator = 0.5;
+        penas.fator_de_habilidade = 2.0;
+        assert!(f.adicionar(penas));
+        // 300 físico: dec 150, custo 300.
+        assert_eq!(f.penas_absorvem(300, 1000), (150, 300));
+        // Pouca mana: paga 100, dec = 100 / 2 = 50, o filtro acaba.
+        assert_eq!(f.penas_absorvem(300, 100), (250, 100));
+        assert_eq!(f.batida().1, true, "as penas acabam sem mana");
+        assert!(!f.filtros.iter().any(|x| x.efeito == Efeito::Feathershield));
+        // Fastride: +30 % só montado; a lentidão (−20 %) soma, o ganho a pé não.
+        let mut g = Efeitos::default();
+        assert!(g.adicionar(filtro(Efeito::Fastride, 20, 30)));
+        let r = g.realce();
+        assert_eq!((r.velocidade, r.velocidade_de_montaria), (0, 30));
+        let (andando, correndo) = crate::entity::velocidade_montado(10.0, &r);
+        assert!((andando - 3.25).abs() < 1e-4 && (correndo - 13.0).abs() < 1e-4);
+        assert!(g.adicionar(filtro(Efeito::Slow, 20, 20)));
+        let (_, correndo) = crate::entity::velocidade_montado(10.0, &g.realce());
+        assert!((correndo - 11.0).abs() < 1e-4);
+        assert!(g.adicionar(filtro(Efeito::Speedup, 20, 50)));
+        let (_, correndo) = crate::entity::velocidade_montado(10.0, &g.realce());
+        assert!((correndo - 13.0).abs() < 1e-4, "o ganho de corrida não vale montado: {correndo}");
+        assert!(!g.limpar(true) || g.filtros.iter().any(|x| x.efeito == Efeito::Fastride), "Clearbuff não tira o Fastride");
+    }
+
+    /// B363 — as imunidades: a máscara liga com o filtro e entra na defesa do combate; o estado só com `showicon`;
+    /// `Baseimmune` é fraco (o segundo some), `Baseimmune2` único; o monstro soma o `immune_type` do modelo.
+    #[test]
+    fn imunidades_dos_filtros() {
+        let mut f = Efeitos::default();
+        let mut fogo = filtro(Efeito::Immunefire, 10, 0);
+        fogo.escala_defesa = 1;
+        assert!(f.adicionar(fogo));
+        assert!(!f.adicionar(filtro(Efeito::Immunefire, 30, 0)), "WEAK: o segundo some");
+        assert!(f.adicionar(filtro(Efeito::Immunephysical, 10, 0)));
+        assert_eq!(f.mascara_de_imunidade(), 0x10 | 0x1);
+        let e = f.estados_visiveis();
+        assert!(e[1] & (1 << (36 - 32)) != 0, "VSTATE_IMMUNEFIRE com showicon");
+        let mut g = Efeitos::default();
+        assert!(g.adicionar(filtro(Efeito::Immunewater, 10, 0)));
+        assert_eq!(g.estados_visiveis()[1] & (1 << (37 - 32)), 0, "sem showicon, sem estado");
+        assert_eq!(Efeito::Immunemagical.mascara_de_imunidade(), 0x3e);
+        assert_eq!(Efeito::Freemove.mascara_de_imunidade(), 0x3c0);
+        // O monstro: `_immune_state | _immune_state_adj`.
+        let mut m = crate::entity::MonsterEntity::placeholder(1, 1, pw_core::Vector3::new(0.0, 0.0, 0.0), 0);
+        m.imunidades = 0x4;
+        assert!(m.efeitos.adicionar(filtro(Efeito::Immunesoil2, 10, 0)));
+        assert_eq!(crate::combat::CombatEngine::defesa_do_monstro(&m).imunidades, 0x4 | 0x20);
+    }
+
+    /// B363 — lote 3: o `Inchurt3` empilha até o limite, `Dechurt2` reduz, graus e dano crítico somam, e o estado
+    /// dos `…2` só com `showicon`.
+    #[test]
+    fn lote_3_empilha_reduz_e_soma_graus() {
+        let mut f = Efeitos::default();
+        let camada = || {
+            let mut x = filtro(Efeito::Inchurt3, 10, 0);
+            x.fator_de_habilidade = 1.1;
+            x.contador = 3;
+            x
+        };
+        for _ in 0..5 {
+            f.adicionar(camada());
+        }
+        let v = f.filtros.iter().find(|x| x.efeito == Efeito::Inchurt3).unwrap();
+        assert_eq!(v.contador, 3, "três camadas no máximo");
+        assert!((v.fator_de_habilidade - 1.3).abs() < 1e-5);
+        assert!((f.realce().dano_recebido - 1.3).abs() < 1e-5);
+        let mut d = filtro(Efeito::Dechurt2, 10, 0);
+        d.fator = 0.2;
+        assert!(f.adicionar(d));
+        assert!((f.realce().dano_recebido - 1.3 * 0.8).abs() < 1e-5);
+        assert!(f.adicionar(filtro(Efeito::Addattackdegree, 10, 7)));
+        assert!(f.adicionar(filtro(Efeito::Subdefencedegree, 10, 4)));
+        assert!(f.adicionar(filtro(Efeito::Inccritdamage, 10, 25)));
+        let r = f.realce();
+        assert_eq!((r.grau_de_ataque, r.grau_de_defesa, r.dano_critico), (7, -4, 25));
+        // Estado: `Addattackdegree` (52) só com `showicon`.
+        assert_eq!(f.estados_visiveis()[1] & (1 << (52 - 32)), 0);
+        let mut com = filtro(Efeito::Adddefencedegree, 10, 3);
+        com.escala_defesa = 1;
+        assert!(f.adicionar(com));
+        assert!(f.estados_visiveis()[1] & (1 << (53 - 32)) != 0);
+    }
+
+    /// B363 — lote 4: o congelado não age, o chi sobe/desce a cada 3 s e o realce de habilidade soma.
+    #[test]
+    fn lote_4_congela_chi_e_realce_de_habilidade() {
+        let mut f = Efeitos::default();
+        assert!(f.adicionar(filtro(Efeito::Befrozen, 5, 0)));
+        assert!(f.sem_acao() && f.selado() && f.preso());
+        let mut g = Efeitos::default();
+        let mut sobe = filtro(Efeito::Apgencont, 6, 0);
+        sobe.por_segundo = 10;
+        let mut desce = filtro(Efeito::Apleakcont, 6, 0);
+        desce.por_segundo = 4;
+        assert!(g.adicionar(sobe) && g.adicionar(desce));
+        let chi: i32 = (0..6)
+            .flat_map(|_| g.batida().0)
+            .map(|t| match t {
+                Tique::Chi(v) => v,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(chi, 60 - 24);
+        assert!(g.adicionar(filtro(Efeito::Enhanceskilldamage, 5, 30)));
+        assert!(g.adicionar(filtro(Efeito::Enhanceskilldamage2, 5, 20)));
+        assert_eq!(g.realce().realce_de_habilidade2, 50);
     }
 
     #[test]

@@ -57,6 +57,10 @@ impl BusServer {
     /// C2S `SEVNPC_GET_CONTENT` (36) `{int service_type}` (`playercmd.cpp:1921-1936`): o 62 manda a agenda
     /// (`wedding_book_provider::GetContent` → `SendBookingList`); fora do mapa da cerimônia não há agenda e nada vai.
     pub(super) async fn conteudo_do_servico(&self, roleid: i32, payload: &[u8]) {
+        // B363 — a vitrine da barraca (`SERVICE_QUIERY_CONTENT` no `MarketHandler`).
+        if self.conteudo_da_barraca(roleid).await {
+            return;
+        }
         if payload.len() != 4 {
             self.enviar_ao_jogador(roleid, S2CGamedataSend::error_message(3).data).await;
             return;

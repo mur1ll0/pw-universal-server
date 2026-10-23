@@ -1,4 +1,5 @@
 pub mod account;
+pub mod amigos;
 pub mod audit;
 pub mod character;
 pub mod client_config;
@@ -16,6 +17,7 @@ pub mod task_lists;
 pub mod template;
 
 pub use account::*;
+pub use amigos::*;
 pub use audit::*;
 pub use character::*;
 pub use client_config::*;

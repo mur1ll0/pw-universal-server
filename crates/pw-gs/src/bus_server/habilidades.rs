@@ -77,6 +77,9 @@ struct Conjurador {
     corpo: f32,
     /// O dono, quando quem lança é mascote: o `attacker_info.attacker` do `SetRemoveaggro`.
     dono: Option<i64>,
+    /// A habilidade só pega alvo morto (`restrict_corpse == 1`): o encanto vai por
+    /// `EnchantZombie` e o jogador morto o roda (`GM_MSG_ENCHANT_ZOMBIE`, `player.cpp:1000-1014`).
+    alvo_morto: bool,
 }
 
 impl Conjurador {
@@ -91,6 +94,7 @@ impl Conjurador {
             alvo_da_habilidade: None,
             corpo: CORPO_DO_JOGADOR,
             dono: None,
+            alvo_morto: false,
         }
     }
 
@@ -112,6 +116,7 @@ impl Conjurador {
             alvo_da_habilidade: None,
             corpo: 0.0,
             dono: None,
+            alvo_morto: false,
         }
     }
 
@@ -132,6 +137,7 @@ impl Conjurador {
             alvo_da_habilidade: None,
             corpo: 0.0,
             dono: None,
+            alvo_morto: false,
         }
     }
 }
@@ -163,6 +169,117 @@ struct Mudanca {
 
 /// `MOD_IMMUNE` (`EC_ManAttacks.h:36`).
 const MOD_IMUNE: i32 = 0x80;
+
+/// B363 — a máscara de imunidade (`IMMUNE*`, `cskill/skill/statedef.h:544-566`: físico 0x1, metal 0x2 … terra 0x20, tontura 0x40,
+/// sono 0x80, lento 0x100, preso 0x200, maldito 0x400, fraco 0x800, repelir 0x1000, ferida 0x2000, interromper
+/// 0x4000, direto 0x8000, limpar 0x10000, sangrar 0x20000, `IMMUNEALL` 0x40000, derrubar 0x80000, paralisia
+/// 0x100000) que cada `PlayerWrapper::Set*` testa com `object.GetImmuneMask() & (…)`. **Extraída** de
+/// `cskill/skill/playerwrapper.cpp` (o `if (object.GetImmuneMask() & …)` de cada setter), não escrita à mão.
+const IMUNIDADE_DOS_SETTERS: &[(&str, i32)] = &[
+    ("Absorbdebuff", 0x40000),
+    ("Addfrosteffect", 0x40000),
+    ("Apleak", 0x40000),
+    ("Apleakcont", 0x40000),
+    ("Befrozen", 0x40040),
+    ("Bleeding", 0x60000),
+    ("Break", 0x44000),
+    ("Burning", 0x40010),
+    ("Burning2", 0x40010),
+    ("Burning3", 0x40010),
+    ("Burningfeet", 0x40110),
+    ("Canti", 0x40800),
+    ("Charred", 0x40001),
+    ("Clearbuff", 0x50000),
+    ("Decaccuracy", 0x40000),
+    ("Decattack", 0x40000),
+    ("Deccritresistance", 0x40000),
+    ("Decdefence", 0x40001),
+    ("Decdefence2", 0x40001),
+    ("Decdodge", 0x40000),
+    ("Dechp", 0x42000),
+    ("Decmagic", 0x40000),
+    ("Decresist", 0x40000),
+    ("Deeppoision", 0x40804),
+    ("Delayearthhurt", 0x40020),
+    ("Directhurt", 0x48000),
+    ("Dizzy", 0x40040),
+    ("Dizzyinchurt", 0x40840),
+    ("Dropmoneyondeath", 0xc0000),
+    ("Eaglecurse", 0x40002),
+    ("Earthhurt", 0x40020),
+    ("Fallen", 0x40020),
+    ("Fallen2", 0x40020),
+    ("Fallen3", 0x40020),
+    ("Firehurt", 0x40010),
+    ("Fix", 0x40200),
+    ("Fix2", 0x40200),
+    ("Fixondamage", 0x40200),
+    ("Flood", 0x40008),
+    ("Flood3", 0x40008),
+    ("Goldhurt", 0x40002),
+    ("Healabsorb", 0x40000),
+    ("Huntersoul", 0x40000),
+    ("Hurtwhenuseskill", 0x40000),
+    ("Incbecritrate", 0x40800),
+    ("Inchurt", 0x40800),
+    ("Inchurt2", 0x40800),
+    ("Inchurt3", 0x40800),
+    ("Inchurt4", 0x40800),
+    ("Inchurt5", 0x40800),
+    ("Inchurt6", 0x40800),
+    ("Inchurtfireearth", 0x40800),
+    ("Inchurtphysicgold", 0x40800),
+    ("Inchurtwoodwater", 0x40800),
+    ("Internalinjury", 0x40002),
+    ("Interruptwhenuseskill", 0x40000),
+    ("Knockup", 0x41000),
+    ("Leafdance", 0x60000),
+    ("Magicleak", 0x40000),
+    ("MnfactionDecresist", 0x40800),
+    ("Movepunish", 0x40002),
+    ("Noregain", 0x40000),
+    ("Physichurt", 0x40001),
+    ("Poisionseed", 0x40004),
+    ("Pullover", 0x41000),
+    ("Pullover2", 0x41000),
+    ("Reducefire", 0x40010),
+    ("Reducefire2", 0x40010),
+    ("Reducegold", 0x40002),
+    ("Reducegold2", 0x40002),
+    ("Reducesoil", 0x40020),
+    ("Reducewater", 0x40008),
+    ("Reducewater2", 0x40008),
+    ("Reducewood", 0x40004),
+    ("Repel", 0x41000),
+    ("Repel2", 0x41000),
+    ("Scaledechp", 0x42000),
+    ("Scaledecmp", 0x40000),
+    ("Sealed", 0x40400),
+    ("Sealed2", 0x40400),
+    ("Selfburning", 0x40010),
+    ("Sleep", 0x40080),
+    ("Slow", 0x40108),
+    ("Slowattack", 0x40000),
+    ("Slowattackpray", 0x40000),
+    ("Slowfly", 0x40100),
+    ("Slowpray", 0x40100),
+    ("Slowswim", 0x40100),
+    ("Specialphysichurt", 0x40800),
+    ("Standpunish", 0x40000),
+    ("Standpunish2", 0x40000),
+    ("Subattackdegree", 0x40000),
+    ("Subdefencedegree", 0x40000),
+    ("Subdefencedegree2", 0x40000),
+    ("Thunder", 0x40002),
+    ("Thunder3", 0x40002),
+    ("Toxic", 0x40004),
+    ("Toxic3", 0x40004),
+    ("Transferbuff", 0x40000),
+    ("Waterhurt", 0x40008),
+    ("Weakenbless", 0x40000),
+    ("Weakenbless2", 0x40000),
+    ("Woodhurt", 0x40004),
+];
 /// `MOD_ENCHANT_FAILED` (`EC_ManAttacks.h:37`).
 const MOD_FALHOU: i32 = 0x100;
 /// `MOD_SUCCESS` (`EC_ManAttacks.h:38`).
@@ -412,6 +529,7 @@ impl BusServer {
 
         let mut quem = Conjurador::do_jogador(&conjurador);
         quem.alvo_da_habilidade = Some(alvo).filter(|a| *a != roleid as i64);
+        quem.alvo_morto = h.so_em_morto();
         let odio = odio_da_habilidade(&h, nivel, conjurador.level);
         let mut nao_portados: Vec<String> = Vec::new();
         let mut avisar: Vec<(Alvo, Mudanca)> = Vec::new();
@@ -1501,6 +1619,22 @@ impl BusServer {
 
         match area {
             AREA_EM_SI => vec![Alvo::Jogador(eu)],
+            // `restrict_corpse == 1`: `GetInrange(..., 1)` só aceita alvo morto (`ret == 2` do
+            // `QueryObject`, `playerwrapper.cpp:584-600`) — o próprio conjurador, vivo, não serve.
+            AREA_PONTO if h.so_em_morto() => {
+                let Some(p) = mundo.players.get(&alvo).filter(|p| p.hp <= 0 && alvo != eu) else {
+                    debug!("mundo: {roleid} — a habilidade {} só pega alvo morto", h.id);
+                    return Vec::new();
+                };
+                let efeito = h
+                    .distancia_de_efeito(nivel, alcance_de_ataque)
+                    .filter(|d| *d > 0.0)
+                    .unwrap_or(alcance_de_ataque);
+                if conjurador.position.distance(&p.position) > CORPO_DO_JOGADOR + efeito + CORPO_DO_JOGADOR + 1.0 {
+                    return Vec::new();
+                }
+                vec![Alvo::Jogador(alvo)]
+            }
             AREA_PONTO => {
                 if alvo == eu {
                     return vec![Alvo::Jogador(eu)];
@@ -1604,7 +1738,7 @@ impl BusServer {
         let vars_s = vars_da_habilidade(golpe, conjurador);
         let vars_v = match alvo {
             Alvo::Jogador(id) => match mundo.players.get(&id) {
-                Some(p) if p.hp > 0 => vars_do_jogador(p),
+                Some(p) if p.hp > 0 || conjurador.alvo_morto => vars_do_jogador(p),
                 _ => return Mudanca::default(),
             },
             Alvo::Monstro(id) => match mundo.monsters.get(&id) {
@@ -1661,6 +1795,25 @@ impl BusServer {
         // `SetEntrap`/`SetEntrap2` (`playerwrapper.cpp:2460-2479`, `3744-3761`): sem ovo
         // (`GetPetEggID`, só o NPC tem) ou com o conjurador de nível **abaixo** do alvo, imune;
         // senão rola a chance — acertou, o ovo vai ao conjurador e o monstro some.
+        // B363 — `object.GetImmuneMask()` do monstro: o `immune_type` do `elements` (`npcgenerator`), que os
+        // setters de [`IMUNIDADE_DOS_SETTERS`] consultam; imune → `immune |= 0x80` e nada.
+        if let Alvo::Jogador(id) = alvo {
+            // `GetImmuneMask()` do jogador: só o dos filtros (`_immune_state_adj`).
+            let mascara = IMUNIDADE_DOS_SETTERS.iter().find(|(n, _)| *n == ap.nome).map(|(_, m)| *m);
+            let imune = mundo.players.get(&id).map_or(0, |p| p.efeitos.mascara_de_imunidade());
+            if mascara.is_some_and(|m| m & imune != 0) {
+                mud.imune |= MOD_IMUNE;
+                return;
+            }
+        }
+        if let Alvo::Monstro(id) = alvo {
+            let mascara = IMUNIDADE_DOS_SETTERS.iter().find(|(n, _)| *n == ap.nome).map(|(_, m)| *m);
+            let imune = mundo.monsters.get(&id).map_or(0, |(m, _)| m.imunidades | m.efeitos.mascara_de_imunidade());
+            if mascara.is_some_and(|m| m & imune != 0) {
+                mud.imune |= MOD_IMUNE;
+                return;
+            }
+        }
         if ap.nome == "Entrap" || ap.nome == "Entrap2" {
             let alvo_monstro = match alvo {
                 Alvo::Monstro(id) => mundo
@@ -1841,6 +1994,22 @@ impl BusServer {
             }
             return;
         }
+        // `SetResurrect` (`playerwrapper.cpp:742-751`; o mesmo no `gs` 1.2.6, VA 0x82fff82): vítima
+        // de nível ≤ 10 não perde experiência (`ratio = 0`); morta, `object.Resurrect(ratio, value,
+        // amount)` → `EnterResurrectReadyState` (`gs/obj_interface.cpp:705-710`). Não consulta o dado.
+        if ap.nome == "Resurrect" {
+            if let Alvo::Jogador(id) = alvo {
+                let (vida, mana) = self.sub.vida_e_mana_do_reviver(ap.valor, ap.quantia);
+                let oferta = mundo.players.get_mut(&id).and_then(|p| {
+                    let perda = if p.level <= 10 { 0.0 } else { ap.razao };
+                    p.reviver_por_outro.armar(p.hp <= 0, perda, vida, mana)
+                });
+                if let Some(perda) = oferta {
+                    mundo.pedir_aviso_de_reviver(id as i32, perda);
+                }
+            }
+            return;
+        }
         // O objeto: efeitos, vida, máximos, defesa e resistências (para o dano no tempo).
         // `GetCls()` da vítima (o NPC não tem classe: -1).
         let cls_do_alvo = match alvo {
@@ -1947,8 +2116,72 @@ impl BusServer {
             // `Heal(GetMaxhp() * ratio)`.
             "Scaleinchp" => delta_hp = (max_hp as f32 * ap.razao) as i64,
             "Scaleincmp" => delta_mp = (mp_max as f32 * ap.razao) as i32,
+            // B363 — `SetScaledechp` (`playerwrapper.cpp:2203-2218`): `BeHurt(GetMaxhp() × ratio)`; o corte do
+            // `GetAttackState() & 0x4000` contra não jogador não tem o estado de ataque no catálogo (falta).
+            "Scaledechp" => delta_hp = -(efeitos::dano_recebido(efs, (max_hp as f32 * ap.razao) as i32) as i64),
+            // `SetScaledecmp` (`:2220-2232`): `DrainMana(GetMaxmp() × ratio)`.
+            "Scaledecmp" => delta_mp = -((mp_max as f32 * ap.razao) as i32),
+            // B363 — `SetSkillcooldown`: `SetCoolDown(GetValueInt() + COOLINGID_BEGIN, GetAmountInt())` com `value > 0`
+            // e o mesmo com o `ratio` — só no jogador (o monstro não guarda recarga por id aqui).
+            "Skillcooldown" => {
+                if let Alvo::Jogador(id) = alvo {
+                    let ms = ap.quantia as i32;
+                    let agora = std::time::Instant::now();
+                    for sid in [ap.valor as i32, ap.razao as i32].into_iter().filter(|s| *s > 0) {
+                        let indice = sid + 1024;
+                        if let Some(p) = mundo.players.get_mut(&id) {
+                            p.recargas.insert(indice, agora + std::time::Duration::from_millis(ms.max(0) as u64));
+                        }
+                        mundo.emitir(crate::world::EventoDoMundo::RecargaDoJogador { roleid: id as i32, indice, ms });
+                    }
+                }
+            }
+            // `SetPanruo` (`:2168-2171`): `return true`, nada.
+            "Panruo" => {}
             // `BeHurt(value)`.
             "Directhurt" => delta_hp = -(efeitos::dano_recebido(efs, ap.valor as i32) as i64),
+            // B363 — `SetPhysichurt`/`Goldhurt`/`Woodhurt`/`Waterhurt`/`Firehurt`/`Earthhurt` (`playerwrapper.cpp`):
+            // `(int)value` pela defesa (`CalcPhysicDamage`) ou pela resistência da escola (`CalcMagicDamage(i)`), `>> 2`
+            // entre jogadores, a punição de nível contra monstro (a penetração não tem porte); `damage > 0` → `BeHurt`.
+            // A imunidade (`IMMUNEPHYSICAL/METAL/… | IMMUNEALL`) já saiu na tabela dos setters.
+            "Physichurt" | "Goldhurt" | "Woodhurt" | "Waterhurt" | "Firehurt" | "Earthhurt" => {
+                let def = match ap.nome.as_str() {
+                    "Physichurt" => defesa,
+                    "Goldhurt" => resist[0],
+                    "Woodhurt" => resist[1],
+                    "Waterhurt" => resist[2],
+                    "Firehurt" => resist[3],
+                    _ => resist[4],
+                };
+                let mut dano = ((ap.valor as i32) as f32 * (1.0 - combat::reducao_por_defesa(def, conjurador.nivel))) as i32;
+                if e_jogador {
+                    if conjurador.e_jogador {
+                        dano >>= 2;
+                    }
+                } else {
+                    dano = (dados.progressao.ajuste(conjurador.nivel - nivel_alvo).ataque * dano as f32) as i32;
+                }
+                if dano > 0 {
+                    delta_hp = -(efeitos::dano_recebido(efs, dano) as i64);
+                }
+            }
+            // `SetClearrooted` (`FILTER_FIX`/`ROOTED`/`AIRSTREAMLOCK`), `Clearsealed` (`SEALED`/`AIRSTREAMLOCK`/
+            // `CLOSED`), `Cleardizzy` (`DIZZY`/`BEFROZEN`), `Clearbleeding` (`BLEEDING`/`_MERGE`/`LEAFDANCE`): os
+            // portados de cada lista.
+            "Clearrooted" | "Clearsealed" | "Cleardizzy" | "Clearbleeding" => {
+                let tirar: &[Efeito] = match ap.nome.as_str() {
+                    "Clearrooted" => &[Efeito::Fix],
+                    "Clearsealed" => &[Efeito::Sealed],
+                    "Cleardizzy" => &[Efeito::Dizzy, Efeito::Befrozen],
+                    _ => &[Efeito::Bleeding],
+                };
+                let antes = efs.filtros.len();
+                efs.filtros.retain(|f| !tirar.contains(&f.efeito));
+                if antes != efs.filtros.len() {
+                    mud.efeitos = true;
+                    mud.atributos = true;
+                }
+            }
             "Clearbuff" => mud.efeitos |= efs.limpar(true),
             "Cleardebuff" => mud.efeitos |= efs.limpar(false),
             // `PlayerWrapper::SetFoxform` (`cskill/skill/playerwrapper.cpp:2539-2551`): já na
@@ -2068,13 +2301,22 @@ impl BusServer {
                             .ataque
                             * dano as f32) as i32;
                     }
-                    if dano <= 3 {
-                        return;
+                    // B363 — `SetEaglecurse` aceita `damage > 1` e o filtro guarda `damage / period` com o tempo
+                    // do roteiro (`skillfilter.h`, `filter_Eaglecurse`); os `Wounded` pedem `damage > 3`.
+                    if efeito == Efeito::Eaglecurse {
+                        if dano <= 1 {
+                            return;
+                        }
+                        f.por_segundo = dano / ap.tempo_s;
+                    } else {
+                        if dano <= 3 {
+                            return;
+                        }
+                        // `filter_Wounded`: `_damage = damage / period` (mínimo 1), `_timeout =
+                        // damage / _damage`.
+                        f.por_segundo = (dano / ap.tempo_s).max(1);
+                        f.restante_s = dano / f.por_segundo;
                     }
-                    // `filter_Wounded`: `_damage = damage / period` (mínimo 1), `_timeout =
-                    // damage / _damage`.
-                    f.por_segundo = (dano / ap.tempo_s).max(1);
-                    f.restante_s = dano / f.por_segundo;
                 } else {
                     match efeito {
                         Efeito::Hpgen | Efeito::Mpgen => {
@@ -2114,6 +2356,101 @@ impl BusServer {
                         Efeito::Apleak => f.por_segundo = ap.valor as i32,
                         // `filter_Reducewood(object, (int)(ratio * 100), time)`.
                         Efeito::Reducewood => f.razao = (ap.razao as f64 * 100.0) as i32,
+                        // B363 — lote 4.
+                        Efeito::Befrozen => f.escala_defesa = ap.mostra_icone as i32,
+                        Efeito::Enhanceskilldamage3 => f.razao = (ap.razao * 100.0 + 0.00001) as i32,
+                        // `filter_Apgencont(object, (int)amount, time, showicon, value > 0,5 ? BUFF : 0)`,
+                        // `_ap = period > 0 ? ap / period : ap`; o `Apleakcont` com `DEBUFF` e `ap / period`.
+                        Efeito::Apgencont | Efeito::Apleakcont => {
+                            f.por_segundo = if ap.tempo_s > 0 { ap.quantia as i32 / ap.tempo_s } else { ap.quantia as i32 };
+                            f.escala_defesa = ap.mostra_icone as i32;
+                            f.mascara = Some(if efeito == Efeito::Apgencont { (ap.valor > 0.5, false) } else { (false, ap.valor > 0.5) });
+                        }
+                        // B363 — lote 3.
+                        Efeito::Inchp2 => {
+                            f.razao = (ap.razao * 100.0 + 0.00001) as i32;
+                            f.escala_defesa = ap.mostra_icone as i32;
+                        }
+                        Efeito::Incmagic2 | Efeito::Speedup2 | Efeito::Incattack2 => f.escala_defesa = ap.mostra_icone as i32,
+                        Efeito::Incsmite2
+                        | Efeito::Incsmite3
+                        | Efeito::Fastmpgen2
+                        | Efeito::Deccritresistance
+                        | Efeito::Subattackdegree
+                        | Efeito::Subdefencedegree
+                        | Efeito::Subdefencedegree2 => f.razao = ap.valor as i32,
+                        Efeito::Adddefencedegree | Efeito::Addattackdegree => {
+                            f.razao = ap.valor as i32;
+                            f.escala_defesa = ap.mostra_icone as i32;
+                        }
+                        Efeito::Incresist2 => f.mascara = Some((ap.valor > 0.5, false)),
+                        Efeito::Reducegold3 | Efeito::Reducewater3 => {
+                            f.mascara = Some(if ap.quantia > 1.0 {
+                                (false, false)
+                            } else if ap.quantia > 0.5 {
+                                (true, false)
+                            } else {
+                                (false, true)
+                            })
+                        }
+                        // `SetDechurt2/3`: só com `0,001 < ratio < 0,99`.
+                        Efeito::Dechurt2 | Efeito::Dechurt3 => {
+                            if !(ap.razao > 0.001 && ap.razao < 0.99) {
+                                return;
+                            }
+                            f.mascara = Some((ap.valor > 0.5, false));
+                        }
+                        // `SetInchurt2`: `ratio > 0`; maldição só com `value > 0,5`.
+                        Efeito::Inchurt2 => {
+                            if ap.razao <= 0.0 {
+                                return;
+                            }
+                            f.mascara = Some((false, ap.valor > 0.5));
+                            f.escala_defesa = ap.mostra_icone as i32;
+                        }
+                        // `SetInchurt3`: `filter_Inchurt3(ratio, time, GetAmountInt(), value > 0,5 ? DEBUFF : 0)`,
+                        // `_ratio = 1 + ratio`; `contador` = o limite de camadas (no novo) / as camadas (no vivo).
+                        Efeito::Inchurt3 => {
+                            if ap.razao <= 0.0 {
+                                return;
+                            }
+                            f.fator_de_habilidade = 1.0 + ap.razao;
+                            f.contador = ap.quantia as i32;
+                            f.mascara = Some((false, ap.valor > 0.5));
+                        }
+                        // B363 — as imunidades: `showicon` liga o estado; o `Baseimmune2` é bênção só com
+                        // `value > 0,5`; o `Immunemagical2` pela `amount` (> 1 nenhum, > 0,5 bênção, senão maldição).
+                        e if e.mascara_de_imunidade() != 0 && e != Efeito::Freemove => {
+                            f.escala_defesa = ap.mostra_icone as i32;
+                            match e {
+                                Efeito::Immunephysical2
+                                | Efeito::Immunefire2
+                                | Efeito::Immunewater2
+                                | Efeito::Immunemetal2
+                                | Efeito::Immunewood2
+                                | Efeito::Immunesoil2 => f.mascara = Some((ap.valor > 0.5, false)),
+                                Efeito::Immunemagical2 => {
+                                    f.mascara = Some(if ap.quantia > 1.0 {
+                                        (false, false)
+                                    } else if ap.quantia > 0.5 {
+                                        (true, false)
+                                    } else {
+                                        (false, true)
+                                    })
+                                }
+                                // `SetImmuneall`: `ClearSpecFilter(FILTER_MASK_DEBUFF)` antes.
+                                Efeito::Immuneall => mud.efeitos |= efs.limpar(false),
+                                _ => {}
+                            }
+                        }
+                        // B363 — `filter_Fasthpgen/Fastmpgen(object, (int)value, time)`.
+                        Efeito::Fasthpgen | Efeito::Fastmpgen => f.razao = ap.valor as i32,
+                        // `filter_Yijin/Xisui(object, (int)(ratio × 100), (int)(amount × 100), time)`.
+                        Efeito::Yijin | Efeito::Xisui => f.escala_defesa = (ap.quantia * 100.0) as i32,
+                        // `filter_Fireshield/Iceshield(object, (int)(ratio × 100), (int)amount, time)`.
+                        Efeito::Fireshield | Efeito::Iceshield => f.por_segundo = ap.quantia as i32,
+                        // `filter_Soilshield(object, (int)(ratio × 100), (int)(100 × amount), time)`.
+                        Efeito::Soilshield => f.escala_defesa = (100.0 * ap.quantia) as i32,
                         // `filter_Devilstate(object, (int)(amount × 100 + 0,00001), (int)(ratio ×
                         // 100 + 0,00001), time)`: precisão e vida tirada.
                         Efeito::Devilstate => {

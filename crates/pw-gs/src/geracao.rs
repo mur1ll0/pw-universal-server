@@ -32,7 +32,7 @@ fn rand_select(probs: &[f32]) -> usize {
 /// `itemdataman::generate_addon` + `GenerateParam` do tratador
 /// ([`pw_data_loader::addons::DadosDoAddon::gerar_com`], todos os tipos de parâmetro desde o B209).
 /// `None` para id sem tratador.
-pub(crate) fn gerar_addon(dados: &GameDataManager, id: u32) -> Option<AddonDoItem> {
+pub fn gerar_addon(dados: &GameDataManager, id: u32) -> Option<AddonDoItem> {
     let a = dados.addons.por_id.get(&id)?;
     let mut rng = rand::thread_rng();
     let args = a.gerar_com(&mut |x, y| rand_normal(x, y), &mut |x: f32, y: f32| {

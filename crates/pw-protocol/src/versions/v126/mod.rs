@@ -60,6 +60,15 @@ impl WorldProtocol for V126Protocol {
         crate::traits::entrada_da_loja_gold(corpo, 6, |b| i16::from_le_bytes(b.try_into().unwrap()) as i32)
     }
 
+    /// No `gs` 1.2.6 o reviver não leva vida nem mana: `PlayerWrapper::SetResurrect(bool)` (VA
+    /// 0x82fff82) chama `object_interface::Resurrect(float)` só com o `ratio`,
+    /// `EnterResurrectReadyState(float)` (VA 0x807bfee) guarda só a perda, e
+    /// `gplayer_imp::Resurrect(const A3DVECTOR&, bool, float, int)` (VA 0x8074934) põe vida e mana
+    /// em `max × 0,1 + 0,5` (o `float` em 0x84ea010 é 0,1; o 0,5 em 0x84ea014).
+    fn vida_e_mana_do_reviver(&self, _valor: f32, _quantia: f32) -> (f32, f32) {
+        (0.1, 0.1)
+    }
+
     /// O `sit_down_filter::Heartbeat` do `gs` 1.2.6 (VA 0x812ff22) só chama
     /// `EnhanceScaleHPGen/MPGen` e `UpdateHPMPGen` — meditar não dá chi (B119).
     fn chi_por_meditacao(&self) -> i32 {
@@ -590,6 +599,56 @@ impl WorldProtocol for V126Protocol {
         S2CGamedataSend { data: s.into_bytes().to_vec() }
     }
 
+    /// O `ENTER_SANCTUARY` do `gs` 1.2.6 não tem corpo nem conferência de tamanho: abre a
+    /// `session_enter_sanctuary` direto (`gplayer_controller::CommandHandler`, VA 0x80d086f-0x80d089e).
+    fn pedido_de_santuario(&self, _corpo: &[u8], _roleid: i32) -> Option<bool> {
+        Some(true)
+    }
+
+    /// Sem `player_sanctuary_check` no `gs` 1.2.6: o santuário só entra pelo C2S 75 (`TestSanctuary`, VA 0x807b1a0).
+    fn santuario_conferido_pelo_servidor(&self) -> bool {
+        false
+    }
+
+    fn tabelas_de_perda(&self) -> crate::traits::TabelasDePerda {
+        crate::traits::TabelasDePerda::DO_126
+    }
+
+    fn regras_da_barraca(&self) -> crate::traits::RegrasDaBarraca {
+        crate::traits::RegrasDaBarraca::DO_126
+    }
+
+    /// `Make<self_open_market>::AddGoods(int, u16, u16, u32)` do `gs` 1.2.6 (`<<i <<t <<t <<j`).
+    fn self_open_booth(&self, itens: &[(i32, u16, u32, u32)]) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(167);
+        s.write_u16_le(itens.len() as u16);
+        for &(tipo, indice, n, preco) in itens {
+            s.write_i32_le(tipo);
+            s.write_u16_le(indice);
+            s.write_u16_le(n.min(u16::MAX as u32) as u16);
+            s.write_u32_le(preco);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
+    /// `FirstStep(u32, u16, bool)` (`<<j <<h <<t`) e `SecondStep(int, int, u16, u16, u8)` do `gs` 1.2.6.
+    fn purchase_item_da_barraca(&self, cost: u32, tipo: u8, itens: &[(i32, i32, u32, u16, u8)]) -> S2CGamedataSend {
+        let mut s = OctetsStream::new();
+        s.write_u16_le(72);
+        s.write_u32_le(cost);
+        s.write_u8(tipo);
+        s.write_u16_le(itens.len() as u16);
+        for &(tid, expira, n, slot, vaga) in itens {
+            s.write_i32_le(tid);
+            s.write_i32_le(expira);
+            s.write_u16_le(n.min(u16::MAX as u32) as u16);
+            s.write_u16_le(slot);
+            s.write_u8(vaga);
+        }
+        S2CGamedataSend { data: s.into_bytes().to_vec() }
+    }
+
     // S2C 72: sem yinpiao; cabeçalho 7 B + 13 B/item (VA 0x584abd).
     fn purchase_item(&self, cost: u32, itens: &[(i32, i32, u32, u16)]) -> S2CGamedataSend {
         let mut s = OctetsStream::new();
@@ -847,6 +906,21 @@ impl V126Protocol {
         if estendido != 0 {
             state |= 0x40;
         }
+        // B363 — a barraca: 0x1000 com o `market_id` (`movzx byte [+0xb5]`, VA 0x8062e2a-0x8062e39),
+        // escrita depois do estendido e antes da montaria; +1 no validador.
+        if v.barraca.is_some() {
+            state |= 0x1000;
+        }
+        // B363 — rosa 0x4, vermelho 0x8 (+1 com o grau, depois do efeito e antes da montaria,
+        // VA 0x8062e99) e a chave de PvP 0x8000.
+        match v.pk {
+            1 => state |= 0x4,
+            2 => state |= 0x8,
+            _ => {}
+        }
+        if v.pvp {
+            state |= 0x8000;
+        }
         s.write_i32_le(state);
         // Na ordem do `MakePlayerExtendState` 1.2.6: forma (0x1) antes da montaria (0x80000).
         if let Some(forma) = v.forma {
@@ -854,6 +928,12 @@ impl V126Protocol {
         }
         if estendido != 0 {
             s.write_u32_le(estendido);
+        }
+        if let Some(id) = v.barraca {
+            s.write_u8(id);
+        }
+        if v.pk == 2 {
+            s.write_u8(v.grau_paria);
         }
         if let Some((cor, modelo)) = v.montaria {
             s.write_u8(cor as u8);
@@ -946,11 +1026,19 @@ pub fn concluidas_no_formato_antigo(b: &[u8]) -> Vec<u8> {
 /// 0x830b2f7). O resto acima de 31 não cabe no único `DWORD` do 1.2.6 e fica de fora, como lá.
 pub(crate) fn estados_visiveis_do_126(estados: [u32; 6]) -> u32 {
     let liga = |n: usize| estados[n / 32] & (1 << (n % 32)) != 0;
-    let mut d = estados[0] & !((1 << 29) | (1 << 30) | (1 << 31));
-    if liga(29) || liga(31) {
+    // B363 — os escudos: fogo/gelo/terra 24/25/26 → 28/29/30 e pena 28 → 31 (`filter_*shield::OnAttach` no `gs`
+    // 1.2.6: `push 0x1c/0x1d/0x1e/0x1f`); o 27 (`VSTATE_ANTIWATER`) segue igual, sem medida.
+    let mut d = estados[0] & !((1 << 24) | (1 << 25) | (1 << 26) | (1 << 28) | (1 << 29) | (1 << 30) | (1 << 31));
+    if liga(24) {
+        d |= 1 << 28;
+    }
+    if liga(25) {
+        d |= 1 << 29;
+    }
+    if liga(29) || liga(31) || liga(26) {
         d |= 1 << 30;
     }
-    if liga(30) || liga(32) {
+    if liga(30) || liga(32) || liga(28) {
         d |= 1 << 31;
     }
     d
@@ -981,6 +1069,11 @@ mod testes_dos_estados {
         assert_eq!(estados_visiveis_do_126([1 << 30, 0, 0, 0, 0, 0]), 1 << 31);
         assert_eq!(estados_visiveis_do_126([1 << 31, 0, 0, 0, 0, 0]), 1 << 30, "Jingji 31 → 30");
         assert_eq!(estados_visiveis_do_126([0, 1, 0, 0, 0, 0]), 1 << 31);
+        // B363: escudos de fogo/gelo/terra 24/25/26 → 28/29/30, pena 28 → 31.
+        assert_eq!(estados_visiveis_do_126([1 << 24, 0, 0, 0, 0, 0]), 1 << 28);
+        assert_eq!(estados_visiveis_do_126([1 << 25, 0, 0, 0, 0, 0]), 1 << 29);
+        assert_eq!(estados_visiveis_do_126([1 << 26, 0, 0, 0, 0, 0]), 1 << 30);
+        assert_eq!(estados_visiveis_do_126([1 << 28, 0, 0, 0, 0, 0]), 1 << 31);
         // O invencível do monstro (49) não existe no 1.2.6.
         assert_eq!(estados_visiveis_do_126([0, 1 << 17, 0, 0, 0, 0]), 0);
     }

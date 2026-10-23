@@ -59,6 +59,8 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, trace, warn};
 
 mod armazem;
+mod barraca;
+mod pk;
 mod organizar_bolsa;
 mod criacao_pelo_painel;
 mod casamento;
@@ -628,6 +630,7 @@ impl BusServer {
         self.enviar_ao_jogador(roleid, self.sub.notify_hostpos(pos, este, 0).data)
             .await;
         self.world.write().await.add_player(jogador);
+        self.world.write().await.testar_santuario(roleid);
         if pousou_ao_entrar {
             // O `RemoveFilter(FILTER_FLY_EFFECT)` do original tira o voo: `OBJECT_LANDING`.
             self.enviar_ao_jogador(roleid, S2CGamedataSend::object_landing(roleid).data)
@@ -753,6 +756,9 @@ impl BusServer {
             | EventoDoMundo::MascoteUsouHabilidade { .. }
             | EventoDoMundo::RecargaDoMascote { .. }
             | EventoDoMundo::ErroDoMascote { .. }) => self.evento_de_mascote(ev).await,
+            EventoDoMundo::RecargaDoJogador { roleid, indice, ms } => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::set_cooldown(indice, ms).data).await;
+            }
             EventoDoMundo::MonstroConjurou {
                 id,
                 alvo,
@@ -790,6 +796,14 @@ impl BusServer {
                     .await;
             }
             EventoDoMundo::VoltarParaACidade { roleid } => self.voltar_para_a_cidade(roleid).await,
+            EventoDoMundo::Pk { roleid, aviso } => self.avisar_pk(roleid, aviso).await,
+            EventoDoMundo::Santuario { roleid, dentro } => {
+                let p = if dentro { self.sub.enter_sanctuary(roleid) } else { self.sub.leave_sanctuary(roleid) };
+                self.enviar_ao_jogador(roleid, p.data).await;
+            }
+            EventoDoMundo::ReviverOferecido { roleid, perda } => {
+                self.enviar_ao_jogador(roleid, S2CGamedataSend::revival_inquire(perda).data).await;
+            }
             EventoDoMundo::MonstroCapturado { roleid, ovo } => self.receber_ovo_capturado(roleid, ovo).await,
             EventoDoMundo::Renasceu { objeto } => {
                 // `SendClientEnchantResult(GetSelfID(), 1085, 1, false, 0, 0)`.
@@ -904,6 +918,8 @@ impl BusServer {
                     let mut m = self.world.write().await;
                     let r = m.players.get_mut(&(roleid as i64)).map(|p| {
                         p.vigor_do_daimon = 0.0;
+                        // B363 — `OnDeath` desarma o reviver de outro (`gs/player.cpp:7260-7263`).
+                        p.reviver_por_outro.ao_morrer();
                         (p.daimon.is_some(), std::mem::take(&mut p.refino_do_daimon_ativo))
                     });
                     if r.is_some_and(|x| x.1) {
@@ -958,6 +974,8 @@ impl BusServer {
                     S2CGamedataSend::player_died(matador as i32, roleid).data,
                 )
                 .await;
+                // B363 — a perda na morte (`OnDeath`, `player.cpp:7133-7213`).
+                self.perdas_na_morte(roleid, matador).await;
                 // Depois do aviso de morte, como no `OnDeath` (`gs/player.cpp:7295-7297`): é aqui
                 // que a missão de gatilho por morte (990 do cultivo 39) é oferecida.
                 self.missoes_ao_morrer(roleid as i32).await;
@@ -1088,6 +1106,9 @@ impl BusServer {
 
             EventoDoMundo::EstadoMudou { roleid } => self.avisar_vida_propria(roleid).await,
             EventoDoMundo::VigorDoDaimon { roleid } => self.avisar_vigor_do_daimon(roleid).await,
+            EventoDoMundo::FichaDoDaimon { roleid } => {
+                self.com_contexto(roleid, daimon::ficha_do_vestido).await;
+            }
             EventoDoMundo::ResistenciaDoDaimon { roleid, resistencia, desligou } => {
                 self.enviar_ao_jogador(roleid, S2CGamedataSend::elf_stamina(resistencia).data).await;
                 if desligou {
@@ -1729,6 +1750,17 @@ impl BusServer {
         jogador.vagas_na_jaula = repo.vagas_da_jaula(roleid).await.unwrap_or(1);
         jogador.lideranca = repo.lideranca(roleid).await.unwrap_or(0);
         jogador.colecao_de_cartas = repo.colecao_de_cartas(roleid).await.unwrap_or_default();
+        // B363 — o PK gravado (`player_invade::Load`).
+        if let Ok((estado, agressor, paria, grau, mortes)) = repo.estado_pk(roleid).await {
+            jogador.pk = crate::pk::EstadoPk {
+                estado: estado.clamp(0, 2) as u8,
+                tempo_de_agressor: agressor,
+                tempo_de_paria: paria,
+                grau: grau.clamp(0, 2) as u8,
+                mortes,
+                defensores: Vec::new(),
+            };
+        }
         jogador.conjuge = repo.conjuge(roleid).await.unwrap_or(0);
         match repo.task_lists().carregar(roleid).await {
             Ok(Some(l)) => {
@@ -1805,6 +1837,8 @@ impl BusServer {
         );
         self.world.write().await.add_player(jogador);
         self.recalcular_equipamento(roleid, false).await;
+        // B363 — `PlayerEnterServer` → `TestSanctuary` (`gs/player.cpp:12017`).
+        self.world.write().await.testar_santuario(roleid);
 
         // A carga inicial do mundo em volta. Quem manda os NPCs é o mundo, não o link:
         // ele tem a grade espacial, sabe quais monstros estão vivos, e é ele que vai
@@ -1822,6 +1856,22 @@ impl BusServer {
     /// Um comando ainda não migrado é registrado e ignorado — **sem** derrubar a conexão,
     /// que tiraria do ar todos os jogadores daquele link por causa de um comando só.
     async fn tratar_subcomando(&self, roleid: i32, cmd: SubComando, envio: &EnvioAoCliente) {
+        // B363 — com a barraca aberta, só o que o `MarketCommandHandler` aceita.
+        if self.tem_barraca(roleid).await {
+            use crate::comandos::NaBarraca;
+            match crate::comandos::na_barraca(cmd.id) {
+                NaBarraca::Aceita => {}
+                NaBarraca::Fecha => {
+                    self.fechar_barraca(roleid).await;
+                    return;
+                }
+                NaBarraca::FechaESegue => self.fechar_barraca(roleid).await,
+                NaBarraca::Ignora => {
+                    debug!("mundo: {roleid} com barraca — comando {} ignorado", cmd.id);
+                    return;
+                }
+            }
+        }
         // Sentado, só passa o que o `StayInCommandHandler` aceita (B143).
         if self.esta_sentado(roleid).await {
             use crate::comandos::Sentado;
@@ -1892,6 +1942,11 @@ impl BusServer {
             ids::NORMAL_ATTACK => self.atacar(roleid, &cmd.payload, envio).await,
             ids::REVIVE_VILLAGE => self.renascer_na_cidade(roleid).await,
             ids::REVIVE_ITEM => self.renascer_com_pergaminho(roleid).await,
+            ids::REVIVAL_AGREE => self.aceitar_reviver(roleid).await,
+            ids::OPEN_BOOTH => self.abrir_barraca(roleid, &cmd.payload, envio).await,
+            ids::CLOSE_BOOTH => {}
+            ids::QUERY_BOOTH_NAME => self.nomes_de_barraca(roleid, &cmd.payload, envio).await,
+            ids::OPEN_BOOTH_TEST => self.testar_barraca(roleid, envio).await,
             ids::GET_ITEM_INFO => self.info_do_item(roleid, &cmd.payload, envio).await,
             ids::GET_ITEM_INFO_LIST => self.info_de_varios_itens(roleid, &cmd.payload, envio).await,
             ids::PICKUP => self.pegar(roleid, &cmd.payload).await,
@@ -1955,6 +2010,8 @@ impl BusServer {
             ids::DUEL_REQUEST | ids::DUEL_REPLY => self.comando_de_duelo(roleid, cmd.id, &cmd.payload, envio).await,
             ids::SWALLOW_GENERALCARD => self.devorar_carta(roleid, &cmd.payload, envio).await,
             ids::CAST_ELF_SKILL => self.conjurar_habilidade_do_daimon(roleid, &cmd.payload, envio).await,
+            ids::USE_ITEM_WITH_ARG => self.usar_item_com_argumento(roleid, &cmd.payload, envio).await,
+            ids::ELF_CHANGE_SECURE_STATUS => self.seguranca_do_daimon(roleid, &cmd.payload, envio).await,
             ids::ELF_ADD_ATTRIBUTE | ids::ELF_ADD_GENIUS | ids::ELF_PLAYER_INSERT_EXP | ids::ELF_EQUIP_ITEM => {
                 self.comando_do_daimon(roleid, cmd.id, &cmd.payload, envio).await
             }
@@ -1974,10 +2031,18 @@ impl BusServer {
                 self.conjurar(roleid, &cmd.payload, envio, cmd.id == ids::CAST_INSTANT_SKILL)
                     .await
             }
+            // B363 — `ENTER_SANCTUARY` (75) `{int id}` (`playercmd.cpp:2812-2835`): o próprio id abre a
+            // `session_enter_sanctuary` → `TestSanctuary`; só no santuário o filtro entra (e o aviso vai). Antes
+            // o aviso ia sem conferir a posição.
             ids::ENTER_SANCTUARY => {
-                debug!("mundo: {roleid} entrou em zona segura");
-                self.responder(roleid, self.sub.enter_sanctuary(roleid).data, envio)
-                    .await;
+                match self.sub.pedido_de_santuario(&cmd.payload, roleid) {
+                    None => self.responder(roleid, S2CGamedataSend::error_message(3).data, envio).await,
+                    Some(false) => {}
+                    Some(true) => {
+                        let dentro = self.world.write().await.testar_santuario(roleid);
+                        debug!("mundo: {roleid} pediu o santuário — {}", if dentro { "dentro" } else { "fora" });
+                    }
+                }
             }
             ids::GET_EXT_PROP => self.estado_proprio(roleid, envio).await,
             ids::SET_STATUS_POINT => self.distribuir_pontos(roleid, &cmd.payload).await,
@@ -4084,6 +4149,8 @@ impl BusServer {
             if !h.e_cura() {
                 mundo.golpe_interrompe_coleta(alvo);
                 mundo.devolver_espinhos(alvo, roleid as i64, fisico_bruto, true);
+                // B363 — as Penas (`filter_Feathershield`) no golpe físico de habilidade do jogador.
+                let valor = mundo.penas_no_jogador(alvo, valor as i64, fisico_bruto);
                 // B344 — pelo mundo: filtros do alvo (`dano_recebido`), chi, levantar, a morte de verdade (antes a vida
                 // ia a 0 sem `JogadorMorreu`) e a "morte" do duelo, que deixa 1 de vida.
                 mundo.aplicar_dano_no_jogador(alvo, roleid as i64, valor as i64);
@@ -4832,6 +4899,10 @@ impl BusServer {
             return;
         };
 
+        // B363 — um jogador com barraca atende como NPC.
+        if self.ola_a_barraca(roleid, pedido.target as i64, envio).await {
+            return;
+        }
         let mut mundo = self.world.write().await;
         let existe = mundo.dados_do_npc(pedido.target as i64).is_some()
             || mundo.is_scene_service_npc(pedido.target);
@@ -4974,6 +5045,10 @@ impl BusServer {
         }
 
         let c = pedido.conteudo;
+        // B363 — o interlocutor é uma barraca: só os serviços 19 e 21.
+        if self.servico_da_barraca(roleid, pedido.service_type, c).await {
+            return;
+        }
         match pedido.service_type {
             // O NPC **vende**: o jogador está comprando.
             servico::NPC_VENDE => self.comprar(roleid, c).await,
@@ -5051,6 +5126,8 @@ impl BusServer {
             servico::LIMPAR_PEDRAS => self.remover_pedras(roleid, c, envio).await,
             servico::REFINAR => self.refinar(roleid, c, envio).await,
             servico::FURAR => self.furar(roleid, c, envio).await,
+            servico::TRANSFERIR_REFINO => self.transferir_refino(roleid, c, envio).await,
+            servico::FURAR_ACESSORIO => self.furar_acessorio(roleid, c, envio).await,
             servico::RESTAURAR_PET => self.restaurar_mascote_em_ovo(roleid, c, envio).await,
             servico::TROCAR_ROSTO => self.iniciar_troca_de_rosto(roleid, c, envio).await,
             servico::APRENDER_HABILIDADE_DE_DAIMON => self.aprender_habilidade_de_daimon(roleid, c).await,
@@ -5509,6 +5586,23 @@ impl BusServer {
             }
         }
 
+        // B363 — `PlayerGetPortableTrashBoxInfo(true)` logo depois da bolsa de missão, no `SendAllData`
+        // (`gs/player.cpp:13697-13715`, `:7448-7470`): o de moda (0 slots) e o de cartas, só no 1.5.5.
+        if !self.sub.armazem_do_126() {
+            let cartas = self.itens().await.list_by_container(roleid, ContainerType::ArmazemDeCartas).await.unwrap_or_default();
+            self.responder(roleid, S2CGamedataSend::own_ivtr_from_items(armazem::IL_TRASH_BOX3, 0, &[]).data, envio).await;
+            self.responder(
+                roleid,
+                S2CGamedataSend::own_ivtr_from_items(armazem::IL_TRASH_BOX4, armazem::TAMANHO_DO_ARMAZEM_DE_CARTAS as u8, &cartas).data,
+                envio,
+            )
+            .await;            // O original manda o detalhado (`self_inventory_detail_data`, 43); aqui, como nas bolsas, o 42 simples e
+            // um `OWN_ITEM_INFO` (40) por item.
+            for item in &cartas {
+                self.responder(roleid, Self::info_de(armazem::IL_TRASH_BOX4, item, &dados), envio).await;
+            }
+        }
+
         // As habilidades aprendidas.
         //
         // **Isto nunca era enviado.** O `own_ivtr_data`, o equipamento, o dinheiro e as
@@ -5786,17 +5880,20 @@ impl BusServer {
     /// `C2S::GET_IVTR_DETAIL` (11) — o cliente pediu um contêiner inteiro.
     async fn detalhe_do_container(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let onde = GetIvtrDetail::ler(payload).map(|d| d.onde).unwrap_or(0);
+        // B363 — o `where` é o pacote do cliente (0 bolsa, 1 corpo, 2 bolsa de missão, 7 cartas), não o
+        // `container_type` do banco: antes o 2 devolvia o armazém no lugar da bolsa de missão.
+        let (recipiente, tamanho) = match onde {
+            0 => (ContainerType::Inventory, 32u8),
+            1 => (ContainerType::Equipment, 32),
+            2 => (ContainerType::TaskInventory, 32),
+            armazem::IL_TRASH_BOX4 if !self.sub.armazem_do_126() => {
+                (ContainerType::ArmazemDeCartas, armazem::TAMANHO_DO_ARMAZEM_DE_CARTAS as u8)
+            }
+            _ => return,
+        };
         let itens = self.itens().await;
-        let lista = itens
-            .list_by_container(roleid, ContainerType::from_i16(onde as i16))
-            .await
-            .unwrap_or_default();
-        self.responder(
-            roleid,
-            S2CGamedataSend::own_ivtr_from_items(onde, 32, &lista).data,
-            envio,
-        )
-        .await;
+        let lista = itens.list_by_container(roleid, recipiente).await.unwrap_or_default();
+        self.responder(roleid, S2CGamedataSend::own_ivtr_from_items(onde, tamanho, &lista).data, envio).await;
     }
 
     /// `C2S::EXG_IVTR_ITEM` (12) e `EXG_EQUIP_ITEM` (16) — trocar dois slots de lugar.
@@ -5899,49 +5996,34 @@ impl BusServer {
         }
     }
 
-    /// `C2S::MOVE_IVTR_ITEM` (13) — mover item dentro da bolsa.
-    ///
-    /// # Uma dívida que fica registrada
-    ///
-    /// O comando traz um `amount`: mover 5 de uma pilha de 20 deveria **dividir** a pilha.
-    /// O tratamento herdado do `gateway.rs` chama `swap_slots`, que troca as pilhas
-    /// inteiras — então mover 5 move os 20. Manter o comportamento é deliberado: dividir
-    /// pilha exige uma operação nova no repositório, e trocá-la aqui sem isso seria
-    /// inventar uma semântica pela metade. O campo já é decodificado e registrado, para
-    /// que a correção tenha por onde começar.
+    /// `C2S::MOVE_IVTR_ITEM` (13) — mover `amount` de uma pilha dentro da bolsa (dividir ou juntar).
     async fn mover_item(&self, roleid: i32, payload: &[u8], envio: &EnvioAoCliente) {
         let Some(m) = MoveIvtrItem::ler(payload) else {
             warn!("mundo: move_ivtr_item de {roleid} com payload curto");
             return;
         };
-        if m.amount > 1 {
-            debug!(
-                "mundo: {roleid} pediu mover {} de uma pilha; a pilha inteira vai junto \
-                 (divisão de pilha ainda não implementada)",
-                m.amount
-            );
-        }
-
-        let itens = self.itens().await;
-        if let Err(e) = itens
-            .swap_slots(
-                roleid,
-                ContainerType::Inventory,
-                m.src as u16,
-                m.dest as u16,
-            )
+        // B363 — `PlayerMoveInvItem` (`gs/player.cpp:7529-7541`) → `item_list::MoveItem`
+        // (`gs/item_list.h:702-755`): parte a pilha num slot vazio, junta no mesmo item se couber
+        // inteiro no limite da pilha; senão (ou sem o bastante na origem) move 0. `MoveItem` falso
+        // (quantidade 0, índice fora) → `ERR_FATAL_ERR`. Antes do B363 a pilha inteira trocava de
+        // lugar (A38).
+        let dados = self.world.read().await.data_manager.clone();
+        let movido = self
+            .com_contexto(roleid, |ctx| {
+                let pilha = ctx
+                    .bolsa
+                    .item_no_slot(m.src as usize)
+                    .map(|i| dados.limite_de_pilha(i.item_id))
+                    .unwrap_or(1);
+                ctx.bolsa.mover(m.src as usize, m.dest as usize, m.amount, pilha)
+            })
             .await
-        {
-            warn!("mundo: falha ao mover item de {roleid}: {e:?}");
-            return;
-        }
-
-        self.responder(
-            roleid,
-            S2CGamedataSend::move_ivtr_item(m.src, m.dest, m.amount).data,
-            envio,
-        )
-        .await;
+            .flatten();
+        let resposta = match movido {
+            Some(n) => S2CGamedataSend::move_ivtr_item(m.src, m.dest, n).data,
+            None => S2CGamedataSend::error_message(jogo::erro_s2c::ERRO_FATAL).data,
+        };
+        self.responder(roleid, resposta, envio).await;
         for s in [m.src, m.dest] {
             self.responder(
                 roleid,
@@ -5986,6 +6068,30 @@ impl BusServer {
             None
         }
         .unwrap_or(u32::MAX);
+        self.jogar_no_chao(roleid, onde, slot, pedido, None, DROP_TYPE_PLAYER, Some(envio)).await;
+    }
+
+    /// Joga `pedido` do slot no chão (`ThrowInvItem`/`ThrowEquipItem`, `gs/player.cpp:7932-7980`): o descarte
+    /// do jogador (sem dono, `DROP_TYPE_PLAYER`) e a perda na morte (B363: do matador, `DROP_TYPE_DEATH`). Com
+    /// `envio` o slot congelado pelo cliente é destravado (`UNFREEZE_IVTR_SLOT`); a morte não congela nada.
+    pub(super) async fn jogar_no_chao(
+        &self,
+        roleid: i32,
+        onde: u8,
+        slot: u8,
+        pedido: u32,
+        dono: Option<pw_core::RoleId>,
+        tipo_de_descarte: u8,
+        envio: Option<&EnvioAoCliente>,
+    ) {
+        let Some(envio_proprio) = (match envio {
+            Some(e) => Some(e.clone()),
+            None => self.envio_de(roleid).await,
+        }) else {
+            return;
+        };
+        let envio = &envio_proprio;
+        let destravar = tipo_de_descarte == DROP_TYPE_PLAYER;
         let recipiente = if onde == 0 {
             ContainerType::Inventory
         } else {
@@ -5998,12 +6104,9 @@ impl BusServer {
             .await
         else {
             // Nada ali: destrava e sai, senão o slot fica preso.
-            self.responder(
-                roleid,
-                S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
-                envio,
-            )
-            .await;
+            if destravar {
+                self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+            }
             return;
         };
         let quantos = pedido.min(item.count).max(1);
@@ -6053,7 +6156,7 @@ impl BusServer {
                     item.item_id,
                     quantos,
                     pos,
-                    None,
+                    dono,
                     item.octets.clone(),
                 )),
                 None => None,
@@ -6070,17 +6173,14 @@ impl BusServer {
         self.responder(
             roleid,
             self.sub
-                .player_drop_item(onde, slot, quantos, item.item_id as i32, DROP_TYPE_PLAYER)
+                .player_drop_item(onde, slot, quantos, item.item_id as i32, tipo_de_descarte)
                 .data,
             envio,
         )
         .await;
-        self.responder(
-            roleid,
-            S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data,
-            envio,
-        )
-        .await;
+        if destravar {
+            self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(onde, slot as u16).data, envio).await;
+        }
         if onde == 1 {
             self.recalcular_equipamento(roleid, true).await;
         }
@@ -6647,7 +6747,7 @@ impl BusServer {
 /// (`gs/player.cpp:15097-15114`): `force_attack` (que o `FillAttackMsg` zera sem a chave de PvP
 /// do atacante, `:3103-3104`), `PVP_ENABLE` do atacante, a chave do alvo e não serem do mesmo
 /// grupo. Duelo, facção, força e agressor (nome laranja/vermelho) não existem no `pw-gs`.
-pub(crate) fn pode_ferir_jogador(mundo: &crate::world::WorldInstance, atacante: &PlayerEntity, alvo: &PlayerEntity) -> bool {
+pub fn pode_ferir_jogador(mundo: &crate::world::WorldInstance, atacante: &PlayerEntity, alvo: &PlayerEntity) -> bool {
     let (a, b) = (atacante.role_id as i64, alvo.role_id as i64);
     // B344 — `TestAttackMsg`/`PetTestHarmfulEffect` com `attacker_mode & PVP_DUEL` (`player_imp.h:3500-3503`,
     // `player.cpp:15089-15094`): o oponente do duelo fere sem chave, sem forçar e mesmo do grupo.
@@ -6656,6 +6756,11 @@ pub(crate) fn pode_ferir_jogador(mundo: &crate::world::WorldInstance, atacante: 
     }
     // `pvp_duel_filter` nos 5 s depois do fim: o golpe do ex-oponente perde o `force_attack`.
     if mundo.em_tregua_de_duelo(b, a) {
+        return false;
+    }
+    // B363 — o `pvp_limit_filter` do santuário tira o `PVP_ENABLE` e o `force_attack` do golpe que sai e do que
+    // entra (`pvplimit_filter.cpp:31-53`).
+    if atacante.santuario.is_some() || alvo.santuario.is_some() {
         return false;
     }
     if !(atacante.forcar_ataque && atacante.pvp_ligado && alvo.pvp_ligado) {

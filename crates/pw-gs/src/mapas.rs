@@ -1709,6 +1709,7 @@ impl RoteadorDeMapas {
         versao: pw_protocol::GameVersion,
     ) -> (i32, Arc<BusServer>) {
         mundo.capacidade_do_grupo = capacidade_do_grupo(versao);
+        mundo.santuario_conferido_pelo_servidor = pw_protocol::create_world_protocol(versao).santuario_conferido_pelo_servidor();
         let id = mundo.world_id;
         let servidor = Arc::new(crate::server::GameServer::new(mundo));
         let bus = Arc::new(BusServer::new(Arc::clone(&servidor.world), versao));

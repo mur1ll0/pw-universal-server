@@ -676,6 +676,13 @@ impl CombatEngine {
             let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
             dano_magico[1] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
         }
+        // B363 — `filter_Fireblade/Iceblade::TranslateSendAttack`: o mesmo no fogo (`[3]`) e na água (`[2]`).
+        for (efeito, escola) in [(crate::efeitos::Efeito::Fireblade, 3), (crate::efeitos::Efeito::Iceblade, 2)] {
+            if let Some(f) = jogador.efeitos.filtros.iter().find(|f| f.efeito == efeito) {
+                let (baixo, alto) = jogador.equipamento.arma.map(|a| a.dano).unwrap_or((0, 0));
+                dano_magico[escola] += (f.fator * 0.5 * (baixo + alto) as f32) as i32;
+            }
+        }
         // B211 — `attack.magic_damage[i] = normalrand(addon_damage[i].low, .high)` (`actobject.cpp:838-842`):
         // as pedras de dano por elemento (baixo = alto = o `_en_point`).
         for (d, e) in dano_magico.iter_mut().zip(jogador.equipamento.addons.dano_elemental) {
@@ -689,8 +696,9 @@ impl CombatEngine {
             e_fisico: true,
             // `crit_rate` está em fração na entidade e em pontos percentuais no original.
             chance_de_critico: (jogador.crit_rate * 100.0).round() as i32,
-            bonus_de_dano_critico: jogador.crit_damage_bonus,
-            grau_de_ataque: jogador.attack_degree,
+            // B363 — `EnhanceCritDamage` e `Enhance/ImpairAttackDegree` dos filtros.
+            bonus_de_dano_critico: jogador.crit_damage_bonus + jogador.efeitos.realce().dano_critico,
+            grau_de_ataque: jogador.attack_degree + jogador.efeitos.realce().grau_de_ataque,
             de_habilidade: false,
             fator_de_curta_distancia: 1.0,
             // B209: `_anti_defense_degree`/`_anti_resistance_degree`/`_penetration` dos addons.
@@ -701,7 +709,8 @@ impl CombatEngine {
             // Voando é `LAYER_AIR`. Nadando (`LAYER_WATER`) ainda não é acompanhado.
             camada: Some(if jogador.voando { Camada::Ar } else { Camada::Chao }),
             // Arma de longe tem distância mínima (`short_range > 0`): não rouba.
-            realce_de_habilidade2: jogador.passivas_comuns.realce_de_habilidade2,
+            // B363 — o `_skill_enhance` dos filtros (`Enhanceskilldamage`) soma no mesmo ajuste (`npc.cpp:1767-1768`).
+            realce_de_habilidade2: jogador.passivas_comuns.realce_de_habilidade2 + jogador.efeitos.realce().realce_de_habilidade2,
             roubo_de_vida: if jogador.equipamento.arma.is_some_and(|a| a.de_longe) {
                 0
             } else {
@@ -733,7 +742,7 @@ impl CombatEngine {
             // `attack_msg` fica zerado por `memset` e só habilidade o preenche.
             chance_de_critico: 0,
             bonus_de_dano_critico: 0,
-            grau_de_ataque: monstro.attack_degree,
+            grau_de_ataque: monstro.attack_degree + monstro.efeitos.realce().grau_de_ataque,
             de_habilidade: false,
             fator_de_curta_distancia: 1.0,
             anti_defesa: 0,
@@ -765,9 +774,11 @@ impl CombatEngine {
             com_realce(monstro.armor, r.evasao),
             com_realce(monstro.def_phys, r.defesa),
             std::array::from_fn(|i| com_realce(monstro.resistances[i], r.resistencia + r.resistencias[i])),
-            monstro.defend_degree,
+            monstro.defend_degree + r.grau_de_defesa,
         );
         d.camada_de_npc = Some(Camada::do_habitat(monstro.habitat));
+        // B363 — `imask = _immune_state | _immune_state_adj` do `AttackJudgement` (`actobject.cpp:542`).
+        d.imunidades = monstro.imunidades | monstro.efeitos.mascara_de_imunidade();
         // `filter_Inccritresistance` → `_crit_resistance` (`actobject.cpp:739`).
         d.resistencia_a_critico += r.resistencia_a_critico;
         d
@@ -779,6 +790,8 @@ impl CombatEngine {
         d.reducao_de_dano = a.reducao_de_dano;
         d.reducao_de_dano_magico = a.reducao_de_dano_magico;
         let r = jogador.efeitos.realce();
+        // B363 — o `_immune_state_adj` dos filtros de imunidade.
+        d.imunidades = jogador.efeitos.mascara_de_imunidade();
         d.esquiva_de_dano = r.esquiva_de_dano;
         d.resistencia_a_critico += r.resistencia_a_critico;
         d.resiliencia = a.resiliencia;
@@ -803,7 +816,7 @@ impl CombatEngine {
                 jogador.def_fire,
                 jogador.def_earth,
             ],
-            jogador.defend_degree,
+            jogador.defend_degree + jogador.efeitos.realce().grau_de_defesa,
         )
     }
 

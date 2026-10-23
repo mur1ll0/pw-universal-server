@@ -85,7 +85,9 @@ def formas_do_construtor(emu) -> dict:
         # `eventflag` (`int`, +0x22 depois de `max_level` +0x18, `type` +0x1c, `attr` +0x1d e
         # `rank` +0x1e, como em `skill.h:231-235`): 4 = `EVENT_CHANGE` na 323 e na 324, 0 nas
         # outras conferidas (B122).
-        formas[m.group(1)] = (gravados.get(0x4A), gravados.get(0x22, 0))
+        # `restrict_corpse` (`char`, +0x47 antes de `auto_attack` +0x48 e `time_type` +0x49, como em
+        # `skill.h:253-256`): 1 nas 14, 18, 548 e 549 (as de reviver), 2 nas 187 e 328, 0 nas outras.
+        formas[m.group(1)] = (gravados.get(0x4A), gravados.get(0x22, 0), gravados.get(0x47, 0))
     return formas
 
 
@@ -344,9 +346,10 @@ def main(caminho_gs: str) -> None:
                 m[campo] = valor
         if h.get("odio") is not None or h.get("odio_expr") is None:
             m["odio_expr"] = h.get("odio_expr")
-        forma, evento = formas.get(sid, (None, 0))
+        forma, evento, corpo = formas.get(sid, (None, 0, 0))
         if forma is not None:
             m["allow_forms"] = forma
+        m["restrict_corpse"] = corpo
         m["eventflag"] = evento
         m.pop("ao_mudar_de_forma", None)
         m.pop("efeito_passivo", None)

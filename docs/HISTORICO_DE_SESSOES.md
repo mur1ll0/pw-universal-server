@@ -17116,3 +17116,48 @@ comparação lado a lado.
       Daimon só pílulas (usar), estado de segurança e bônus de 10 em 10 níveis; das Cartas, o armazém.
     - §0 "O que falta no 1.5.5" refeito no mesmo sentido (troca de mapa feita no B350; mascote e grupo atravessam no
       B358/B359; entre contêineres o grupo ainda não).
+
+363. **Sessão 2026-10-22: o que faltava do §5, item a item, nas duas versões.** Pedido do Murillo: categorizar tudo
+    o que falta e implementar com teste por item, a suíte completa só no fim. Não commitado nem publicado.
+
+    - **Social.** Reviver por outro jogador: `REVIVAL_AGREE` (C2S 87) e `REVIVAL_INQUIRE` (S2C 197, `float`),
+      `ReviverPorOutro` com a perda de exp e a vida/mana do reviver (1.2.6: 0,1/0,1 pelo `gs`), o `restrict_corpse` dos
+      dois catálogos (o `AREA_PONTO` só pega alvo morto) e o setter `Resurrect`. Dividir e juntar pilha
+      (`Bolsa::mover` com `amount`). Barraca pessoal (`barraca.rs`: 76/77/78/84, S2C 166–171/188/191/72; regras da versão
+      em `RegrasDaBarraca`). Lista de amigos no link (`amizade.rs`: 202–214, tabelas `amigos`/`grupos_de_amigos`,
+      migração `2026_10_22_amigos.sql`).
+    - **PvP.** `pk.rs`: rosa ao bater em inocente, vermelho ao matar (grau pelo tempo), perdas na morte (`TabelasDePerda`
+      com os bonecos de cada versão), pária −72 s por monstro, bits 0x4/0x8 e o grau no `info_player_1`; colunas `pk_*`
+      (`2026_10_22_pk.sql`). Santuário (`precinct` `RegioesEditavel`, C2S 75 por versão: o 1.2.6 não confere a posição) tira
+      o PvP.
+    - **Daimon/Cartas/Itens.** Pílula (C2S 109, S2C 258), segurança (C2S 115), bônus de 10 em 10 níveis
+      (`sorteio_do_daimon`). Armazém de cartas (`IL_TRASH_BOX4`, portátil, 120 casas). Transferir refino (45) e furar
+      acessório (96), só 1.5.5.
+    - **Habilidades — os setters que faltavam.** 1.2.6: de 33 setters / 304 usos sem porte sobra 1 uso (`Frenetic`, que
+      liga pelo addon durativo 445–450). 1.5.5: de 217 / 914 para 152 / 578. Lotes: realces e escudos do 1.2.6
+      (`Sharpblade`, `Reduce*/Enhance*`, `Fasthpgen/mpgen`, `Fireblade/Iceblade`, `Stoneskin`, `Blessmagic`, `Yijin/Xisui`,
+      escudos com `FILTER_MAGICSHIELD`, `Eaglecurse`, flores, `Feathershield`, `Fastride` com a velocidade montada);
+      imunidades (21 classes, `IMUNIDADE_DOS_SETTERS` de 103 setters extraída do fonte; o `immune_type` do monstro agora
+      entra no combate); danos diretos por elemento e limpezas; variantes "2/3", graus de ataque/defesa, dano crítico,
+      `Dechurt2/3`, `Inchurt2/3`; `Befrozen`, `Dizzyinchurt`, `Deeppoision`, `Enhanceskilldamage*`, `Apgencont`,
+      `Apleakcont`, `Skillcooldown` (evento `RecargaDoJogador` → `SET_COOLDOWN`). Mapa de estados do 1.2.6: escudos
+      24/25/26 → 28/29/30 e pena 28 → 31 (medido nos `OnAttach` do `gs` 1.2.6).
+    - **GM no link** (`gm.rs`): 350/354/356/360/362/364 com as respostas; derrubar pela variante interna
+      `OutboundPacket::Derrubar`; chat calado e entrada proibida com `AnnounceForbidInfo` (123).
+    - **Conferido e já feito** (notas velhas no estado, corrigidas): sentado (`comandos::sentado`, maldição levanta) e
+      espinhos de habilidade e de jogador (B344).
+    - **Quebras que o bloco achou:** quatro arquivos de teste montavam `PlayerEntity`/`MonsterEntity` campo a campo e não
+      compilavam com os campos novos (só os testes rodados tinham sido compilados); o teste do link
+      `teste_login_senha.rs` idem com o `LinkGateway`. Corrigidos.
+    - **A suíte completa pegou um defeito meu** (883 passaram, 3 falharam): os armazéns portáteis (5 e 7) iam na
+      entrada, antes de o cliente pedir nada; no original vão no `SendAllData` do `GET_ALL_DATA`
+      (`player.cpp:13697-13715`), e em detalhe. Movidos para lá (42 + um 40 por carta), e os dois testes do
+      `GET_ALL_DATA` passaram a contar as 3 bolsas à parte dos portáteis.
+    - **Ficou `falta`:** missões de torre, força e facção (os sistemas não existem); IA (7 usos e 93 condições do 1.5.5);
+      masmorra (`kickout_instance`, `ResetInstance`, reentrada); carimbos `region/precinct` do 1.2.6 (a27/a31/nc01);
+      `Frenetic`; os 152 setters do 1.5.5; gravar no banco as proibições do GM; `GMListOnlineUser`, `GMForbidRole`.
+    - Testes novos: `reviver_de_outro_jogador_155/126`, `dividir_e_juntar_pilha_na_bolsa_155/126`,
+      `barraca_pessoal_155/126`, `pk_rosa_vermelho_e_perda_na_morte_155/126`, `santuario_tira_o_pvp_155/126`,
+      `daimon_pilula_bonus_de_nivel_e_seguranca`, `armazem_de_cartas_portatil`, `transferir_refino_e_furar_acessorio`,
+      `pele_de_pedra_e_escudo_de_fogo_155/126`, `monstro_imune_a_lento_recusa_a_lentidao`, `amizade_com_o_banco`,
+      `comandos_de_gm_no_link` e os unitários de `efeitos.rs` (lotes 1–4, imunidades, penas/montaria).

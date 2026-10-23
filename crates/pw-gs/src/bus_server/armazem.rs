@@ -20,6 +20,11 @@ pub const TETO_DO_ARMAZEM: i64 = 2_000_000_000;
 const TETO_DA_BOLSA: i64 = 2_000_000_000;
 /// `IL_TRASH_BOX2` (`gs/player_imp.h:1834`).
 const IL_TRASH_BOX2: u8 = 4;
+/// B363 — `IL_TRASH_BOX3` (o de moda, portátil, 0 slots sem expansão) e `IL_TRASH_BOX4` (o de cartas, portátil, 120),
+/// `gs/player_imp.h:1835-1837`; `TRASHBOX_BASE_SIZE4` (`gs/config.h:18`).
+pub const IL_TRASH_BOX3: u8 = 5;
+pub const IL_TRASH_BOX4: u8 = 7;
+pub const TAMANHO_DO_ARMAZEM_DE_CARTAS: usize = 120;
 
 /// Erros de `common/protocol.h:679-740` usados aqui (contados a partir de `// 30`, `:710`).
 mod erro {
@@ -124,9 +129,22 @@ impl BusServer {
             | PedidoDoArmazem::Mover { onde, .. }
             | PedidoDoArmazem::TrocarComBolsa { onde, .. }
             | PedidoDoArmazem::ParaBolsa { onde, .. }
-            | PedidoDoArmazem::ParaArmazem { onde, .. } => onde == IL_TRASH_BOX || onde == IL_TRASH_BOX2,
+            | PedidoDoArmazem::ParaArmazem { onde, .. } => {
+                onde == IL_TRASH_BOX
+                    || onde == IL_TRASH_BOX2
+                    || (!self.sub.armazem_do_126() && (onde == IL_TRASH_BOX3 || onde == IL_TRASH_BOX4))
+            }
         };
-        if !aberto || !onde_ok {
+        // B363 — os portáteis (moda e cartas) não pedem o armazém aberto (`playercmd.cpp:2437-2441`).
+        let portatil = matches!(
+            pedido,
+            PedidoDoArmazem::Trocar { onde, .. }
+                | PedidoDoArmazem::Mover { onde, .. }
+                | PedidoDoArmazem::TrocarComBolsa { onde, .. }
+                | PedidoDoArmazem::ParaBolsa { onde, .. }
+                | PedidoDoArmazem::ParaArmazem { onde, .. } if onde == IL_TRASH_BOX3 || onde == IL_TRASH_BOX4
+        );
+        if (!aberto && !portatil) || !onde_ok {
             self.responder(roleid, S2CGamedataSend::error_message(erro::ARMAZEM_FECHADO).data, envio)
                 .await;
             return;
@@ -173,16 +191,29 @@ impl BusServer {
     /// As operações de item (56–60), sobre a bolsa e o armazém carregados do banco.
     async fn item_do_armazem(&self, roleid: i32, pedido: PedidoDoArmazem, envio: &EnvioAoCliente) {
         let itens = self.itens().await;
+        let onde = match pedido {
+            PedidoDoArmazem::Trocar { onde, .. }
+            | PedidoDoArmazem::Mover { onde, .. }
+            | PedidoDoArmazem::TrocarComBolsa { onde, .. }
+            | PedidoDoArmazem::ParaBolsa { onde, .. }
+            | PedidoDoArmazem::ParaArmazem { onde, .. } => onde,
+            _ => IL_TRASH_BOX,
+        };
+        let recipiente = if onde == IL_TRASH_BOX4 { ContainerType::ArmazemDeCartas } else { ContainerType::Storehouse };
         let (Ok(bolsa), Ok(guardado)) = (
             itens.list_by_container(roleid, ContainerType::Inventory).await,
-            itens.list_by_container(roleid, ContainerType::Storehouse).await,
+            itens.list_by_container(roleid, recipiente).await,
         ) else {
             warn!("mundo: não li a bolsa/armazém de {roleid}");
             return;
         };
         let mut bolsa = Bolsa::nova(roleid, ContainerType::Inventory, TAMANHO_DA_BOLSA, bolsa);
         // O armazém de materiais tem 0 slots: todo índice nele está fora (`ERR_FATAL_ERR`).
-        let tamanho = |onde: u8| if onde == IL_TRASH_BOX { TAMANHO_DO_ARMAZEM } else { 0 };
+        let tamanho = |onde: u8| match onde {
+            IL_TRASH_BOX => TAMANHO_DO_ARMAZEM,
+            IL_TRASH_BOX4 => TAMANHO_DO_ARMAZEM_DE_CARTAS,
+            _ => 0,
+        };
         let dados = self.world.read().await.data_manager.clone();
         let pilha = |b: &Bolsa, s: usize| {
             b.item_no_slot(s).map(|i| dados.limite_de_pilha(i.item_id)).unwrap_or(1)
@@ -196,13 +227,30 @@ impl BusServer {
             | PedidoDoArmazem::ParaArmazem { onde, .. } => onde,
             _ => IL_TRASH_BOX,
         };
-        let mut armazem = Bolsa::nova(roleid, ContainerType::Storehouse, tamanho(onde_de(&pedido)), guardado);
+        let mut armazem = Bolsa::nova(roleid, recipiente, tamanho(onde_de(&pedido)), guardado);
+        // B363 — `VerifySpecTrashBox` (`player.cpp:7574-7601`): no de cartas só entra `POKER_ESSENCE` ou
+        // `POKER_DICE_ESSENCE` (ou o slot vazio da troca); senão o pedido acaba calado.
+        let so_cartas = |b: &Bolsa, i: usize| {
+            b.item_no_slot(i).is_none_or(|it| {
+                dados.cartas_de_general.cartas.contains_key(&it.item_id) || dados.cartas_de_general.caixas.contains_key(&it.item_id)
+            })
+        };
+        let recusa_tipo = onde == IL_TRASH_BOX4
+            && match pedido {
+                PedidoDoArmazem::TrocarComBolsa { bolsa: i, .. } | PedidoDoArmazem::ParaArmazem { bolsa: i, .. } => {
+                    !so_cartas(&bolsa, i as usize)
+                }
+                _ => false,
+            };
+        if recusa_tipo {
+            return;
+        }
 
         let resposta = match pedido {
             // `PlayerExchangeTrashItem` (`player.cpp:7544-7556`).
             PedidoDoArmazem::Trocar { a, b, .. } => {
                 if armazem.trocar(a as usize, b as usize) {
-                    Resposta::Pacote(S2CGamedataSend::exg_trashbox_item(a, b))
+                    Resposta::Pacote(S2CGamedataSend::exg_trashbox_item(onde, a, b))
                 } else {
                     fatal
                 }
@@ -211,14 +259,14 @@ impl BusServer {
             PedidoDoArmazem::Mover { src, dest, quantidade, .. } => {
                 let p = pilha(&armazem, src as usize);
                 match armazem.mover(src as usize, dest as usize, quantidade, p) {
-                    Some(n) => Resposta::Pacote(S2CGamedataSend::move_trashbox_item(src, dest, n)),
+                    Some(n) => Resposta::Pacote(S2CGamedataSend::move_trashbox_item(onde, src, dest, n)),
                     None => fatal,
                 }
             }
             // `PlayerExchangeTrashInv` (`player.cpp:7603-7650`).
             PedidoDoArmazem::TrocarComBolsa { armazem: t, bolsa: i, .. } => {
                 if trocar_entre(&mut armazem, t as usize, &mut bolsa, i as usize) {
-                    Resposta::Pacote(S2CGamedataSend::exg_trashbox_ivtr(t, i))
+                    Resposta::Pacote(S2CGamedataSend::exg_trashbox_ivtr(onde, t, i))
                 } else {
                     fatal
                 }
@@ -227,7 +275,7 @@ impl BusServer {
             PedidoDoArmazem::ParaBolsa { armazem: t, bolsa: i, quantidade, .. } => {
                 let p = pilha(&armazem, t as usize);
                 match mover_entre(&mut armazem, t as usize, &mut bolsa, i as usize, quantidade, p) {
-                    Some(n) => Resposta::Pacote(S2CGamedataSend::trash_item_to_ivtr(t, i, n)),
+                    Some(n) => Resposta::Pacote(S2CGamedataSend::trash_item_to_ivtr(onde, t, i, n)),
                     None => fatal,
                 }
             }
@@ -238,7 +286,7 @@ impl BusServer {
                 } else {
                     let p = pilha(&bolsa, i as usize);
                     match mover_entre(&mut bolsa, i as usize, &mut armazem, t as usize, quantidade, p) {
-                        Some(n) => Resposta::Pacote(S2CGamedataSend::ivtr_item_to_trash(i, t, n)),
+                        Some(n) => Resposta::Pacote(S2CGamedataSend::ivtr_item_to_trash(onde, i, t, n)),
                         None => fatal,
                     }
                 }

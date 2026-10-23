@@ -81,7 +81,6 @@ const INTENCAO: &[(&str, &str)] = &[
     ("player_dividend", "PLAYER_DIVIDEND"),
     ("available_double_exp_time", "AVAILABLE_DOUBLE_EXP_TIME"),
     ("double_exp_time", "DOUBLE_EXP_TIME"),
-    ("pariah_time", "PARIAH_TIME"),
     ("self_info_00", "SELF_INFO_00"),
     ("notify_hostpos", "NOTIFY_HOSTPOS"),
     ("mall_item_price", "MALL_ITEM_PRICE"),
@@ -97,6 +96,18 @@ const INTENCAO: &[(&str, &str)] = &[
     ("task_deliver_money", "TASK_DELIVER_MONEY"),
     ("spend_money", "SPEND_MONEY"),
     ("player_drop_item", "PLAYER_DROP_ITEM"),
+    ("revival_inquire", "REVIVAL_INQUIRE"),
+    ("player_use_item_with_arg", "PLAYER_USE_ITEM_WITH_ARG"),
+    ("pariah_time", "PARIAH_TIME"),
+    ("player_open_booth", "PLAYER_OPEN_BOOTH"),
+    ("self_open_booth", "SELF_OPEN_BOOTH"),
+    ("player_close_booth", "PLAYER_CLOSE_BOOTH"),
+    ("player_booth_info", "PLAYER_BOOTH_INFO"),
+    ("booth_trade_success", "BOOTH_TRADE_SUCCESS"),
+    ("booth_name", "BOOTH_NAME"),
+    ("open_booth_test", "OPEN_BOOTH_TEST"),
+    ("booth_sell_item", "BOOTH_SELL_ITEM"),
+    ("purchase_item_da_barraca", "PURCHASE_ITEM"),
     ("set_cooldown", "SET_COOLDOWN"),
     ("elf_exp", "ELF_EXP"),
     ("player_mounting", "PLAYER_MOUNTING"),
@@ -289,7 +300,6 @@ const DELEGAM: &[&str] = &[
 const LAYOUT_DIVERGE: &[&str] = &[
     "decompose_start",
     "flysword_time",
-    "pariah_rise",
     // Estes quatro passaram a divergir em 2026-09-04, quando `bytes_do_comando` parou
     // de pular structs "de tamanho variável" que só têm um rabo condicional (ver o
     // comentário da função). São divergências REAIS e MEDIDAS — cada um tem o layout

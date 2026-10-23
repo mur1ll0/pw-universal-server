@@ -338,6 +338,10 @@ def extrair(caminho):
         # andando — `playercmd.cpp:2066-2088` a manda por `moving_skill` em vez de
         # `session_skill`, e o movimento não a cancela.
         "is_movingcast": escalar(texto, "is_movingcast"),
+        # `restrict_corpse` (`cskill/skill/skill.h:254`): 1 = o alvo precisa estar morto — o
+        # `GetInrange(..., type)` recusa alvo vivo e o encanto vai por `EnchantZombie`
+        # (`playerwrapper.cpp:420-428`, `:584-600`); só o 1 é consultado no servidor.
+        "restrict_corpse": escalar(texto, "restrict_corpse"),
         "commoncooldown": escalar(texto, "commoncooldown"),
         "commoncooldowntime": escalar(texto, "commoncooldowntime"),
         # `allow_forms` (`cskill/skill/skill.cpp:128`): máscara das formas em que a habilidade

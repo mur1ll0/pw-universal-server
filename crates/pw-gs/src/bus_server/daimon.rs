@@ -4,8 +4,12 @@
 //!
 //! B355: conjurar habilidade do Daimon (`CAST_ELF_SKILL`, 116) e o vigor.
 //!
-//! **Não é igual / `falta`:** o estado de segurança (115), recarregar (117), o bônus de atributo sorteado por nível, refino, decomposição, destruir
-//! peça e os serviços 48/49 (devolver pontos).
+//! B363: a pílula de experiência (109, `elf_exppill_item::OnUse`), o estado de segurança (115) e o bônus de atributo
+//! sorteado de 10 em 10 níveis.
+//!
+//! **Não é igual / `falta`:** recarregar (117), destruir peça e os serviços 48/49 (devolver pontos); o `proc_type` de
+//! não negociar que o estado seguro põe no item (`player.cpp:22066-22067`) não é gravado, porque o servidor não modela
+//! `proc_type` por instância.
 
 use super::*;
 use super::jogo::Contexto;
@@ -18,6 +22,8 @@ mod erro {
     pub const SOMAR_GENIO: i32 = 110;
     pub const INJETAR_EXP: i32 = 111;
     pub const VESTIR_PECA: i32 = 113;
+    pub const PILULA: i32 = 112;
+    pub const SEGURANCA: i32 = 114;
     pub const APRENDER: i32 = 117;
     pub const ESQUECER: i32 = 118;
     pub const EM_RECARGA: i32 = 132;
@@ -47,7 +53,147 @@ fn i16_em(b: &[u8], i: usize) -> i16 {
     i16::from_le_bytes([b[i], b[i + 1]])
 }
 
+/// `prop.secure_status` pelo `status_value` (`UpdateEssenceData`, `item_elf.cpp:254-261`): 0 seguro, > 0 em
+/// transformação (até o segundo guardado), −1 negociável.
+const SEGURO: u8 = 0;
+const TRANSFORMANDO: u8 = 1;
+const NEGOCIAVEL: u8 = 2;
+
+fn seguranca(status_value: i32) -> u8 {
+    match status_value {
+        0 => SEGURO,
+        v if v > 0 => TRANSFORMANDO,
+        _ => NEGOCIAVEL,
+    }
+}
+
+pub(crate) fn agora_s() -> i32 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i32).unwrap_or(0)
+}
+
+/// `ElfChangeSecureStatus` (`player.cpp:22042-22070`) → `elf_item::ChangeElfSecureStatus` (`item_elf.cpp:828-859`):
+/// seguro → em transformação (`status_value = agora + 1`); em transformação ou negociável → seguro. O resto é
+/// `ERR_ELF_CHANGE_SECURE_STATUS_FAILED`. A ficha do Daimon vai de novo.
+fn mudar_seguranca(ctx: &mut Contexto, pedido: u8) {
+    let agora = std::time::Instant::now();
+    if ctx.p.recargas.get(&RECARGA_DO_COMANDO).is_some_and(|ate| *ate > agora) {
+        return erro_ao_cliente(ctx, erro::EM_RECARGA);
+    }
+    ctx.p.recargas.insert(RECARGA_DO_COMANDO, agora + std::time::Duration::from_millis(RECARGA_DO_COMANDO_MS));
+    let Some(d) = ctx.p.daimon.as_mut() else { return erro_ao_cliente(ctx, erro::SEGURANCA) };
+    match (seguranca(d.estado.status), pedido) {
+        (SEGURO, TRANSFORMANDO) => d.estado.status = agora_s() + 1,
+        (TRANSFORMANDO | NEGOCIAVEL, SEGURO) => d.estado.status = 0,
+        _ => return erro_ao_cliente(ctx, erro::SEGURANCA),
+    }
+    ficha_do_vestido(ctx);
+}
+
+/// `PlayerUseItemWithArg` (`player.cpp:18333-18360`) com a pílula de experiência (`elf_exppill_item::OnUse`,
+/// `item/item_elf_exppill.cpp:16-44`): o `arg` é o `u32` de experiência a usar, até o que a pílula tem; vai ao Daimon
+/// vestido pelo `InsertExp(exp, nível da pílula)` (`ElfInsertExpUsePill`, `player.cpp:22016-22040`). A pílula perde o
+/// que foi consumido e some quando acaba. `false` é o `ERR_CANNOT_USE_ITEM` do comando.
+fn usar_pilula(ctx: &mut Contexto, onde: u8, quantidade: u8, slot: usize, item_id: i32, arg: &[u8]) -> bool {
+    if onde != 0 || quantidade == 0 {
+        return false;
+    }
+    let Some(item) = ctx.bolsa.item_no_slot(slot).filter(|i| i.item_id as i32 == item_id).cloned() else {
+        return false;
+    };
+    // O conteúdo `{u32 exp; int level}`; sem ele, o do modelo (`generate_elf_exppill`).
+    let (exp_da_pilula, nivel_da_pilula) = if item.octets.len() >= 8 {
+        (u32::from_le_bytes(item.octets[0..4].try_into().unwrap()), i32::from_le_bytes(item.octets[4..8].try_into().unwrap()))
+    } else if let Some(m) = ctx.dados.pilula_do_daimon(item.item_id) {
+        m
+    } else {
+        return false;
+    };
+    // `IsItemCanUseWithArg`: na bolsa, `arg` de 4 bytes e a pílula com experiência.
+    if arg.len() != 4 || exp_da_pilula == 0 {
+        return false;
+    }
+    let usar = u32::from_le_bytes(arg.try_into().unwrap());
+    if usar == 0 || usar > exp_da_pilula {
+        erro_ao_cliente(ctx, erro::PILULA);
+        return true;
+    }
+    let agora = std::time::Instant::now();
+    if ctx.p.recargas.get(&RECARGA_DO_COMANDO).is_some_and(|ate| *ate > agora) {
+        erro_ao_cliente(ctx, erro::EM_RECARGA);
+        return true;
+    }
+    ctx.p.recargas.insert(RECARGA_DO_COMANDO, agora + std::time::Duration::from_millis(RECARGA_DO_COMANDO_MS));
+    let nivel = ctx.p.level.clamp(0, i16::MAX as i32) as i16;
+    let tabela = &ctx.dados.progressao;
+    let Some(d) = ctx.p.daimon.as_mut() else {
+        erro_ao_cliente(ctx, erro::PILULA);
+        return true;
+    };
+    let nivel_da_exp = nivel_da_pilula.clamp(0, i16::MAX as i32) as i16;
+    let (gasto, subiu) = d.inserir_exp(usar, nivel_da_exp, nivel, |n| tabela.exp_para_subir(n as i32).clamp(0, u32::MAX as i64) as u32);
+    if gasto == 0 {
+        erro_ao_cliente(ctx, erro::PILULA);
+        return true;
+    }
+    if subiu {
+        ficha_do_vestido(ctx);
+    } else if let Some(d) = ctx.p.daimon.as_mut() {
+        d.sujo = true;
+        if let Some(p) = ctx.sub.elf_exp(d.estado.exp.min(i32::MAX as u32) as i32) {
+            ctx.para_mim.push(p.data);
+        }
+    }
+    ctx.mudou = true;
+    let resta = exp_da_pilula - gasto;
+    let gastos = if resta == 0 {
+        // `OnUse` devolve 1: o item some (`item_list::UseItemWithArg`, `item_list.h:870-900`).
+        ctx.bolsa.tirar_do_slot(slot, 1);
+        1
+    } else {
+        let mut conteudo = resta.to_le_bytes().to_vec();
+        conteudo.extend_from_slice(&nivel_da_pilula.to_le_bytes());
+        ctx.bolsa.trocar_octetos(slot, conteudo.clone());
+        // `PlayerGetItemInfo(IL_INVENTORY, index)`.
+        ctx.para_mim.push(S2CGamedataSend::item_info(0, slot as u8, item.item_id as i32, 0, 0, item.count, &conteudo, None).data);
+        0
+    };
+    ctx.para_mim.push(S2CGamedataSend::player_use_item_with_arg(0, slot as u8, item_id, gastos, arg).data);
+    true
+}
+
 impl BusServer {
+    /// B363 — C2S 109 (`USE_ITEM_WITH_ARG`): por ora só a pílula de experiência do Daimon tem uso com argumento.
+    pub(super) async fn usar_item_com_argumento(&self, roleid: i32, c: &[u8], envio: &EnvioAoCliente) {
+        // `size < sizeof(C2S::CMD::use_item)` (8 B sem o cabeçalho) → `ERR_FATAL_ERR`; `arg` até 256.
+        if c.len() < 8 {
+            self.responder(roleid, S2CGamedataSend::error_message(erro::FATAL).data, envio).await;
+            return;
+        }
+        let arg = &c[8..];
+        if arg.len() > 256 {
+            return;
+        }
+        let (onde, quantidade) = (c[0], c[1]);
+        let slot = u16::from_le_bytes([c[2], c[3]]) as usize;
+        let item_id = i32::from_le_bytes([c[4], c[5], c[6], c[7]]);
+        let usou = self.com_contexto(roleid, |ctx| usar_pilula(ctx, onde, quantidade, slot, item_id, arg)).await;
+        if usou == Some(false) {
+            self.responder(roleid, S2CGamedataSend::error_message(jogo::erro_s2c::NAO_PODE_USAR_ITEM).data, envio).await;
+        }
+    }
+
+    /// B363 — C2S 115 (`ELF_CHANGE_SECURE_STATUS`, `playercmd.cpp:3460-3472`) `{u8 status}`.
+    pub(super) async fn seguranca_do_daimon(&self, roleid: i32, c: &[u8], envio: &EnvioAoCliente) {
+        if c.len() != 1 {
+            self.responder(roleid, S2CGamedataSend::error_message(erro::FATAL).data, envio).await;
+            return;
+        }
+        let pedido = c[0];
+        self.com_contexto(roleid, |ctx| mudar_seguranca(ctx, pedido)).await;
+        // `unlock_inventory_slot(IL_EQUIPMENT, EQUIP_INDEX_ELF)`.
+        self.responder(roleid, S2CGamedataSend::unfreeze_ivtr_slot(1, SLOT_DO_DAIMON as u16).data, envio).await;
+    }
+
     /// C2S 111–114 (`playercmd.cpp:3403-3458`): tamanho exato, senão `ERR_FATAL_ERR`.
     pub(super) async fn comando_do_daimon(&self, roleid: i32, id: u16, c: &[u8], envio: &EnvioAoCliente) {
         let tamanho = match id {

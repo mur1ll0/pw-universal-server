@@ -1,4 +1,6 @@
-//! Incrustar pedra (serviço 10), remover as pedras (11), refinar (35) e furar (47) — B163.
+//! Incrustar pedra (serviço 10), remover as pedras (11), refinar (35) e furar (47) — B163; transferir refino (45) e
+//! furar acessório (96) — B363 (`refine_transmit_service_executor` e `make_slot_for_decoration_executor`,
+//! `serviceprovider.cpp:4849-4995`; nenhum dos dois existe no `gs` 1.2.6, como o 47).
 //!
 //! Porte dos executores do `cgame/gs/serviceprovider.cpp`: `install_executor` (`:1316-1391`),
 //! `uninstall_executor` (`:1393-1450`), `refine_service_executor` (`:3748-3800`) e
@@ -286,6 +288,68 @@ impl BusServer {
         self.relatar(roleid, "furou", tipo, feito, envio).await;
     }
 
+    /// B363 — `GP_NPCSEV_REFINE_TRANSMIT` (45): `{int src_index; int src_id; int dest_index; int dest_id}`, 16 B.
+    /// `SendRequest`: recarga 29 (`ERR_OBJECT_IS_COOLING`), mesmo índice ou item que não está no slot → calado;
+    /// `OnServe` arma 1 s de recarga e chama `RefineTransmit`, cujo erro vai ao cliente.
+    pub(super) async fn transferir_refino(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
+        if conteudo.len() != 16 {
+            return;
+        }
+        let campo = |i: usize| i32::from_le_bytes(conteudo[i * 4..i * 4 + 4].try_into().unwrap());
+        let (origem, tipo_origem, destino, tipo_destino) = (campo(0), campo(1), campo(2), campo(3));
+        let tem = self.sub.furar_existe() && self.servicos_em_conversa(roleid).await.is_some_and(|s| s.transferir_refino);
+        let feito = self
+            .com_contexto(roleid, |ctx| {
+                const RECARGA: i32 = 29;
+                let agora = std::time::Instant::now();
+                if ctx.p.recargas.get(&RECARGA).is_some_and(|fim| *fim > agora) {
+                    return Err(Some(erro::EM_RECARGA));
+                }
+                let existe = |i: i32, t: i32| i >= 0 && ctx.bolsa.item_no_slot(i as usize).is_some_and(|it| it.item_id as i32 == t);
+                if origem == destino || !existe(origem, tipo_origem) || !existe(destino, tipo_destino) {
+                    return Err(None);
+                }
+                if !tem {
+                    return Err(Some(erro::SERVICO_INDISPONIVEL));
+                }
+                ctx.p.recargas.insert(RECARGA, agora + std::time::Duration::from_millis(1000));
+                transferir_refino_no_contexto(ctx, origem as usize, destino as usize).map_err(Some)
+            })
+            .await;
+        self.relatar(roleid, "transferiu o refino de", tipo_origem, feito, envio).await;
+    }
+
+    /// B363 — `GP_NPCSEV_MAKE_SLOT_FOR_DECORATION` (96): `{int src_index; int src_id; u32 material_id; int
+    /// material_count}`, 16 B. Índice negativo, ids/quantidade ≤ 0, item fora do slot ou material a menos → calado.
+    pub(super) async fn furar_acessorio(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
+        if conteudo.len() != 16 {
+            return;
+        }
+        let campo = |i: usize| i32::from_le_bytes(conteudo[i * 4..i * 4 + 4].try_into().unwrap());
+        let (indice, tipo, material, quantidade) = (campo(0), campo(1), campo(2) as u32, campo(3));
+        let tem = self.sub.furar_existe() && self.servicos_em_conversa(roleid).await.is_some_and(|s| s.furar_acessorio);
+        let sorteio: i32 = rand::thread_rng().gen_range(1..=i32::MAX);
+        let feito = self
+            .com_contexto(roleid, |ctx| {
+                if indice < 0 || tipo <= 0 || material == 0 || (material as i32) <= 0 || quantidade <= 0 {
+                    return Err(None);
+                }
+                let Some(item) = ctx.bolsa.item_no_slot(indice as usize).filter(|i| i.item_id as i32 == tipo).cloned() else {
+                    return Err(None);
+                };
+                if (ctx.bolsa.contar(material) as i64) < quantidade as i64 {
+                    return Err(None);
+                }
+                if !tem {
+                    return Err(Some(erro::SERVICO_INDISPONIVEL));
+                }
+                furar_acessorio_no_contexto(ctx, indice as usize, item, material, quantidade, sorteio)
+            })
+            .await;
+        self.relatar(roleid, "furou o acessório", tipo, feito, envio).await;
+    }
+
+
     async fn relatar(&self, roleid: i32, verbo: &str, tipo: i32, feito: Option<Result<i32, Option<i32>>>, envio: &EnvioAoCliente) {
         match feito {
             Some(Ok(n)) => info!("mundo: {roleid} {verbo} o item {tipo} ({n})"),
@@ -423,6 +487,144 @@ fn erro_do_furo_no_acessorio(dados: &GameDataManager, subtipo: i32, grau: i32, f
         Some(c) if c.item > 0 && c.quantidade > 0 && c.taxa >= 0 => erro::SEM_MATERIAL,
         _ => erro::FURO_FALHOU,
     }
+}
+
+/// B363 — `gplayer_imp::RefineTransmit(src, dest)` (`player.cpp`): o vínculo do destino tem de ser ao menos o da
+/// origem (`BIND` 1 com `CAN_WEBTRADE`, 2 sem; senão 104); os dois refináveis (103); níveis válidos (101) e a origem
+/// acima do destino (102); as Pedras do Universo do nível (105). A origem vai a 0 e o destino ao nível da origem; as
+/// pedras saem (`TakeAwayCommonItem`) e os dois itens vão de novo ao cliente. `Ok` com o nível transferido.
+fn transferir_refino_no_contexto(ctx: &mut jogo::Contexto, origem: usize, destino: usize) -> Result<i32, i32> {
+    let (Some(io), Some(id)) = (ctx.bolsa.item_no_slot(origem).cloned(), ctx.bolsa.item_no_slot(destino).cloned()) else {
+        return Err(erro::ITEM_FORA_DA_BOLSA);
+    };
+    let (Some((bo, fo)), Some((bd, fd))) = (bloco_do_equipamento(&io, ctx.dados), bloco_do_equipamento(&id, ctx.dados)) else {
+        return Err(erro::ITEM_FORA_DA_BOLSA);
+    };
+    let vinculo = |i: &ItemRecord| {
+        let p = ctx.dados.proc_type_da_instancia(i.item_id, i.bind_status != 0);
+        match (p & 0x8000 != 0, p & 0x10000 != 0) {
+            (true, true) => 1,
+            (true, false) => 2,
+            _ => 0,
+        }
+    };
+    if vinculo(&id) < vinculo(&io) {
+        return Err(erro::TRANSFERIR_PEDE_VINCULO);
+    }
+    let refinavel = |tid: u32| ctx.dados.refino.equipamentos.get(&tid).filter(|a| a.addon_de_refino > 0 && a.material > 0).map(|a| a.addon_de_refino);
+    let (Some(addon_d), Some(addon_o)) = (refinavel(id.item_id), refinavel(io.item_id)) else {
+        return Err(erro::DESTINO_NAO_TRANSFERE);
+    };
+    let (Some(co), Some(cd)) = (ConteudoDeEquipamento::ler(&bo, &fo), ConteudoDeEquipamento::ler(&bd, &fd)) else {
+        return Err(erro::ITEM_FORA_DA_BOLSA);
+    };
+    let (nivel_o, nivel_d) = (refino::nivel_de_refino(&co.addons, addon_o), refino::nivel_de_refino(&cd.addons, addon_d));
+    if nivel_d < 0 || nivel_o < 0 || nivel_o > 12 {
+        return Err(erro::NAO_TRANSFERE);
+    }
+    if nivel_o == 0 || nivel_d >= nivel_o {
+        return Err(erro::NIVEL_BAIXO_PARA_TRANSFERIR);
+    }
+    let pedras = refino::PEDRAS_PARA_TRANSFERIR[(nivel_o - 1) as usize];
+    if ctx.bolsa.contar(refino::PEDRA_DO_UNIVERSO) < pedras {
+        return Err(erro::TRANSFERIR_SEM_MATERIAL);
+    }
+    let gerado = crate::geracao::gerar_addon(ctx.dados, addon_d);
+    let (novo_o, _) = ConteudoDeEquipamento::alterar_rabo(&bo, &fo, |c| refino::definir_nivel_de_refino(&mut c.addons, addon_o, None, 0))
+        .ok_or(erro::ITEM_FORA_DA_BOLSA)?;
+    let (novo_d, ok) = ConteudoDeEquipamento::alterar_rabo(&bd, &fd, |c| {
+        refino::definir_nivel_de_refino(&mut c.addons, addon_d, gerado, nivel_o as usize)
+    })
+    .ok_or(erro::ITEM_FORA_DA_BOLSA)?;
+    if !ok {
+        return Err(erro::DESTINO_NAO_TRANSFERE);
+    }
+    let mut io = io;
+    io.octets = novo_o;
+    io.refine_level = 0;
+    let mut id = id;
+    id.octets = novo_d;
+    id.refine_level = nivel_o.clamp(0, 255) as u8;
+    ctx.bolsa.por(origem, Some(io.clone()));
+    ctx.bolsa.por(destino, Some(id.clone()));
+    for (slot, n) in ctx.bolsa.tirar(refino::PEDRA_DO_UNIVERSO, pedras) {
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, refino::PEDRA_DO_UNIVERSO as i32, DESCARTE_DE_MISSAO).data);
+    }
+    ctx.para_mim.push(BusServer::info_de(0, &io, ctx.dados));
+    ctx.para_mim.push(BusServer::info_de(0, &id, ctx.dados));
+    ctx.mudou = true;
+    Ok(nivel_o)
+}
+
+/// B363 — `ItemMakeSlot(index, id, material, quantidade)` com `decoration_equip_item::MakeSlot`
+/// (`item/equip_item.cpp:1474-1557`): só colar e cinto, grau 1–20, até 4 furos e a casa da `EQUIP_MAKE_HOLE_CONFIG`;
+/// o material tem de ser o da casa (senão 25); a chance é `quantidade / pedida` (usa no máximo a pedida), a taxa
+/// `fee × chance + 0,1` (senão 16). Material e taxa saem mesmo sem furo (`ERR_MAKE_SLOT_FOR_DECOR_PROB`); com o
+/// furo, `ERR_MAKE_SLOT_SUCCESS` e o item de novo. Arma e armadura ignoram o material (o furo do serviço 47).
+fn furar_acessorio_no_contexto(
+    ctx: &mut jogo::Contexto,
+    indice: usize,
+    item: ItemRecord,
+    material: u32,
+    quantidade: i32,
+    sorteio: i32,
+) -> Result<i32, Option<i32>> {
+    let alvo = ctx.dados.refino.equipamentos.get(&item.item_id).copied().ok_or(Some(erro::FURO_FALHOU))?;
+    if alvo.familia != Familia::Acessorio {
+        return furar_item(ctx, indice, item);
+    }
+    let (bloco, ficha) = bloco_do_equipamento(&item, ctx.dados).ok_or(Some(erro::FURO_FALHOU))?;
+    let atual = ConteudoDeEquipamento::ler(&bloco, &ficha).ok_or(Some(erro::FURO_FALHOU))?;
+    let mascara = ctx.dados.refino.mascara_do_subtipo.get(&alvo.subtipo).copied();
+    let furos = atual.furos.len();
+    if mascara.map_or(true, |m| m & refino::MASCARA_COLAR_OU_CINTO == 0)
+        || !(1..=20).contains(&alvo.grau)
+        || furos >= refino::FUROS_NO_ACESSORIO
+    {
+        return Err(Some(erro::FURO_FALHOU));
+    }
+    let casa = ctx
+        .dados
+        .refino
+        .furos_de_acessorio
+        .get((alvo.grau - 1) as usize)
+        .map(|n| n[furos])
+        .filter(|c| c.item > 0 && c.quantidade > 0 && c.taxa >= 0)
+        .ok_or(Some(erro::FURO_FALHOU))?;
+    if material != casa.item as u32 {
+        return Err(Some(erro::SEM_MATERIAL));
+    }
+    if (ctx.bolsa.contar(material) as i64) < quantidade as i64 {
+        return Err(Some(erro::SEM_MATERIAL));
+    }
+    let usar = quantidade.min(casa.quantidade);
+    let chance = usar as f32 / casa.quantidade as f32;
+    let taxa = (casa.taxa as f32 * chance + 0.1) as i64;
+    if ctx.p.money < taxa {
+        return Err(Some(erro::SEM_DINHEIRO));
+    }
+    // `abase::Rand(1, require_item_count) <= material_count`.
+    let acertou = (sorteio % casa.quantidade) + 1 <= usar;
+    let mut resultado = Err(Some(erro::FURO_DE_ACESSORIO_FALHOU));
+    if acertou {
+        let (novo, _) = ConteudoDeEquipamento::alterar_rabo(&bloco, &ficha, |c| c.furos.push(0)).ok_or(Some(erro::FURO_FALHOU))?;
+        let mut item = item;
+        item.octets = novo;
+        item.sockets_count = item.sockets_count.saturating_add(1);
+        item.sockets = furos_de(&item.octets, &ficha);
+        ctx.bolsa.por(indice, Some(item.clone()));
+        ctx.para_mim.push(S2CGamedataSend::error_message(erro::FURO_FEITO).data);
+        ctx.para_mim.push(BusServer::info_de(0, &item, ctx.dados));
+        resultado = Ok(furos as i32 + 1);
+    }
+    // `TakeAwayCommonItem(material_id, material_count)` e `SpendMoney(fee_cost)` + `spend_money`.
+    for (slot, n) in ctx.bolsa.tirar(material, usar as u32) {
+        ctx.para_mim.push(ctx.sub.player_drop_item(0, slot as u8, n, material as i32, DESCARTE_DE_MISSAO).data);
+    }
+    ctx.p.money -= taxa;
+    ctx.para_mim.push(S2CGamedataSend::spend_money(taxa as u32).data);
+    ctx.mudou = true;
+    resultado
 }
 
 #[cfg(test)]

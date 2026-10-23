@@ -137,7 +137,8 @@ impl CharacterRepository {
         let r = sqlx::query("UPDATE characters SET level=$2,cultivation=$3,exp=$4,sp=$5,
             hp=$6,mp=$7,money=$8,world_id=$9,pos_x=$10,pos_y=$11,pos_z=$12,
             ap=$13,max_ap=$14,strength=$15,agility=$16,vitality=$17,energy=$18,
-            potential_points=$19,character_mode=$20,waypoints=$21,updated_at=CURRENT_TIMESTAMP
+            potential_points=$19,character_mode=$20,waypoints=$21,
+            pk_estado=$22,pk_tempo_agressor=$23,pk_tempo_paria=$24,pk_grau=$25,pk_mortes=$26,updated_at=CURRENT_TIMESTAMP
             WHERE id=$1")
             .bind(e.role_id).bind(e.level).bind(e.cultivation).bind(e.exp).bind(e.sp)
             .bind(e.hp).bind(e.mp).bind(e.money).bind(e.mundo)
@@ -145,6 +146,7 @@ impl CharacterRepository {
             .bind(e.atributos.0).bind(e.atributos.1).bind(e.atributos.2).bind(e.atributos.3)
             .bind(e.pontos_de_atributo).bind(modo)
             .bind(e.waypoints.iter().flat_map(|v|v.to_le_bytes()).collect::<Vec<_>>())
+            .bind(e.pk.0).bind(e.pk.1).bind(e.pk.2).bind(e.pk.3).bind(e.pk.4)
             .execute(&mut *tx).await?;
         if r.rows_affected()!=1 { return Err(StorageError::NotFound("personagem da fotografia".into())); }
         sqlx::query("INSERT INTO character_task_lists
@@ -844,6 +846,17 @@ impl CharacterRepository {
         Ok(v.unwrap_or(0))
     }
 
+    /// B363 — o PK gravado: (estado, tempo de agressor, tempo de pária, grau, mortes).
+    pub async fn estado_pk(&self, role_id: RoleId) -> Result<(i16, i32, i32, i16, i32)> {
+        let v: Option<(i16, i32, i32, i16, i32)> = sqlx::query_as(
+            "SELECT pk_estado, pk_tempo_agressor, pk_tempo_paria, pk_grau, pk_mortes FROM characters WHERE id = $1",
+        )
+        .bind(role_id)
+        .fetch_optional(self.pool.get_ref())
+        .await?;
+        Ok(v.unwrap_or_default())
+    }
+
     pub async fn gravar_lideranca(&self, role_id: RoleId, valor: i32) -> Result<()> {
         sqlx::query("UPDATE characters SET leadership = $2 WHERE id = $1")
             .bind(role_id)
@@ -1294,6 +1307,8 @@ pub struct FotografiaPersonagem {
     pub atributos:(i32,i32,i32,i32), pub pontos_de_atributo:i32,
     pub modo_roupa:bool, pub waypoints:Vec<u16>,
     pub missoes:super::task_lists::ListasDeMissaoGravadas,
+    /// B363 — o PK: (estado, tempo de agressor, tempo de pária, grau, mortes).
+    pub pk:(i16,i32,i32,i16,i32),
 }
 
 /// Os valores de nascimento de uma classe sem template no realm: nível 1, nada de EXP, SP,

@@ -43,6 +43,7 @@ fn do_item(item: &ItemRecord, dados: &GameDataManager) -> Option<DaimonVestido> 
         fator_de_exp: fator,
         estado: Daimon::ler(&item.octets).unwrap_or_else(|| Daimon::novo(&iniciais)),
         sujo: false,
+        sorteio: dados.sorteio_do_daimon(item.item_id),
     })
 }
 
@@ -253,7 +254,7 @@ mod testes_da_edicao {
         estado.nivel = 50;
         estado.total_de_atributos = 49;
         estado.total_de_genios = 11;
-        DaimonVestido { slot: 23, item_id: 1, fator_de_exp: 1.0, estado, sujo: false }
+        DaimonVestido { slot: 23, item_id: 1, fator_de_exp: 1.0, estado, sujo: false, sorteio: [(0, 0.0); 10] }
     }
 
     /// B361 — atributos pelo custo do original (acima de 40 cada ponto vale dois) e gênios pelo total e pelo limite 8.

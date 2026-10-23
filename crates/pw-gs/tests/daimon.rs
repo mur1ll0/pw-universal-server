@@ -56,6 +56,7 @@ fn o_daimon_come_um_decimo_e_sobe_de_nivel() {
         fator_de_exp: 1.0,
         estado: Daimon::novo(&[]),
         sujo: false,
+        sorteio: [(0, 0.0); 10],
     };
 
     // Jogador de nível 5, Daimon de 1: o fator é 1/5, então de 50 de experiência entram 10.
@@ -81,6 +82,7 @@ fn o_daimon_come_um_decimo_e_sobe_de_nivel() {
         fator_de_exp: 1.0,
         estado: Daimon { nivel: 5, ..Daimon::novo(&[]) },
         sujo: false,
+        sorteio: [(0, 0.0); 10],
     };
     d.receber_exp(10_000, 5, 5, precisa);
     assert_eq!(d.estado.nivel, 5, "passou do nível do jogador");
@@ -95,6 +97,7 @@ fn o_daimon_come_um_decimo_e_sobe_de_nivel() {
         fator_de_exp: 1.0,
         estado: Daimon { nivel: 9, ..Daimon::novo(&[]) },
         sujo: false,
+        sorteio: [(0, 0.0); 10],
     };
     assert_eq!(d.receber_exp(1000, 5, 5, precisa), (false, false));
 }
@@ -116,6 +119,7 @@ fn o_ganho_trunca_para_zero_com_pouca_experiencia() {
         fator_de_exp: 1.0,
         estado: Daimon::novo(&[]),
         sujo: false,
+        sorteio: [(0, 0.0); 10],
     };
     // Um décimo de 80 é 8; 8 × 0,1 = 0,8 → nada.
     assert_eq!(d.receber_exp(8, 16, 16, precisa), (false, false), "80 de experiência não podia dar nada");
@@ -228,7 +232,7 @@ fn o_realm_tem_pecas_e_professores_de_daimon() {
 #[test]
 fn injetar_exp_conta_o_consumido_ate_no_teto() {
     let precisa = |_nivel: i16| 100u32;
-    let mut d = DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado: Daimon::novo(&[]), sujo: false };
+    let mut d = DaimonVestido { slot: 23, item_id: 23752, fator_de_exp: 1.0, estado: Daimon::novo(&[]), sujo: false, sorteio: [(0, 0.0); 10] };
     // Dono de nível 1: o fator é 1 e o Daimon para em 99 de 100.
     let (consumida, subiu) = d.inserir_exp(500, 1, 1, precisa);
     assert_eq!((consumida, subiu, d.estado.exp, d.estado.nivel), (99, false, 99, 1));

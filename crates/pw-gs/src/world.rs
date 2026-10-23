@@ -248,6 +248,15 @@ pub enum EventoDoMundo {
     /// renascer na cidade, `playercmd.cpp:121`) e o `LongJump`. O Portal da Cidade (167) do
     /// 1.2.6 — quem move o jogador é o barramento.
     VoltarParaACidade { roleid: RoleId },
+    /// B363 — uma habilidade de reviver pegou o jogador morto: o barramento manda o
+    /// `REVIVAL_INQUIRE` (197) com a perda (`enable_resurrect_state`, `gs/player.cpp:12692-12693`).
+    ReviverOferecido { roleid: RoleId, perda: f32 },
+    /// B363 — o PK mudou: o barramento manda o 117/118/119 a quem vê (e a ele) ou o 230 a ele.
+    Pk { roleid: RoleId, aviso: crate::pk::AvisoPk },
+    /// B363 — entrou (`true`) ou saiu do santuário: `enter_sanctuary`/`leave_sanctuary` só a ele.
+    Santuario { roleid: RoleId, dentro: bool },
+    /// B363 — o Daimon vestido mudou fora de comando (a transformação venceu): a ficha vai de novo.
+    FichaDoDaimon { roleid: RoleId },
     /// A captura deu certo: `GM_MSG_MOB_BE_TRAINED` ao jogador com o ovo
     /// (`gnpc_imp::OI_TransferPetEgg`, `npc.cpp:2526-2529`; `player.cpp:2198-2225`).
     MonstroCapturado { roleid: RoleId, ovo: i32 },
@@ -290,6 +299,13 @@ pub enum EventoDoMundo {
         skill: i32,
         nivel: i32,
         alvo: Option<i64>,
+    },
+    /// B363 — `SET_COOLDOWN` ao jogador: o `SetCoolDown` do `SetSkillcooldown` (`object.SetCoolDown` manda sempre o
+    /// `set_cooldown`, `gs/player.cpp`).
+    RecargaDoJogador {
+        roleid: i32,
+        indice: i32,
+        ms: i32,
     },
     /// `PET_SET_COOLDOWN` ao dono (`gpet_imp::SetCoolDown` → `PetSetCoolDown`).
     RecargaDoMascote {
@@ -375,6 +391,8 @@ pub struct WorldInstance {
     /// B334 — `TEAM_MEMBER_CAPACITY`: 10 no 1.5.5 (`gs/config.h:50`) e 6 no 1.2.6 (o `gs` compara `convites + membros`
     /// com 5 no líder, VA 0x8102bff, e `convites` com 4 sem grupo, VA 0x81012d2). Posto por [`crate::mapas::capacidade_do_grupo`].
     pub capacidade_do_grupo: usize,
+    /// B363 — a checagem de santuário do servidor ([`pw_protocol::WorldProtocol::santuario_conferido_pelo_servidor`]).
+    pub santuario_conferido_pelo_servidor: bool,
     /// B338 — as ações que os monstros estão tocando (`ai_play_action_task`) e quanto falta, em ms.
     pub acoes_tocando: HashMap<i64, u32>,
     /// As rotas de patrulha do `path.sev` deste mapa, pelo id (`path_manager`, B136).
@@ -523,6 +541,7 @@ impl WorldInstance {
             espaco: pw_data_loader::MapaDoEspaco::vazio(),
             sem_voo: false,
             capacidade_do_grupo: 10,
+            santuario_conferido_pelo_servidor: true,
             acoes_tocando: HashMap::new(),
             rotas: HashMap::new(),
             rotas_do_global: HashMap::new(),
@@ -1164,6 +1183,23 @@ impl WorldInstance {
     ///
     /// `None` se o jogador não está neste mundo ou não está morto — ressuscitar quem está vivo
     /// seria um teleporte de graça.
+    /// B363 — o reviver de outro jogador aceito (C2S 87): renasce **no lugar** com a perda, a vida
+    /// e a mana guardadas pela habilidade ([`crate::progressao::renascer_pelo_reviver`]). `None` se
+    /// não está morto ou não há reviver pronto (`GetResurrectState`, `playercmd.cpp:755-759`).
+    pub fn reviver_pelo_outro(&mut self, role_id: RoleId) -> Option<Renascimento> {
+        let id = role_id as i64;
+        let dados = Arc::clone(&self.data_manager);
+        let mapa = self.world_id;
+        let p = self.players.get_mut(&id)?;
+        let pos = p.position;
+        let perdeu = crate::progressao::renascer_pelo_reviver(p, &dados, p.morto_por_jogador)?;
+        p.target_id = None;
+        let (hp, max_hp) = (p.hp, p.max_hp);
+        self.emitir(EventoDoMundo::JogadorReviveu { roleid: role_id, pos, hp, max_hp });
+        info!("Jogador #{role_id} aceitou o reviver ({:.0}, {:.0}), perdeu {perdeu} de experiência", pos.x, pos.z);
+        Some(Renascimento { pos_da_morte: pos, destino: pos, mapa, perdeu })
+    }
+
     pub fn reviver_jogador(&mut self, role_id: RoleId, no_lugar: bool) -> Option<Renascimento> {
         let id = role_id as i64;
         let dados = Arc::clone(&self.data_manager);
@@ -1180,7 +1216,8 @@ impl WorldInstance {
                 .map(|(ponto, m)| (pw_core::Vector3::new(ponto[0], ponto[1], ponto[2]), m))
                 .unwrap_or((pos_da_morte, mapa))
         };
-        let perdeu = crate::progressao::renascer(p, &dados, false);
+        // B363 — `if (_kill_by_player) exp_reduce = 0.f` (`player.cpp:8719-8720`).
+        let perdeu = crate::progressao::renascer(p, &dados, p.morto_por_jogador);
         p.target_id = None;
         let (hp, max_hp) = (p.hp, p.max_hp);
         self.emitir(EventoDoMundo::JogadorReviveu {
@@ -2268,6 +2305,7 @@ impl WorldInstance {
         self.mascote_do_dono_ajuda(alvo, monstro);
         self.golpe_interrompe_coleta(alvo);
         self.devolver_espinhos(alvo, monstro, fisico, true);
+        let dano = self.penas_no_jogador(alvo, dano, fisico);
         self.aplicar_dano_no_jogador(alvo, monstro, dano);
     }
 
@@ -2304,7 +2342,21 @@ impl WorldInstance {
     fn golpe_no_jogador(&mut self, alvo: i64, atacante: i64, dano: i64, fisico: i32, de_longe: bool) {
         self.golpe_interrompe_coleta(alvo);
         self.devolver_espinhos_de(alvo, atacante, fisico, false, de_longe);
+        let dano = self.penas_no_jogador(alvo, dano, fisico);
         self.aplicar_dano_no_jogador(alvo, atacante, dano);
+    }
+
+    /// B363 — o `filter_Feathershield` no golpe físico de monstro: o `damage_entry` do original separa o físico
+    /// do mágico, e aqui o golpe chega somado; com `fisico > 0` (golpe ou habilidade física) o dano inteiro conta
+    /// como físico — aproximação enquanto o dano não vier separado por classe.
+    pub(crate) fn penas_no_jogador(&mut self, alvo: i64, dano: i64, fisico: i32) -> i64 {
+        let Some(p) = self.players.get_mut(&alvo) else { return dano };
+        if fisico <= 0 || !p.efeitos.filtros.iter().any(|f| f.efeito == crate::efeitos::Efeito::Feathershield) {
+            return dano;
+        }
+        let (resto, mana) = p.efeitos.penas_absorvem(dano.clamp(0, i32::MAX as i64) as i32, p.mp);
+        p.mp = (p.mp - mana).max(0);
+        resto as i64
     }
 
     /// O golpe que chega interrompe a coleta, salvo mina `uninterruptable` (o
@@ -2612,6 +2664,40 @@ impl WorldInstance {
         let (hp, pos, role_id) = (player.hp, player.position, player.role_id);
         debug!("mundo: dano de {atacante} no jogador {alvo}: {dano}, vida {hp}");
         self.emitir(EventoDoMundo::EstadoMudou { roleid: role_id });
+        // B363 — o PK do golpe de jogador em jogador (`HandleAttackMsg`, `actobject.cpp:684-787`): fora do
+        // duelo todo golpe PvP é "invasor" (`TranslateAttack`, `player_imp.h:3515-3560`) e fica laranja quando
+        // a vítima não é vermelha (`!fac_match`, o `FACTION_PARIAH`). Laranja deixa o atacante rosa por 60 s
+        // (a vítima viva, ou já não branca); matar um branco com golpe laranja o deixa vermelho (`Die(...,
+        // orange_name && _invader_state == INVADER_LVL_0, ...)`).
+        if atacante != alvo && self.players.contains_key(&atacante) && !self.em_duelo_entre(alvo, atacante) {
+            let (vermelha, branca) = self
+                .players
+                .get(&alvo)
+                .map(|v| (v.pk.estado == crate::pk::VERMELHO, v.pk.branco()))
+                .unwrap_or((true, false));
+            let laranja = !vermelha;
+            let mut avisos = Vec::new();
+            if let Some(a) = self.players.get_mut(&atacante) {
+                if laranja && (hp > 0 || !branca) {
+                    avisos.extend(a.pk.tornar_agressor(role_id, crate::pk::TEMPO_DE_AGRESSOR));
+                }
+                if hp == 0 && laranja && branca {
+                    avisos.extend(a.pk.tornar_paria());
+                }
+            }
+            for aviso in avisos {
+                self.emitir(EventoDoMundo::Pk { roleid: atacante as RoleId, aviso });
+            }
+            if hp == 0 {
+                if let Some(v) = self.players.get_mut(&alvo) {
+                    v.morto_por_jogador = true;
+                }
+            }
+        } else if hp == 0 {
+            if let Some(v) = self.players.get_mut(&alvo) {
+                v.morto_por_jogador = false;
+            }
+        }
         if hp > 0 {
             return;
         }
@@ -3325,7 +3411,37 @@ impl WorldInstance {
             for p in self.players.values_mut().filter(|p| p.pvp_ligado) {
                 p.pvp_espera_s = (p.pvp_espera_s - 1).max(0);
             }
+            for (roleid, dentro) in self.batimento_do_santuario() {
+                self.emitir(EventoDoMundo::Santuario { roleid, dentro });
+            }
+            // B363 — `_invade_ctrl.OnHeartbeat()`: o rosa desconta os 60 s, o vermelho 1 s.
+            let avisos: Vec<(RoleId, crate::pk::AvisoPk)> = self
+                .players
+                .values_mut()
+                .flat_map(|p| {
+                    let id = p.role_id;
+                    p.pk.batimento().into_iter().map(move |a| (id, a))
+                })
+                .collect();
+            for (roleid, aviso) in avisos {
+                self.emitir(EventoDoMundo::Pk { roleid, aviso });
+            }
             self.batimento_dos_duelos();
+            let agora_s = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i32)
+                .unwrap_or(0);
+            let venceram: Vec<RoleId> = self
+                .players
+                .values_mut()
+                .filter_map(|p| {
+                    let id = p.role_id;
+                    p.daimon.as_mut()?.vencer_transformacao(agora_s).then_some(id)
+                })
+                .collect();
+            for roleid in venceram {
+                self.emitir(EventoDoMundo::FichaDoDaimon { roleid });
+            }
             for roleid in self.batimento_do_vigor_do_daimon() {
                 self.emitir(EventoDoMundo::VigorDoDaimon { roleid });
             }
@@ -3446,6 +3562,7 @@ impl EstadoParaGravar {
             ap:j.ap,max_ap:j.max_ap,atributos:(j.strength,j.agility,j.vitality,j.energy),
             pontos_de_atributo:j.pontos_de_atributo,modo_roupa:j.modo_roupa,waypoints:j.waypoints.clone(),
             missoes:pw_storage::ListasDeMissaoGravadas{ativa:a,concluidas:b,tempos:c,contagens:d,deposito:e},
+            pk:(j.pk.estado as i16,j.pk.tempo_de_agressor,j.pk.tempo_de_paria,j.pk.grau as i16,j.pk.mortes),
         }}
     }
 }
@@ -3929,6 +4046,87 @@ impl WorldInstance {
     /// Ver [`EventoDoMundo::VoltarParaACidade`].
     pub fn pedir_volta_a_cidade(&self, roleid: RoleId) {
         self.emitir(EventoDoMundo::VoltarParaACidade { roleid });
+    }
+
+    /// B363 — `TestSanctuary` (`gs/player.cpp:11942-11955`): no santuário liga o filtro (e avisa). `true` se
+    /// está dentro.
+    pub fn testar_santuario(&mut self, roleid: RoleId) -> bool {
+        let mapa = self.world_id;
+        let Some(p) = self.players.get(&(roleid as i64)) else { return false };
+        if !self.data_manager.no_santuario(mapa, p.position.x, p.position.z) {
+            return false;
+        }
+        self.ligar_santuario(roleid);
+        true
+    }
+
+    fn ligar_santuario(&mut self, roleid: RoleId) {
+        if let Some(p) = self.players.get_mut(&(roleid as i64)) {
+            if p.santuario.is_none() {
+                p.santuario = Some(0);
+                // `OnAttach` → `SetHasPVPLimitFilter(true)` e `enter_sanctuary`.
+                self.emitir(EventoDoMundo::Santuario { roleid, dentro: true });
+            }
+        }
+    }
+
+    /// O batimento de 1 s do santuário: o filtro confere a saída de 7 em 7 (`pvp_limit_filter::Heartbeat`, `(_counter
+    /// += 1) < 7`; `cmp eax, 6` no 1.2.6) e, no 1.5.5, a checagem do servidor procura o santuário de 8 em 8 (4 em 4
+    /// em modo de trapaça) e liga o filtro na 2ª vez dentro (`playersanctuarycheck.cpp:48-92`).
+    fn batimento_do_santuario(&mut self) -> Vec<(RoleId, bool)> {
+        let mapa = self.world_id;
+        let dados = Arc::clone(&self.data_manager);
+        let servidor_confere = self.santuario_conferido_pelo_servidor;
+        let mut mudou = Vec::new();
+        for p in self.players.values_mut() {
+            let dentro = dados.no_santuario(mapa, p.position.x, p.position.z);
+            match p.santuario.as_mut() {
+                Some(c) => {
+                    *c += 1;
+                    if *c >= 7 {
+                        *c = 0;
+                        if !dentro {
+                            p.santuario = None;
+                            mudou.push((p.role_id, false));
+                        }
+                    }
+                }
+                None if servidor_confere => {
+                    let (cont, esperas, vezes, trapaca) = &mut p.checagem_de_santuario;
+                    *cont += 1;
+                    if *cont < if *trapaca { 4 } else { 8 } {
+                        continue;
+                    }
+                    *cont = 0;
+                    if !dentro {
+                        *esperas = 0;
+                        continue;
+                    }
+                    if *trapaca {
+                        p.santuario = Some(0);
+                        mudou.push((p.role_id, true));
+                        continue;
+                    }
+                    *esperas += 1;
+                    if *esperas >= 2 {
+                        *esperas = 0;
+                        p.santuario = Some(0);
+                        mudou.push((p.role_id, true));
+                        *vezes += 1;
+                        if *vezes >= 2 {
+                            *trapaca = true;
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        mudou
+    }
+
+    /// Ver [`EventoDoMundo::ReviverOferecido`].
+    pub fn pedir_aviso_de_reviver(&self, roleid: RoleId, perda: f32) {
+        self.emitir(EventoDoMundo::ReviverOferecido { roleid, perda });
     }
 
     /// Ver [`EventoDoMundo::ReviverMascote`].

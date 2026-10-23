@@ -275,6 +275,49 @@ pub mod erro {
     pub const NAO_REFINA: i32 = 92;
     pub const FURO_FALHOU: i32 = 106;
     pub const FURO_FEITO: i32 = 107;
+    /// B363 — `ERR_ITEM_NOT_IN_INVENTORY` e os do transferir refino (`ERR_CAN_NOT_TRANSMIT_REFINE` 101 ..
+    /// `ERR_TRANSMIT_REFINE_NO_MATERIAL` 105) e o furo de acessório que falhou no sorteio (`ERR_MAKE_SLOT_FOR_DECOR_PROB`).
+    pub const ITEM_FORA_DA_BOLSA: i32 = 5;
+    pub const NAO_TRANSFERE: i32 = 101;
+    pub const NIVEL_BAIXO_PARA_TRANSFERIR: i32 = 102;
+    pub const DESTINO_NAO_TRANSFERE: i32 = 103;
+    pub const TRANSFERIR_PEDE_VINCULO: i32 = 104;
+    pub const TRANSFERIR_SEM_MATERIAL: i32 = 105;
+    pub const FURO_DE_ACESSORIO_FALHOU: i32 = 201;
+}
+
+/// B363 — `ALLSPARK_ID` (`gs/config.h:100`): a Pedra do Universo que o transferir refino gasta.
+pub const PEDRA_DO_UNIVERSO: u32 = 12980;
+/// `need_material[]` de `RefineTransmit` (`player.cpp`): quantas pedras pelo nível transferido (1..12).
+pub const PEDRAS_PARA_TRANSFERIR: [u32; 12] = [1, 5, 12, 28, 60, 80, 100, 150, 250, 400, 650, 1000];
+
+/// `equip_item::SetRefineLevel(addon, nivel)` (`item/equip_item.cpp:593-633`): 0 tira o addon; senão
+/// `arg[0] = gerado.arg[0] × refine_factor[nivel] + 0,1` e `arg[1] = nivel`, no addon que já existe ou num novo.
+pub fn definir_nivel_de_refino(addons: &mut Vec<AddonDoItem>, addon_id: u32, gerado: Option<AddonDoItem>, nivel: usize) -> bool {
+    let indice = addons.iter().position(|a| a.id() == addon_id);
+    let atual = indice.and_then(|i| addons[i].args.get(1).copied()).unwrap_or(0);
+    if nivel == 0 {
+        if atual > 0 {
+            if let Some(i) = indice {
+                addons.remove(i);
+            }
+        }
+        return true;
+    }
+    let Some(g) = gerado else { return false };
+    let valor = (g.args.first().copied().unwrap_or(0) as f32 * FATOR_DE_REFINO[nivel.min(12)] + 0.1) as i32;
+    match indice.filter(|_| atual > 0) {
+        Some(i) => {
+            let a = &mut addons[i];
+            if a.args.len() < 2 {
+                a.args.resize(2, 0);
+            }
+            a.args[0] = valor;
+            a.args[1] = nivel as i32;
+        }
+        None => addons.push(AddonDoItem { tipo: g.tipo, args: vec![valor, nivel as i32] }),
+    }
+    true
 }
 
 #[cfg(test)]

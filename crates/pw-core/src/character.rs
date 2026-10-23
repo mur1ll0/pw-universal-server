@@ -243,6 +243,16 @@ pub mod estado_do_jogador {
     /// `STATE_TEAM` e `STATE_TEAMLEADER` (`gs/object.h:154-155`). Sem campo.
     pub const EM_GRUPO: i32 = 0x0000_0100;
     pub const LIDER_DO_GRUPO: i32 = 0x0000_0200;
+    /// Com a barraca aberta (`STATE_MARKET`, `gs/object.h:159`; `GP_STATE_BOOTH`,
+    /// `EC_GPDataType.h:215`). Acrescenta **1 byte**: o `market_id` (`protocol_imp.h:87-90`),
+    /// depois do estendido e antes da montaria. Mesmo bit e mesmo lugar no 1.2.6 (VA 0x8062e2a).
+    pub const BARRACA: i32 = 0x0000_1000;
+    /// B363 — rosa (`STATE_INVADER`) e vermelho (`STATE_PARIAH`, +1 byte do grau, depois do efeito e
+    /// antes da montaria), `gs/object.h:142-143`; a chave de PvP ligada (`STATE_PVPMODE`, sem byte).
+    /// Os mesmos no 1.2.6 (`MakePlayerExtendState`, VA 0x8062e99 o 0x8 com o byte).
+    pub const AGRESSOR: i32 = 0x0000_0004;
+    pub const PARIA: i32 = 0x0000_0008;
+    pub const PVP: i32 = 0x0000_8000;
 }
 
 /// O registro de aparência que os clientes gravam: `PLAYER_CUSTOMIZEDATA` (`EC_Player.h:210-245`),
@@ -543,6 +553,13 @@ pub struct VistaDoJogador {
     /// Em grupo / líder do grupo: `STATE_TEAM`/`STATE_TEAMLEADER` (`gs/playerteam.h:226-379`).
     pub em_grupo: bool,
     pub lider_do_grupo: bool,
+    /// A barraca aberta: o `market_id` (`_stall_trade_id & 0xFF`, `playerstall.cpp:141-147`). Liga
+    /// [`estado_do_jogador::BARRACA`] e acrescenta 1 byte (B363).
+    pub barraca: Option<u8>,
+    /// B363 — o estado de PK (0 branco, 1 rosa, 2 vermelho) e o grau do vermelho; a chave de PvP.
+    pub pk: u8,
+    pub grau_paria: u8,
+    pub pvp: bool,
 }
 
 #[cfg(test)]

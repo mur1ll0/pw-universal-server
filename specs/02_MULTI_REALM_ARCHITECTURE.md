@@ -213,10 +213,32 @@ no `realm_155`, as de `default_skills()` gravadas no template (`scripts/2026_10_
 O painel edita os templates (spec 06). Classe **sem** template: molde 5/5/5/5 e o reparo do
 código na carga (`default_skills()`, kit de bolsa); com template, o reparo nunca age.
 
-Ainda no link: fala (canal global por processo, sem raio), lista de amigos (sempre vazia),
+Ainda no link: fala (canal global por processo, sem raio), lista de amigos (B363, abaixo),
 UI config e help states (gravados por personagem e só para o personagem da sessão, até
 64 KiB; antes eram descartados e as barras de atalho voltavam vazias), custom data, e alguns
 subcomandos (spec 04 §4).
+
+**Amizade (B363, `crates/pw-link/src/amizade.rs`, `testado` com o banco — `amizade_com_o_banco`):** o papel do
+`gdeliveryd`. Tabelas `amigos` e `grupos_de_amigos` (`scripts/2026_10_22_amigos.sql`, spec 01). Mão única: `AddFriend` (202,
+por id ou por nome de quem está online) → `ERR_FS_OFFLINE` (1) ou `DUPLICATE` (7), senão o **RPC** `AddFriendRqst` (204,
+`xid` BE com o bit 31 de pedido) ao destino; a resposta (mesmo `xid` sem o bit, `char retcode`) põe o destino na lista da
+origem (até 100; senão 4), recusa dá 2, 60 s sem resposta dá 3; `AddFriend_Re` (203) à origem e `FriendStatus` (214) ao
+destino. `DelFriend` 212/213, `SetFriendGroup` 210/211, `SetGroupName` 208/209 (nome ≤ 20 B, grupo ≠ 0, até 10; nome vazio
+apaga e devolve os amigos ao grupo 0). `GetFriends_Re` (207) com o `status` em **pares** `(índice, 1)` dos amigos online que
+também têm o jogador. Entrar avisa (214 com 1) os amigos online que o têm; sair avisa (214 com 0) os amigos online da lista
+dele. Lista de inimigos (`enemylist`) não modelada. **1.2.6:** mesmos opcodes assumidos (o `GetFriends` 206/207 já é igual);
+falta conferir no cliente 1.2.6.
+
+**Comandos de GM no link (B363, `crates/pw-link/src/gm.rs`, `testado` com o banco — `comandos_de_gm_no_link`):** o papel
+do `glinkd` + `gdeliveryd` para os GNET do console de GM, com os layouts do IR (iguais no `gnet_153` e no `gnet_155`):
+`GMOnlineNum` 350 → 351 (os online deste link), `GMKickoutRole` 360 → 361 (`forbid_time > 0` proíbe a entrada e
+derruba: `ErrorInfo(ERR_KICKOUT 32)` e fim da sessão pela variante interna `OutboundPacket::Derrubar`; `≤ 0` tira a
+proibição), `GMKickoutUser` 354 → 355 (o `kickuserid` é roleid; proíbe a **conta**), `GMShutupRole` 362 → 363 e
+`GMShutup` 356 → 357 (calam o personagem ou a conta: o chat dele responde `AnnounceForbidInfo` 123 com o tempo que
+falta e não é repassado) e `GMToggleChat` 364 → 365. A entrada (`EnterWorld`) de quem está proibido leva
+`AnnounceForbidInfo` (`FBD_FORBID_LOGIN` 100) e `ErrorInfo(ERR_ROLEFORBID 38)` (`playerlogin.cpp:26-35`). Privilégio:
+nível de GM da conta acima de zero (sem ele, ignorado, como o `PrivilegeCheck`). `falta`: gravar as proibições no
+banco (valem até o link reiniciar), `GMListOnlineUser` 352 e `GMForbidRole` 366.
 
 ## 5. Barramento `pw-link` ↔ `pw-gs` (`pw-bus`)
 

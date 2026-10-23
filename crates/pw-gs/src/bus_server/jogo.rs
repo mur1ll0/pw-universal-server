@@ -2176,7 +2176,8 @@ impl BusServer {
         };
         if let Some(p) = self.world.write().await.players.get_mut(&(roleid as i64)) {
             p.montaria = Some(montaria);
-            p.move_speed = velocidade;
+            // B363 — com o `Fastride` e a lentidão do `UpdateSpeed` montado.
+            (p.walk_speed, p.move_speed) = crate::entity::velocidade_montado(velocidade, &p.efeitos.realce());
         }
         info!(
             "mundo: {roleid} montou o pet {tid} (nível {}) a {velocidade:.2} m/s",
@@ -2685,6 +2686,7 @@ impl BusServer {
                         fator_de_exp: fator,
                         estado,
                         sujo: item.octets.is_empty(),
+                        sorteio: dados.sorteio_do_daimon(item.item_id),
                     })
                 });
             // B355 — `elf_item::OnTakeOut` → `ClearCurElfVigor` (`item_elf.cpp:402-410`): tirar (ou trocar) o Daimon
@@ -3455,14 +3457,25 @@ impl BusServer {
         let Some(dono) = dono else { return };
         let dono = dono as i32;
         let dados = self.world.read().await.data_manager.clone();
-        let nivel_do_dono = self
+        let abate = self
             .com_contexto(dono, |ctx| {
                 Self::com_motor(ctx, &dados, |m| {
                     m.abateu_monstro(tid, nivel_do_monstro.max(0) as u32)
                 });
-                ctx.p.level
+                // B363 — `if (_invader_state && level >= _basic.level) ReducePariah(PARIAH_TIME_REDUCE)`
+                // (`player.cpp:1359-1364`): o monstro de nível ≥ o seu tira 72 s do vermelho.
+                let avisos = if !ctx.p.pk.branco() && nivel_do_monstro >= ctx.p.level {
+                    ctx.p.pk.reduzir_paria(crate::pk::REDUCAO_POR_MONSTRO)
+                } else {
+                    Vec::new()
+                };
+                (ctx.p.level, avisos)
             })
             .await;
+        let nivel_do_dono = abate.as_ref().map(|a| a.0);
+        for aviso in abate.map(|a| a.1).unwrap_or_default() {
+            self.avisar_pk(dono, aviso).await;
+        }
 
         // `GM_MSG_KILL_MONSTER` → `_petman.KillMob` (`player.cpp:1375-1379`): o mascote ativo do
         // dono do abate ganha experiência.

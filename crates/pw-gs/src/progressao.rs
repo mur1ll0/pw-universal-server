@@ -398,20 +398,48 @@ pub const NIVEL_SEM_PERDA_AO_RENASCER: i32 = 9;
 /// experiência — `GetLvlupExp(nível) × GetResurrectExpReduce(cultivo)`, sem ficar negativa
 /// e zero no teto de nível. Devolve quanto perdeu.
 pub fn renascer(p: &mut PlayerEntity, dados: &GameDataManager, morto_por_jogador: bool) -> i64 {
-    p.hp = (p.max_hp as f32 * FATOR_DE_RENASCIMENTO + 0.5) as i32;
-    p.mp = (p.max_mp as f32 * FATOR_DE_RENASCIMENTO + 0.5) as i32;
-    p.combate_s = 0;
     // `if (pImp->_basic.level <= LOW_PROTECT_LEVEL) exp_reduce = 0.f` (`playercmd.cpp:697-699`,
     // `LOW_PROTECT_LEVEL` 9 em `gs/config.h:74`; `cmp word [+0xe4], 9` no `gs` 1.2.6, VA
     // 0x80cd2b4) — B155.
+    let base = if p.level <= NIVEL_SEM_PERDA_AO_RENASCER { 0.0 } else { dados.progressao.perda_na_morte(p.cultivation) };
+    renascer_com(p, dados, morto_por_jogador, base, FATOR_DE_RENASCIMENTO, FATOR_DE_RENASCIMENTO)
+}
+
+/// B363 — o reviver aceito (`C2S::RESURRECT_AT_ONCE`, `gs/playercmd.cpp:745-769`; o mesmo no
+/// `ZombieCommandHandler` do `gs` 1.2.6, VA 0x80cd3ef-0x80cd42d): a perda guardada pela habilidade
+/// vai para a escala do cultivo — `(perda / 0,05) × GetResurrectExpReduce(cultivo)` —, zero até o
+/// nível 9, e a vida e a mana são as do reviver.
+pub fn renascer_pelo_reviver(p: &mut PlayerEntity, dados: &GameDataManager, morto_por_jogador: bool) -> Option<i64> {
+    let r = p.reviver_por_outro;
+    if p.hp > 0 || !r.pronto {
+        return None;
+    }
+    let base = dados.progressao.perda_na_morte(p.cultivation);
+    let perda = if p.level <= NIVEL_SEM_PERDA_AO_RENASCER { 0.0 } else { (r.perda / 0.05) * base };
+    Some(renascer_com(p, dados, morto_por_jogador, perda, r.vida, r.mana))
+}
+
+/// `gplayer_imp::Resurrect(pos, nomove, exp_reduce, tag, hp_factor, mp_factor, …)`
+/// (`player.cpp:8716-8768`): vida e mana em `max × fator + 0,5`; a perda de experiência é
+/// `GetLvlupExp(nível) × exp_reduce`, com `exp_reduce × (100 − _resurrect_exp_lost_reduce) × 0,01`
+/// e zero se morto por jogador, sem ficar negativa e zero no teto de nível. Devolve quanto perdeu.
+pub fn renascer_com(
+    p: &mut PlayerEntity,
+    dados: &GameDataManager,
+    morto_por_jogador: bool,
+    exp_reduce: f32,
+    fator_vida: f32,
+    fator_mana: f32,
+) -> i64 {
+    p.hp = (p.max_hp as f32 * fator_vida + 0.5) as i32;
+    p.mp = (p.max_mp as f32 * fator_mana + 0.5) as i32;
+    p.combate_s = 0;
     // B330 — `exp_reduce × (100 − _resurrect_exp_lost_reduce) × 0,01f` (`player.cpp:8718`), das passivas
     // `Reduceresurrectexplost`.
-    let reducao = if morto_por_jogador || p.level <= NIVEL_SEM_PERDA_AO_RENASCER {
+    let reducao = if morto_por_jogador {
         0.0
     } else {
-        dados.progressao.perda_na_morte(p.cultivation)
-            * (100 - p.passivas_comuns.reducao_da_perda_ao_renascer) as f32
-            * 0.01
+        exp_reduce * (100 - p.passivas_comuns.reducao_da_perda_ao_renascer) as f32 * 0.01
     };
     let exp_do_nivel = dados.progressao.exp_para_subir(p.level);
     let perda = (exp_do_nivel as f32 * reducao + 0.5) as i64;

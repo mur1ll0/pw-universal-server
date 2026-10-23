@@ -90,7 +90,11 @@ pub struct LinkGateway {
     /// que hoje só ecoa pro remetente — ver `InboundPacket::PlayerMove`). Migrar isto
     /// pra dentro do `pw-gs`, reaproveitando a grade espacial que já existe pra
     /// NPC/monstro, é o passo natural quando a população justificar o custo.
-    jogadores_visiveis: RwLock<HashMap<i32, EnvioAoCliente>>,
+    pub(crate) jogadores_visiveis: RwLock<HashMap<i32, EnvioAoCliente>>,
+    /// B363 — os comandos de GM (calados, proibidos de entrar, GMs silenciosos): `crate::gm`.
+    pub(crate) gm: crate::gm::EstadoDeGm,
+    /// B363 — a amizade: quem está online e os pedidos pendentes (`crate::amizade`).
+    pub(crate) amizades: crate::amizade::Amizades,
 }
 
 impl LinkGateway {
@@ -188,6 +192,8 @@ impl LinkGateway {
             uplink: None,
             uplinks_por_mundo: HashMap::new(),
             jogadores_visiveis: RwLock::new(HashMap::new()),
+            gm: crate::gm::EstadoDeGm::default(),
+            amizades: crate::amizade::Amizades::default(),
         }
     }
 
@@ -451,6 +457,12 @@ impl LinkGateway {
                         self.trocar_de_servidor(&tx, &mut session, roleid, localsid, de, mundo, chave).await;
                         continue;
                     }
+                    // B363 — `GLinkServer::SessionError`: `ErrorInfo` e fim da sessão.
+                    if let OutboundPacket::Derrubar { codigo, info } = out_pkt {
+                        info!("Sessão #{} derrubada por GM (erro {codigo})", session_id);
+                        let _ = framed.send(OutboundPacket::ErrorInfo(S2CErrorInfo::new(codigo, &info))).await;
+                        break;
+                    }
                     if let Err(e) = framed.send(out_pkt).await {
                         warn!("Erro ao enviar pacote para Sessão #{}: {:?}", session_id, e);
                         break;
@@ -502,6 +514,7 @@ impl LinkGateway {
         // no `PlayerLogout` que o `uplink.enviar` acima acabou de mandar).
         if let Some(roleid) = session.role_id {
             self.jogadores_visiveis.write().await.remove(&roleid);
+            self.amizade_ao_sair(roleid).await;
         }
 
         info!("Sessão #{} ({}) finalizada.", session_id, client_ip);
@@ -862,6 +875,16 @@ impl LinkGateway {
                 );
 
                 let acc_id = session.account_id.unwrap_or(0);
+                // B363 — `PlayerLogin::PermitLogin` (`playerlogin.cpp:26-35`): proibido pelo GM, `AnnounceForbidInfo`
+                // (`FBD_FORBID_LOGIN` 100) e a entrada recusada (`ERR_ROLEFORBID` 38).
+                if self.gm.sem_entrar(Some(enter_world.role_id), session.account_id.map(|c| c as i64)).await {
+                    let _ = tx.try_send(OutboundPacket::Raw {
+                        opcode: crate::gm::OP_ANNOUNCE_FORBID_INFO,
+                        payload: crate::gm::announce_forbid_info(enter_world.role_id, 100, 0, b""),
+                    });
+                    tx.send(OutboundPacket::ErrorInfo(S2CErrorInfo::new(38, "Role forbidden."))).await?;
+                    return Ok(());
+                }
                 let char_details_opt = self
                     .char_repo
                     .get_details(enter_world.role_id, acc_id, &self.realm_id)
@@ -1151,6 +1174,17 @@ impl LinkGateway {
                         .write()
                         .await
                         .insert(details.id, tx.clone());
+                    // B363 — online para a amizade, com o aviso aos amigos.
+                    self.amizade_ao_entrar(
+                        details.id,
+                        crate::amizade::Presenca {
+                            envio: tx.clone(),
+                            localsid: session.localsid,
+                            nome: details.name.clone(),
+                            classe: details.cls as u8 as i8,
+                        },
+                    )
+                    .await;
 
                     // GetUIConfig_Re — envio proativo, protegido por `session.ui_config_enviado`.
                     //
@@ -1514,15 +1548,21 @@ impl LinkGateway {
             }
 
             InboundPacket::GetFriendList(req) => {
-                // Listas vazias por enquanto — o que importa aqui é a forma do pacote
-                // estar certa; a lista de amigos ainda não vem do armazenamento.
-                tx.send(OutboundPacket::GetFriendListRe(S2CGetFriendListRe {
-                    role_id: req.role_id,
-                    groups: Vec::new(),
-                    friends: Vec::new(),
-                    status: Vec::new(),
-                    localsid: req.localsid,
-                })).await?;
+                // B363 — a lista do banco (`GetFriends::Process`, `cnet/gdeliveryd/getfriends.hpp`); de
+                // outro personagem que não o da sessão, vazia.
+                let mut re = if session.role_id == Some(req.role_id) {
+                    self.amizade_lista(req.role_id).await
+                } else {
+                    S2CGetFriendListRe {
+                        role_id: req.role_id,
+                        groups: Vec::new(),
+                        friends: Vec::new(),
+                        status: Vec::new(),
+                        localsid: 0,
+                    }
+                };
+                re.localsid = req.localsid;
+                tx.send(OutboundPacket::GetFriendListRe(re)).await?;
             }
 
             InboundPacket::GetWaitDelRoles(req) => {
@@ -1599,6 +1639,17 @@ impl LinkGateway {
             }
 
             InboundPacket::PlayerChat(chat_pkt) => {
+                // B363 — `IsForbidChat` (`publicchat.hpp`): calado pelo GM, o `AnnounceForbidInfo` com o tempo que falta
+                // e nada mais.
+                if let Some(roleid) = session.role_id {
+                    if let Some(p) = self.gm.calado(roleid, session.account_id.map(|c| c as i64)).await {
+                        let _ = tx.try_send(OutboundPacket::Raw {
+                            opcode: crate::gm::OP_ANNOUNCE_FORBID_INFO,
+                            payload: crate::gm::announce_forbid_info(roleid, crate::gm::PRV_FORBID_TALK, p.falta_s(), &p.motivo),
+                        });
+                        return Ok(());
+                    }
+                }
                 info!(
                     "Chat [Canal {}] de Sessão #{}: {}",
                     chat_pkt.channel, session.session_id, chat_pkt.message
@@ -1633,6 +1684,14 @@ impl LinkGateway {
             }
 
             InboundPacket::Unknown { opcode, payload } => {
+                if self.gm_pacote(session, tx, opcode, &payload).await {
+                    return Ok(());
+                }
+                if let Some(roleid) = session.role_id {
+                    if self.amizade_pacote(roleid, tx, opcode, &payload).await {
+                        return Ok(());
+                    }
+                }
                 debug!("Pacote bruto recebido (Opcode: 0x{:X}, {} bytes) na Sessão #{}", opcode, payload.len(), session.session_id);
             }
         }

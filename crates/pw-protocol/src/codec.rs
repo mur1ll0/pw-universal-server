@@ -70,6 +70,9 @@ pub enum OutboundPacket {
     /// B350 — **interno do link**, nunca vai ao fio: o servidor de mundo pediu a troca desta sessão para o servidor do
     /// mapa `mundo` (`SwitchServerStart`). O laço da sessão o intercepta.
     TrocaDeServidor { roleid: i32, localsid: u32, de: i32, mundo: i32, chave: Vec<u8> },
+    /// B363 — **interno do link**: um GM derrubou esta sessão (`KickoutUser` → `SessionError`). O laço manda o
+    /// `ErrorInfo(codigo, info)` e fecha.
+    Derrubar { codigo: i32, info: String },
 }
 
 /// Codec de framing e decodificação do protocolo de rede do Perfect World
@@ -342,7 +345,7 @@ impl Encoder<OutboundPacket> for PwPacketCodec {
                 (OP_S2C_CHAT_BROADCAST, ps.into_bytes())
             }
             OutboundPacket::Raw { opcode, payload } => (opcode, bytes::Bytes::from(payload)),
-            OutboundPacket::TrocaDeServidor { .. } => return Ok(()),
+            OutboundPacket::TrocaDeServidor { .. } | OutboundPacket::Derrubar { .. } => return Ok(()),
         };
 
         // Instrumentação temporária (2026-09-05, investigação de visibilidade/sincronismo

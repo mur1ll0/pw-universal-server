@@ -69,6 +69,15 @@ pub struct HabilidadeDoServidor {
     /// são **5**, todas da classe 11 (2909, 2910, 2913, 2914, 2917).
     #[serde(default)]
     pub is_movingcast: Option<i32>,
+    /// `restrict_corpse` do stub (`cskill/skill/skill.h:254`). Com **1** o alvo precisa estar
+    /// morto: `PlayerWrapper::GetInrange(range, correction, type)` recusa alvo vivo
+    /// (`if (type == 1 && ret != 2) return false`, `playerwrapper.cpp:584-600`) e o encanto vai
+    /// por `EnchantZombie` (`:426-427`), que o jogador morto aceita só se for amigável
+    /// (`GM_MSG_ENCHANT_ZOMBIE`, `player.cpp:1000-1014`). São as de reviver — 14, 18, 548 e 549
+    /// nas duas versões (no 1.2.6 o byte +0x47 do construtor, `extrair_habilidades_126.py`).
+    /// O 2 (187, 328) não é consultado no servidor.
+    #[serde(default)]
+    pub restrict_corpse: Option<i32>,
     /// `allow_forms` do stub (`cskill/skill/skill.h:257`): máscara das formas em que a
     /// habilidade pode ser lançada. `SkillStub::Condition` recusa com
     /// `(allow_forms & (1 << GetForm())) == 0` (`cskill/skill/skill.cpp:128`): 1 = só a forma
@@ -197,6 +206,11 @@ impl HabilidadeDoServidor {
     /// A habilidade pode ser conjurada andando.
     pub fn conjura_andando(&self) -> bool {
         self.is_movingcast.unwrap_or(0) != 0
+    }
+
+    /// Só pega alvo morto (`restrict_corpse == 1`): as habilidades de reviver.
+    pub fn so_em_morto(&self) -> bool {
+        self.restrict_corpse == Some(1)
     }
 
     /// `(allow_forms & (1 << forma)) != 0` (`cskill/skill/skill.cpp:128`), com `forma` o
@@ -457,6 +471,7 @@ mod tests {
             daimon: None,
             apgain: None,
             is_movingcast: None,
+            restrict_corpse: None,
             allow_forms: None,
             execucao_ms: None,
             recarga_ms: Some(vec![2500]),

@@ -124,6 +124,17 @@ impl BusServer {
         }
     }
 
+    /// B363 — `C2S::RESURRECT_AT_ONCE` (87, `REVIVAL_AGREE` no cliente; `gs/playercmd.cpp:745-769`):
+    /// sem reviver pronto, nada; com ele, `Resurrect(pos, nomove = true, …)` — renasce no lugar e
+    /// entra na proteção de 5 s como o pergaminho.
+    pub(super) async fn aceitar_reviver(&self, roleid: i32) {
+        let Some(r) = self.world.write().await.reviver_pelo_outro(roleid) else {
+            debug!("mundo: {roleid} aceitou um reviver que não estava pronto");
+            return;
+        };
+        self.proteger_ao_renascer(roleid, r.destino).await;
+    }
+
     /// `session_resurrect_protect` (`actsession.cpp:1480-1503`): `PLAYER_REVIVAL` 1, 5 s de
     /// `invincible_banish_filter` (estado visível 49) e `PLAYER_REVIVAL` 2 ao fim.
     async fn proteger_ao_renascer(&self, roleid: i32, pos: pw_core::Vector3) {
