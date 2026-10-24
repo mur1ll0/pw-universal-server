@@ -914,6 +914,37 @@ impl BusServer {
         let Some(i) = itens.into_iter().find(|i| i.slot == slot) else {
             return serde_json::json!({"codigo":"slot_vazio"});
         };
+        self.detalhe_de_registro(i).await
+    }
+
+    /// Estúdio (B373): um item do modelo `tid` como se tivesse caído agora — octetos gerados pela mesma geração do drop
+    /// (`economia::Bolsa::empilhar_gerado_de` com `Geracao::Drop`: voo pelo molde, roupa com cor sorteada, ovo, e
+    /// equipamento por `geracao::gerar_equipamento_de`) — e descrito como a dica de um slot. Não grava nada.
+    pub(crate) async fn item_de_exemplo(&self, tid: u32) -> serde_json::Value {
+        let dados = self.world.read().await.data_manager.clone();
+        if !dados.nomes_de_itens.contains_key(&tid) {
+            return serde_json::json!({"codigo":"item_inexistente"});
+        }
+        let octetos = if let Some(o) = dados.conteudo_do_item_de_voo(tid) {
+            o
+        } else if dados.conteudo_da_roupa(tid, 0).is_some() {
+            dados.conteudo_da_roupa(tid, crate::geracao::rand_normal(0, 0x7fff) as u16).unwrap_or_default()
+        } else if let Some(o) = dados.gerar_octetos_do_ovo(tid) {
+            o
+        } else if let Some(c) = crate::geracao::gerar_equipamento_de(&dados, tid, crate::geracao::Geracao::Drop) {
+            c.escrever()
+        } else {
+            Vec::new()
+        };
+        let mut r = pw_core::ItemRecord::new(0, ContainerType::Inventory, 0, tid, 1);
+        r.octets = octetos;
+        let mut j = self.detalhe_de_registro(r).await;
+        j["exemplo"] = serde_json::json!(true);
+        j
+    }
+
+    /// A dica de um registro de item (B189), separada do slot para servir também ao item de exemplo (B373).
+    pub(crate) async fn detalhe_de_registro(&self, i: pw_core::ItemRecord) -> serde_json::Value {
         let dados = self.world.read().await.data_manager.clone();
         let nome = |t: u32| dados.nomes_de_itens.get(&t).cloned().unwrap_or_default();
         let mut j = serde_json::json!({

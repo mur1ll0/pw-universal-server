@@ -17,6 +17,7 @@
     editores: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
     refino: "M12 19V5M5 12l7-7 7 7",
     check: "M5 12l5 5 9-10",
+    olho: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
   };
   let { nome, tamanho = 20 }: { nome: string; tamanho?: number } = $props();
 </script>

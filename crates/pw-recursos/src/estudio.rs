@@ -3499,6 +3499,29 @@ impl Estudio {
         .await
     }
 
+    /// B373: troca a animação-base de uma ação combinada do `.ecm` (`pw_data_loader::ecm::trocar_base`), conferindo que a
+    /// base existe no `.smd` do modelo (lido com o rascunho). Item `cliente`.
+    pub async fn trocar_base_da_acao(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, acao: String, base: String) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+        // O `.smd` citado pelo `.ecm` é caminho do cliente, como na ficha (`admin.rs`, `bases_do_smd`).
+        let smd = ecm.smd.clone();
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if !c.lista_de_acoes.iter().any(|a| a.nome == base) {
+            bail!("a ação-base {base} não existe no {smd}");
+        }
+        self.alterar_item_do_cliente(gov, versao, caminho, rascunho, move |b| {
+            let antes = pw_data_loader::ecm::ler(b).and_then(|e| e.acoes.into_iter().find(|a| a.nome == acao)).map(|a| a.bases).unwrap_or_default();
+            let novo = pw_data_loader::ecm::trocar_base(b, &acao, &base).map_err(anyhow::Error::msg)?;
+            pw_data_loader::ecm::ler(&novo).context("o .ecm editado não relê")?;
+            let mudanca = json!({ "acao": "base_trocada", "tipo": "acao_combinada", "nome": acao, "antes": antes, "depois": [base] });
+            Ok((novo, json!({ "nome": acao }), mudanca))
+        })
+        .await
+    }
+
     /// B290 (S6): substitui a pele `destino` (`.ski` do cliente) pelo glTF `glb` (`pw_data_loader::importar::ski_do_glb`),
     /// com os ossos casados pelo nome no esqueleto do `.smd` `smd` (lido com o rascunho). Devolve o relatório.
     pub async fn importar_pele(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, destino: &str, glb: Vec<u8>) -> Result<Value> {

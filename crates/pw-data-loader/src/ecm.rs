@@ -201,6 +201,34 @@ pub fn clonar_acao(b: &[u8], origem: &str, nova: &str, base: Option<&str>) -> Re
     Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
 }
 
+/// B373: troca a animação-base da ação combinada `acao` (a linha `BaseActName:` do bloco) por `base` — o que o monstro
+/// executa naquela ação (parado, andar, atacar, morrer…). Só para ação com exatamente uma ação-base (a de várias é uma
+/// sequência: edita-se nos Editores); texto fora do GBK é recusado. O resto do arquivo fica byte a byte igual, e o
+/// tamanho só muda pela diferença dos nomes.
+pub fn trocar_base(b: &[u8], acao: &str, base: &str) -> Result<Vec<u8>, String> {
+    if base.is_empty() || base.contains(['\r', '\n']) {
+        return Err("nome de ação-base inválido".into());
+    }
+    let (base_b, _, erro) = encoding_rs::GBK.encode(base);
+    if erro {
+        return Err(format!("\"{base}\" tem caracteres que não existem em GBK"));
+    }
+    let marca = b.starts_with(b"MOXT");
+    let corpo = if marca { &b[4..] } else { b };
+    let l = linhas_com_fim(corpo);
+    let (_, bl) = blocos(&l).ok_or("estrutura de ações não reconhecida")?;
+    let &(_, ini, fim) = bl.iter().find(|x| x.0 == acao).ok_or_else(|| format!("a ação {acao} não existe"))?;
+    let linhas: Vec<usize> = (ini..fim).filter(|&i| l[i].starts_with(b"BaseActName: ")).collect();
+    if linhas.len() != 1 {
+        return Err(format!("a ação {acao} tem {} ações-base; trocar só com uma", linhas.len()));
+    }
+    let i = linhas[0];
+    let fl: &[u8] = if l[i].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut saida: Vec<Vec<u8>> = l.iter().map(|x| x.to_vec()).collect();
+    saida[i] = [b"BaseActName: ".as_slice(), &base_b, fl].concat();
+    Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
+}
+
 /// Copia a ação combinada `origem` do `.ecm` `fonte` para o `.ecm` `destino` com o nome `nova` (B285), depois da última
 /// ação dele, e soma 1 no `ComActCount`. Só entre arquivos da mesma `Version`: os campos do bloco variam com ela
 /// (`A3DCombinedAction::Load(pFile, dwVersion)`, `GfxCommon/A3DCombinedAction.cpp:142-…`). Os fins de linha do bloco
@@ -394,6 +422,41 @@ pub fn diagnostico_de_voo(
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// B373: em todos os `.ecm` do cliente, trocar a base da 1ª ação de base única por outra nome relê com a base nova,
+    /// as outras ações iguais, e o arquivo só difere naquela linha.
+    #[test]
+    fn trocar_base_em_todo_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut trocados = 0usize;
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ecm")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Some(antes) = ler(&b) else { continue };
+                let Some((k, a)) = antes.acoes.iter().enumerate().find(|(_, a)| a.bases.len() == 1) else { continue };
+                let novo = trocar_base(&b, &a.nome, "测试基础").unwrap_or_else(|x| panic!("{}: {x}", p.display()));
+                let depois = ler(&novo).unwrap();
+                assert_eq!(depois.acoes.len(), antes.acoes.len());
+                assert_eq!(depois.acoes[k].bases, vec!["测试基础".to_string()], "{}", p.display());
+                for (j, (x, y)) in antes.acoes.iter().zip(&depois.acoes).enumerate() {
+                    if j != k { assert_eq!(x.bases, y.bases); }
+                }
+                let volta = trocar_base(&novo, &a.nome, &a.bases[0]).unwrap();
+                assert_eq!(volta, b, "ida e volta byte a byte: {}", p.display());
+                trocados += 1;
+            }
+        }
+        eprintln!("ecm: base trocada e desfeita em {trocados} arquivos");
+        assert!(trocados > 0);
+    }
 
     /// B280: em todos os `.ecm` do cliente, os blocos achados batem com o `ComActCount` e terminam onde devem; clonar a
     /// 1ª ação de cada arquivo relê com uma ação a mais, as outras iguais.

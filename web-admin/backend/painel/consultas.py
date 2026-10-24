@@ -99,6 +99,21 @@ def registrar_consultas(app):
         return {"realm_id": realm_id, "personagem_id": personagem_id, "sexo": "f" if genero else "m",
                 "recipientes": dados.get("recipientes", {})}
 
+    @app.get("/api/realms/{realm_id}/itens/{item_id}/exemplo")
+    async def dica_de_exemplo(realm_id: str, requisicao: Request, item_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """B373: a dica de um item do modelo `item_id` como se tivesse caído agora — o GS gera os octetos pela geração
+        do drop (`item_de_exemplo`) sem gravar, e a dica é a mesma da tela de personagem."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "item_de_exemplo", "item_id": item_id})
+        if dados.get("codigo"):
+            raise HTTPException(404 if dados["codigo"] == "item_inexistente" else 503, dados["codigo"])
+        async with app.state.seguranca.pool.acquire() as conexao:
+            versao = await conexao.fetchval("SELECT version FROM realms WHERE id=$1", realm_id)
+        try:
+            linhas = linhas_da_dica(dados, versao=versao)
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        return {"realm_id": realm_id, "item": dados, "linhas": linhas}
+
     @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/itens/{recipiente}/{slot}/dica")
     async def dica_do_item(realm_id: str, requisicao: Request,
                            personagem_id: int = Path(..., ge=1, le=2_147_483_647),

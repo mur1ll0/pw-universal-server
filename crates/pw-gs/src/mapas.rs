@@ -1445,6 +1445,14 @@ impl RoteadorDeMapas {
         }
     }
 
+    /// Estúdio (B373): o item `tid` gerado como drop, para a prévia (não grava).
+    pub async fn item_de_exemplo(&self, tid: u32) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.item_de_exemplo(tid).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
     /// Painel (B209): como os efeitos pedidos entram na peça `item_id` (dados do realm).
     pub async fn efeitos_para_item(&self, item_id: u32, ids: &[u32]) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {

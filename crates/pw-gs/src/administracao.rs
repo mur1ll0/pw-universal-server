@@ -138,6 +138,8 @@ pub enum Consulta {
     EfeitosParaItem { item_id: u32, ids: Vec<u32> },
     /// O item de um slot com os dados da dica (E6, B189). Só leitura.
     DetalheItem { personagem_id: i32, recipiente: String, slot: u16 },
+    /// B373: o item do modelo como se tivesse caído agora (prévia do Estúdio), sem gravar.
+    ItemDeExemplo { item_id: u32 },
 }
 
 /// Teto de uma edição de dinheiro/EXP pelo painel: cabe no `u32`/`i32` dos pacotes
@@ -518,6 +520,9 @@ impl ServidorAdministrativo {
                             Some(r) => self.roteador.detalhe_do_item(personagem_id, r, slot).await,
                             None => json!({"codigo":"recipiente_invalido"}),
                         }
+                    }
+                    Consulta::ItemDeExemplo { item_id } if item_id > 0 => {
+                        self.roteador.item_de_exemplo(item_id).await
                     }
                     Consulta::EfeitosParaItem { item_id, ids } if ids.len() <= 200 => {
                         self.roteador.efeitos_para_item(item_id, &ids).await

@@ -792,6 +792,16 @@ def registrar_reinicio(app):
                                "habilidades": ids, "politica": politica if politica and politica > 0 else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
+    # B373: trocar a animação-base de uma ação combinada do .ecm (o que o monstro executa parado, andando, atacando…).
+    @app.post("/api/realms/{realm}/estudio/modelos/base")
+    async def estudio_trocar_base(realm: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        d = await requisicao.json()
+        if not all(isinstance(d.get(k), str) and d.get(k) and len(d[k]) <= 500 for k in ("caminho", "acao", "base")):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/modelos/base", {"rascunho": rascunho},
+                               dados={k: d[k] for k in ("caminho", "acao", "base")})
+
     @app.post("/api/realms/{realm}/estudio/modelos/acao")
     async def estudio_acao_nova(realm: str, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
@@ -856,9 +866,12 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/doadores", {"caminho": caminho[:500], "acao": acao[:200]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/glb")
-    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None):
+    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None,
+                                 rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb", {"caminho": caminho[:500], "acao": acao[:200] if acao else None})
+        # B374: com o rascunho, o GLB mostra os arquivos de modelo dele (ex.: o modelo importado de um GLB).
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb",
+                               {"caminho": caminho[:500], "acao": acao[:200] if acao else None, "rascunho": rascunho})
 
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")

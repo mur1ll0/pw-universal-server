@@ -155,7 +155,7 @@ export const definirTexto = (arquivo: string, chave: number, texto: string) =>
 export const novoTexto = (arquivo: string, id: number, texto: string) =>
   api(rota(`textos/${arquivo}`), { method: "POST", body: JSON.stringify({ id, texto }) });
 
-export const rotaDoGlb = (caminho: string) => rota("modelos/glb", { caminho }, false);
+export const rotaDoGlb = (caminho: string, acao?: string) => rota("modelos/glb", acao ? { caminho, acao } : { caminho });
 
 /** Ícone do item: o `file_icon` em bytes GBK, em hexadecimal (B188). */
 export const urlDoIcone = (hex: string | null | undefined) => (hex ? `/api/icones/m/${hex}.png` : "");
@@ -248,3 +248,39 @@ export const urlDaPeca = (caminho: string, peca: string) =>
 
 /** Ponto (centro) e tamanho da área de um spawner, em unidades do mundo (`vPos_x/z`, `vExts_x/z`). */
 export interface EscolhaNoMapa { x: number; z: number; largura: number; altura: number }
+
+/* ---- B373: modelo e ações do monstro (rotas dos Editores, B272-B300; `modelos/base` nova) ---- */
+export interface FichaDoModelo {
+  tipo: string; smd: string; smd_lido: boolean; versao: number;
+  combinadas: { nome: string; bases: string[]; bases_ausentes: string[]; filhas: unknown[] }[];
+  bases_do_smd: string[] | null;
+  diagnostico_de_monstro: { indice: number; pedido: string; estado: string; alternativa: string | null }[] | null;
+}
+export const fichaDoModelo = (caminho: string, extra: Record<string, string> = {}) =>
+  api<FichaDoModelo>(rota("modelos/ficha", { caminho, ...extra }));
+export const trocarBase = (caminho: string, acao: string, base: string) =>
+  api(rota("modelos/base"), { method: "POST", body: JSON.stringify({ caminho, acao, base }) });
+export const acaoNova = (caminho: string, origem: string, nova: string, base?: string) =>
+  api(rota("modelos/acao"), { method: "POST", body: JSON.stringify(base ? { caminho, origem, nova, base } : { caminho, origem, nova }) });
+/** Animações do glTF (Blender) como ações do .smd (`acoes_glb`, B295). */
+export async function importarAcoesGlb(smd: string, glb: ArrayBuffer) {
+  const r = await fetch(rota("modelos/acoes_glb", { smd }), {
+    method: "POST", credentials: "same-origin", body: glb,
+    headers: { "Content-Type": "application/octet-stream", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new ErroDaApi(d?.mensagem || d?.detail || `HTTP ${r.status}`, r.status);
+  return d;
+}
+
+/** B374: um modelo inteiro (esqueleto, pele, texturas, animações, .smd e .ecm) a partir de um GLB, em `<pasta>\<título>.*`
+    (`modelos/novo`, B298/B299); `molde` = o .ecm de onde o novo herda o cabeçalho e as ações. */
+export async function importarModeloGlb(pasta: string, titulo: string, molde: string, glb: ArrayBuffer) {
+  const r = await fetch(rota("modelos/novo", molde ? { pasta, titulo, molde } : { pasta, titulo }), {
+    method: "POST", credentials: "same-origin", body: glb,
+    headers: { "Content-Type": "application/octet-stream", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new ErroDaApi(d?.mensagem || d?.detail || `HTTP ${r.status}`, r.status);
+  return d;
+}

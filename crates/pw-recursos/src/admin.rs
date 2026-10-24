@@ -283,22 +283,60 @@ fn ao_lado(caminho: &str, nome: &str) -> String {
 
 /// O modelo (`.smd`): a cabeça, as peles lidas (caminho e `.ski`) e o esqueleto (`Ok(.bon)`, ou o motivo de não ter).
 #[allow(clippy::type_complexity)]
+/// B374: arquivos de modelo do rascunho (caminho em minúsculas → nome e bytes), lidos antes do publicado — para o GLB
+/// mostrar um modelo que só existe no rascunho (ex.: o importado de um GLB, `modelos/novo`).
+type DoRascunho = std::collections::HashMap<String, (String, Vec<u8>)>;
+
+fn conteudo_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str) -> anyhow::Result<(String, Vec<u8>)> {
+    if let Some(x) = r.and_then(|m| m.get(&caminho.to_lowercase())) {
+        return Ok(x.clone());
+    }
+    e.gov.conteudo(v, caminho)
+}
+
+async fn arquivos_de_modelo_do_rascunho(e: &Estado, v: &str, rascunho: i64) -> Result<DoRascunho, Erro> {
+    e.gov.rascunho_da_versao(v, rascunho).await?;
+    let itens = e.gov.repo.itens(rascunho).await.map_err(anyhow::Error::from)?;
+    let objetos = e.gov.objetos(v);
+    let ext = ["ecm", "smd", "ski", "bon", "stck", "dds", "tga", "png", "bmp", "jpg"];
+    let mut m = DoRascunho::new();
+    for i in itens {
+        let nome = nomes::legivel(&i.caminho);
+        let baixo = nome.to_lowercase();
+        if !baixo.rsplit_once('.').is_some_and(|(_, x)| ext.contains(&x)) {
+            continue;
+        }
+        let Some(sha) = i.sha256_depois.clone() else { continue };
+        let Ok(sha): Result<crate::objetos::Sha256Bytes, _> = sha.try_into() else { continue };
+        let t = i.tamanho.unwrap_or(0) as usize;
+        let o = objetos.clone();
+        if let Ok(Ok(b)) = tokio::task::spawn_blocking(move || o.ler(&sha, t)).await {
+            m.insert(baixo, (nome, b));
+        }
+    }
+    Ok(m)
+}
+
 fn ler_smd(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader::smd::CabecaDoSmd, Vec<(String, Result<pw_data_loader::ski::Ski, String>)>, Result<pw_data_loader::bon::Bon, String>), Erro> {
-    let (nome, dados) = e.gov.conteudo(v, caminho)?;
+    ler_smd_de(e, v, None, caminho)
+}
+
+fn ler_smd_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str) -> Result<(String, pw_data_loader::smd::CabecaDoSmd, Vec<(String, Result<pw_data_loader::ski::Ski, String>)>, Result<pw_data_loader::bon::Bon, String>), Erro> {
+    let (nome, dados) = conteudo_de(e, v, r, caminho)?;
     let c = pw_data_loader::smd::cabeca(&dados).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{nome}: {x}")))?;
     let peles = c
         .peles
         .iter()
         .map(|p| {
             let cp = ao_lado(&nome, p);
-            let s = e.gov.conteudo(v, &cp).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::ski::Ski::ler(&b).map_err(|x| x.to_string()));
+            let s = conteudo_de(e, v, r, &cp).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::ski::Ski::ler(&b).map_err(|x| x.to_string()));
             (cp, s)
         })
         .collect();
     let esqueleto = if c.esqueleto.is_empty() {
         Err("o modelo não cita esqueleto".to_string())
     } else {
-        e.gov.conteudo(v, &ao_lado(&nome, &c.esqueleto)).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::bon::Bon::ler(&b).map_err(|x| x.to_string()))
+        conteudo_de(e, v, r, &ao_lado(&nome, &c.esqueleto)).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::bon::Bon::ler(&b).map_err(|x| x.to_string()))
     };
     Ok((nome, c, peles, esqueleto))
 }
@@ -315,11 +353,15 @@ fn ler_ski(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader
 /// Onde o cliente acha a textura `nome` do `.ski` em `caminho` (`A3DSkin::Load`, `A3DSkin.cpp`: primeiro
 /// `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>`). Devolve o caminho e os bytes.
 fn achar_textura(e: &Estado, v: &str, caminho: &str, nome: &str) -> Option<(String, Vec<u8>)> {
+    achar_textura_de(e, v, None, caminho, nome)
+}
+
+fn achar_textura_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str, nome: &str) -> Option<(String, Vec<u8>)> {
     let (pasta, arquivo) = caminho.rsplit_once('\\')?;
     let titulo = arquivo.rsplit_once('.').map_or(arquivo, |x| x.0);
     [format!("{pasta}\\Textures\\{nome}"), format!("{pasta}\\Tex_{titulo}\\{nome}")]
         .into_iter()
-        .find_map(|c| e.gov.conteudo(v, &c).ok())
+        .find_map(|c| conteudo_de(e, v, r, &c).ok())
 }
 
 /// A textura em PNG (para o GLB), pelo decodificador do `pw-data-loader` (DDS DXT1/3/5, RGBA, TGA).
@@ -343,13 +385,16 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
     if q.caminho.to_lowercase().ends_with(".ecm") {
         // B277: o modelo do jogo — o .smd, as ações combinadas e o diagnóstico de monstro (os nomes que o cliente pede,
         // `pw_data_loader::ecm::pedidos_de_monstro`, pela tabela `configs\actions_npc.txt` do próprio cliente).
-        let (nome, mut dados) = e.gov.conteudo(&v, &q.caminho)?;
-        if let Some(r) = q.rascunho {
-            dados = e.estudio.bytes_do_cliente(&e.gov, &v, &q.caminho, Some(r)).await?;
-        }
+        // B374: com o rascunho, os arquivos de modelo dele valem antes do publicado (o .ecm e o .smd podem só existir nele).
+        let do_rascunho = match q.rascunho {
+            Some(r) => Some(arquivos_de_modelo_do_rascunho(&e, &v, r).await?),
+            None => None,
+        };
+        let rr = do_rascunho.as_ref();
+        let (nome, dados) = conteudo_de(&e, &v, rr, &q.caminho)?;
         let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome}: .ecm ilegível")))?;
-        let bases_do_smd: Option<Vec<String>> = e.gov.conteudo(&v, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
-        let smd_caminho = e.gov.conteudo(&v, &m.smd).ok().map(|(n, _)| n);
+        let bases_do_smd: Option<Vec<String>> = conteudo_de(&e, &v, rr, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
+        let smd_caminho = conteudo_de(&e, &v, rr, &m.smd).ok().map(|(n, _)| n);
         let combinadas: Vec<Value> = m.acoes.iter().map(|a| {
             let faltam: Vec<&String> = bases_do_smd.as_ref().map_or(vec![], |b| a.bases.iter().filter(|x| !b.contains(x)).collect());
             json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam, "filhas": a.filhas })
@@ -475,10 +520,17 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
 struct QModelo {
     caminho: String,
     acao: Option<String>,
+    /// B374: com o rascunho, os arquivos de modelo dele valem antes do publicado.
+    rascunho: Option<i64>,
 }
 
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModelo>) -> R<Response> {
     validar(&v)?;
+    let do_rascunho = match q.rascunho {
+        Some(r) => Some(arquivos_de_modelo_do_rascunho(&e, &v, r).await?),
+        None => None,
+    };
+    let rr = do_rascunho.as_ref();
     let ext = q.caminho.to_lowercase();
     if ext.ends_with(".smd") || ext.ends_with(".ecm") {
         // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
@@ -486,10 +538,10 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
         // as peles do `.smd` (`LSF_NOSKIN`) e a pele `<.ecm com extensão .ski>`; sem ela, as `AddiSkinPath`
         // (`"Models\" + caminho`, `EC_Model.cpp:678-689`) e, por fim, as do `.smd`.
         let (nome, cabeca, peles, esqueleto) = if ext.ends_with(".ecm") {
-            let (nome_ecm, dados) = e.gov.conteudo(&v, &q.caminho)?;
+            let (nome_ecm, dados) = conteudo_de(&e, &v, rr, &q.caminho)?;
             let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome_ecm}: .ecm ilegível")))?;
-            let (_, cabeca, peles_do_smd, esqueleto) = ler_smd(&e, &v, &m.smd)?;
-            let ler_pele = |c: &str| e.gov.conteudo(&v, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
+            let (_, cabeca, peles_do_smd, esqueleto) = ler_smd_de(&e, &v, rr, &m.smd)?;
+            let ler_pele = |c: &str| conteudo_de(&e, &v, rr, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
             let irma = format!("{}.ski", nome_ecm.rsplit_once('.').map_or(nome_ecm.as_str(), |x| x.0));
             let mut peles: Vec<(String, Result<pw_data_loader::ski::Ski, String>)> = Vec::new();
             match ler_pele(&irma) {
@@ -509,7 +561,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
             }
             (nome_ecm, cabeca, peles, esqueleto)
         } else {
-            ler_smd(&e, &v, &q.caminho)?
+            ler_smd_de(&e, &v, rr, &q.caminho)?
         };
         let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
         if lidas.is_empty() && esqueleto.is_err() {
@@ -524,7 +576,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
         }
         let texturas: Vec<Vec<Option<pw_data_loader::glb::Textura>>> = lidas
             .iter()
-            .map(|(cp, s)| s.texturas.iter().map(|t| achar_textura(&e, &v, cp, t).and_then(|(_, b)| textura_em_png(&b))).collect())
+            .map(|(cp, s)| s.texturas.iter().map(|t| achar_textura_de(&e, &v, rr, cp, t).and_then(|(_, b)| textura_em_png(&b))).collect())
             .collect();
         let fornecedores: Vec<Box<dyn Fn(usize) -> Option<pw_data_loader::glb::Textura>>> = texturas
             .iter()
@@ -546,7 +598,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
                 let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
                 let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
                 let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
-                let (_, bytes) = e.gov.conteudo(&v, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
+                let (_, bytes) = conteudo_de(&e, &v, rr, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
                 stck = pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
                 stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
             };
@@ -561,7 +613,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     // B273: as texturas, achadas como o cliente acha e convertidas para PNG; a que falta fica só com a cor.
     let texturas: Vec<Option<pw_data_loader::glb::Textura>> =
-        s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
+        s.texturas.iter().map(|t| achar_textura_de(&e, &v, rr, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
     let glb = pw_data_loader::glb::do_ski_com_texturas(&s, &nome, &|i| texturas.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente }));
     glb_como_resposta(&nome, glb)
 }
@@ -596,6 +648,20 @@ async fn estudio_acao_nova(State(e): State<Arc<Estado>>, Path(v): Path<String>, 
         return Ok(Json(e.estudio.acao_copiada_no_ecm(&e.gov, &v, &p.caminho, r, de, p.origem, p.nova).await?));
     }
     Ok(Json(e.estudio.acao_nova_no_ecm(&e.gov, &v, &p.caminho, r, p.origem, p.nova, p.base).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoTrocarBase {
+    caminho: String,
+    acao: String,
+    base: String,
+}
+
+/// B373: a animação-base que uma ação combinada do `.ecm` executa.
+async fn estudio_trocar_base(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoTrocarBase>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.trocar_base_da_acao(&e.gov, &v, &p.caminho, r, p.acao, p.base).await?))
 }
 
 #[derive(Deserialize)]
@@ -1751,6 +1817,7 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
         .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
         .route("/admin/{v}/estudio/modelos/acao", post(estudio_acao_nova))
+        .route("/admin/{v}/estudio/modelos/base", post(estudio_trocar_base))
         .route("/admin/{v}/estudio/modelos/doadores", get(estudio_doadores))
         .route("/admin/{v}/estudio/modelos/importar", post(estudio_importar_pele))
         .route("/admin/{v}/estudio/modelos/pele_nova", post(estudio_nova_pele))

@@ -6,8 +6,10 @@
   import { ficha as lerFicha, linkDosEditores, salvar, type Campo, type Ficha } from "../lib/api";
   import { camposDaBox, rotuloGerado } from "../lib/catalogo";
   import { acharLista, gravarLista, lerLista, paraGravar, porcentagens, ajustar, type Cartao, type LinhaDeHabilidade, type Lista } from "../lib/chances";
-  import { APOS_A_MORTE, ATITUDES, CAMPOS_DO_MONSTRO, CHAVES_DO_MONSTRO, DISTANCIAS_DO_MONSTRO, ESTILOS_DE_LUTA, HABITATS, IMUNIDADES,
-    PATRULHAS, POLITICAS_DE_ODIO, rotuloDoMonstro } from "../lib/monstro";
+  import { APOS_A_MORTE, ATITUDES, bitsLigados, CAMPOS_DO_MONSTRO, GRUPOS, LADOS, CHAVES_DO_MONSTRO, DISTANCIAS_DO_MONSTRO, ESTILOS_DE_LUTA, HABITATS, IMUNIDADES,
+    PATRULHAS, POLITICAS_DE_ODIO, rotuloDoMonstro, BOOLEANOS, EXPLICACOES, PAPEIS_NA_GUERRA } from "../lib/monstro";
+  import SeletorDeEspaco from "../componentes/SeletorDeEspaco.svelte";
+  import IconeItem from "../componentes/IconeItem.svelte";
   import { avisar, estudio, ir } from "../lib/estado.svelte";
   import BoxDeSpawn from "../componentes/BoxDeSpawn.svelte";
   import ChancesSimples from "../componentes/ChancesSimples.svelte";
@@ -16,7 +18,7 @@
   import ListaDeHabilidades from "../componentes/ListaDeHabilidades.svelte";
   import ModalCategoria from "../componentes/ModalCategoria.svelte";
   import ModalMascara from "../componentes/ModalMascara.svelte";
-  import Visual3D from "../componentes/Visual3D.svelte";
+  import ModeloDoMonstro from "../componentes/ModeloDoMonstro.svelte";
 
   let { tabela, indice }: { tabela: string; indice: number } = $props();
 
@@ -27,6 +29,8 @@
   let porNome = $state.raw<Record<string, Campo>>({});
   let nomes = $state<Record<string, string>>({});
   let gravando = $state(false);
+  let icones = $state<Record<number, string | null>>({}); // ícone do item escolhido na tela (antes de gravar)
+  let ovoIcone = $state<string | null>(null);
   let modal = $state("");
 
   const editavel = $derived(!!estudio.rascunho);
@@ -114,12 +118,13 @@
     if (!drops) return [];
     return drops.ids.map((c, k) => ({ k, c })).filter(({ c }) => num(c) > 0).map(({ c, k }) => ({
       id: num(c), peso: num(drops.chances[k]), posicao: k, nome: nomes[c] ?? nomes[`item:${num(c)}`] ?? "",
-      descricao: varias ? `linha ${k + 1}${k >= 16 ? " · só na 1ª rodada" : ""}` : "",
+      icone: valores[c] === originais[c] ? porNome[c]?.referencia?.icone ?? null : icones[num(c)] ?? null,
+      extra: varias ? `linha ${k + 1}${k >= 16 ? " · só na 1ª rodada" : ""}` : "",
     }));
   }
   function gravarDrops(l: (Cartao & { posicao?: number })[]) {
     if (!drops) return;
-    for (const x of l) if (x.nome) nomes[`item:${x.id}`] = x.nome;
+    for (const x of l) { if (x.nome) nomes[`item:${x.id}`] = x.nome; if (x.icone !== undefined) icones[x.id] = x.icone ?? null; }
     if (!varias) { Object.assign(valores, gravarLista(drops, l)); return; }
     // Várias rodadas: sem compactar (`elementdataman.cpp`, MONSTER_ESSENCE: "不能进行去零操作"); item novo na 1ª linha livre
     // de 1–16 (vale em todas as rodadas), depois de 17–32.
@@ -132,7 +137,6 @@
   }
   const simples = (prefixo: string) => { const r: string[] = []; for (let k = 0; existe(`${prefixo}${k}`); k++) r.push(`${prefixo}${k}`); return r; };
 
-  const modelos = $derived(existe("file_model") ? [{ rotulo: "Modelo", caminho: String(valores.file_model ?? "") }] : []);
   const marcados = (opcoes: [number, string][], n: string) => opcoes.filter(([b]) => num(n) & b).map(([, x]) => x).join(", ") || "nenhum";
   const fmt = (x: number) => x.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
 </script>
@@ -142,7 +146,17 @@
     {@const c = porNome[n]}
     <label title={n}>
       <span>{rotulo(n)}</span>
-      {#if n === "short_range_mode" || n === "inhabit_type"}
+      {#if n === "id_pet_egg_captured"}
+        <button class="campo escolha" type="button" class:alterado={alterado(n)} disabled={!editavel} onclick={() => (modal = "ovo")} title="Escolher o ovo (PET_EGG_ESSENCE)">
+          {#if num(n)}<IconeItem hex={ovoIcone ?? c.referencia?.icone} nome="" tamanho={18} discreto />{/if}
+          {num(n) ? (nomes[n] ?? c.referencia?.nome ?? `id ${num(n)}`) : "nenhum (não captura)"}</button>
+      {:else if BOOLEANOS.has(n) || n === "role_in_war"}
+        <select class="campo" class:alterado={alterado(n)} disabled={!editavel} value={String(valores[n])}
+          onchange={(e) => (valores[n] = Number((e.target as HTMLSelectElement).value))}>
+          {#each n === "role_in_war" ? PAPEIS_NA_GUERRA : ["0 · não", "1 · sim"] as d, k (k)}<option value={String(k)}>{d}</option>{/each}
+          {#if num(n) > (n === "role_in_war" ? 1 : 1)}<option value={String(num(n))}>{num(n)} (outro)</option>{/if}
+        </select>
+      {:else if n === "short_range_mode" || n === "inhabit_type"}
         <select class="campo" class:alterado={alterado(n)} disabled={!editavel} value={String(valores[n])}
           onchange={(e) => (valores[n] = Number((e.target as HTMLSelectElement).value))}>
           {#each n === "inhabit_type" ? HABITATS.map((h, k) => `${k} · ${h}`) : DISTANCIAS_DO_MONSTRO as d, k (k)}<option value={String(k)}>{d}</option>{/each}
@@ -153,7 +167,8 @@
       {:else}
         <input class="campo" class:alterado={alterado(n)} disabled={!editavel} value={valores[n]} oninput={(e) => (valores[n] = (e.target as HTMLInputElement).value)} />
       {/if}
-      {#if c.referencia?.nome && valores[n] === originais[n]}<span class="mini">{c.referencia.nome}</span>{/if}
+      {#if n !== "id_pet_egg_captured" && c.referencia?.nome && valores[n] === originais[n]}<span class="mini">{c.referencia.nome}</span>{/if}
+      {#if EXPLICACOES[n]}<span class="mini explicacao">{EXPLICACOES[n]}</span>{/if}
     </label>
   {/if}
 {/snippet}
@@ -199,7 +214,7 @@
 
       <section class="caixa">
         <h3>Vida e defesa</h3>
-        <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.vida) as n (n)}{@render campo(n)}{/each}</div>
+        <div class="grade-campos">{#each campos([...CAMPOS_DO_MONSTRO.vida, ...CAMPOS_DO_MONSTRO.defesaExtra]) as n (n)}{@render campo(n)}{/each}</div>
         {#if existe("immune_type")}
           <div class="linha marcas"><button class="botao pequeno" type="button" class:alterado={alterado("immune_type")} onclick={() => (modal = "imune")}>Imune a</button>
             <span class="suave">{marcados(IMUNIDADES, "immune_type")}</span></div>
@@ -226,12 +241,21 @@
         <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.visao) as n (n)}{@render campo(n)}{/each}</div>
         <p class="mini">Visão = de onde nota o jogador; distância de ódio = de onde o agressivo ataca; tempo de ódio = segundos que guarda a raiva (≤ 0 vira 1);
           perseguição máxima: 0 = sem limite, abaixo de 20 vira 20 (npcgenerator.cpp:230, 314-317).</p>
+        {#if campos(CAMPOS_DO_MONSTRO.invisibilidade).length}
+          <h4>Invisibilidade</h4>
+          <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.invisibilidade) as n (n)}{@render campo(n)}{/each}</div>
+          <p class="mini">O GS soma o nível do monstro aos dois quando não são 0; detecção negativa vira 0 (npcgenerator.cpp:322-326).
+            Um jogador só vê o invisível se a detecção dele alcançar o nível de invisibilidade.</p>
+        {/if}
         <h4>Movimento</h4>
-        <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.movimento) as n (n)}{@render campo(n)}{/each}</div>
+        <div class="grade-campos">{#each campos([...CAMPOS_DO_MONSTRO.movimento, ...CAMPOS_DO_MONSTRO.movimentoExtra]) as n (n)}{@render campo(n)}{/each}</div>
 
         {#if odio}
           <h4>Em quem ele foca (estratégia de ódio)</h4>
           <p class="mini">Ao nascer, o monstro sorteia uma das políticas pelos pesos (npcgenerator.cpp:2562). Se nenhuma tiver peso, fica a Normal.</p>
+          <details class="legenda"><summary class="mini">O que cada política faz</summary>
+            <ul>{#each POLITICAS_DE_ODIO as p (p.valor)}<li><strong>{p.valor} · {p.nome}</strong> — <span class="mini">{p.explica}</span></li>{/each}</ul>
+          </details>
           <ul class="odio">
             {#each linhasDeOdio as l, i (l.k)}
               <li>
@@ -253,6 +277,32 @@
             onclick={() => gravarOdio([...linhasDeOdio, { id: 0, peso: linhasDeOdio.length ? 1 / (linhasDeOdio.length + 1) : 1 }])}><Icone nome="mais" tamanho={16} /> Adicionar política</button>
         {/if}
 
+        <h4>Lado e ajuda entre monstros</h4>
+        <div class="ajuda">
+          {#if existe("faction")}
+            <div><button class="botao pequeno" type="button" class:alterado={alterado("faction")} onclick={() => (modal = "lado")}>Lado</button>
+              <span class="suave">{LADOS.filter(([b]) => (num("faction") >>> 0) & b).map(([, n]) => n).join(", ") || "nenhum"}</span>
+              <p class="mini">Decide quem é inimigo dele (tabela ENEMY_FACTION_CONFIG, nos Editores). Monstro comum costuma ser só "30 · Monstro comum".</p></div>
+          {/if}
+          {#if existe("monster_faction")}
+            <div><button class="botao pequeno" type="button" class:alterado={alterado("monster_faction")} onclick={() => (modal = "grupo")}>Grupo do monstro</button>
+              <span class="suave">{bitsLigados(num("monster_faction")).map((k) => `grupo ${k}`).join(", ") || "nenhum"}</span></div>
+          {/if}
+          {#if existe("monster_faction_ask_help")}
+            <div><button class="botao pequeno" type="button" class:alterado={alterado("monster_faction_ask_help")} onclick={() => (modal = "pede")}>Quando atacado, pede ajuda a</button>
+              <span class="suave">{bitsLigados(num("monster_faction_ask_help")).map((k) => `grupo ${k}`).join(", ") || "ninguém (não pede)"}</span></div>
+          {/if}
+          {#if existe("monster_faction_can_help")}
+            <div><button class="botao pequeno" type="button" class:alterado={alterado("monster_faction_can_help")} onclick={() => (modal = "atende")}>Atende pedido de</button>
+              <span class="suave">{bitsLigados(num("monster_faction_can_help")).map((k) => `grupo ${k}`).join(", ") || "ninguém (não ajuda)"}</span></div>
+          {/if}
+          <p class="mini">Como funciona: ao ganhar ódio de alguém, o monstro que pede ajuda grita (no máximo a cada 4 s) para quem está até a
+            distância da <strong>visão</strong> dele (fator 1,0: config.h:67; npc.cpp:2175-2190). Um vizinho entra na luta se as três coisas valem:
+            o <em>grupo do vizinho</em> está entre os que o atacado pede, o <em>"atende pedido de"</em> do vizinho inclui o grupo do atacado, e o vizinho
+            está com no máximo 1 inimigo — então soma 2 de ódio no atacante (npc.cpp:669-680; ainpc.h:867-876). Cada spawner do npcgen pode trocar
+            esses grupos (npcgenerator.cpp:3821-3826).</p>
+        </div>
+
         <h4>Ao morrer e outras chaves</h4>
         <div class="linha marcas">
           {#if existe("after_death")}<button class="botao pequeno" type="button" class:alterado={alterado("after_death")} onclick={() => (modal = "morte")}>Ao morrer</button>
@@ -260,10 +310,9 @@
           {#if existe("combined_switch")}<button class="botao pequeno" type="button" class:alterado={alterado("combined_switch")} onclick={() => (modal = "chaves")}>Chaves</button>
             <span class="suave">{marcados(CHAVES_DO_MONSTRO, "combined_switch")}</span>{/if}
         </div>
-        {#if existe("common_strategy")}
-          <p class="mini">Roteiro de IA (aipolicy): <strong>{num("common_strategy") || "nenhum"}</strong> — o GS procura essa política no aipolicy.data e, se não achar,
-            zera (npcgenerator.cpp:218-226). Edite o número em Avançado; o roteiro em si, nos Editores → Comportamento.</p>
-        {/if}
+        <h4>Inteligência (IA)</h4>
+        <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.ia) as n (n)}{@render campo(n)}{/each}</div>
+        <p class="mini">As variáveis locais são o valor inicial que o roteiro de IA lê e muda (npc.cpp:1996; npcgenerator.cpp:2520). O roteiro em si se edita nos Editores → Comportamento.</p>
       </section>
 
       <section class="caixa">
@@ -278,7 +327,10 @@
               linhas={lerHabilidades(prefixo, true)} {editavel} aoMudar={(l) => gravarHabilidades(prefixo, true, l)} />
           {/if}
         {/each}
-        {#if existe("id_skill")}<p class="mini">O campo antigo "habilidade única" (id_skill/skill_level) não é usado pelo GS 1.5.5 (npcgenerator.cpp:225, comentado) — está em Avançado.</p>{/if}
+        {#if campos(CAMPOS_DO_MONSTRO.legado).length}
+          <h4>Campos antigos</h4>
+          <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.legado) as n (n)}{@render campo(n)}{/each}</div>
+        {/if}
       </section>
 
       <section class="caixa">
@@ -298,18 +350,45 @@
 
       {#if f.id}<BoxDeSpawn id={f.id} nome={String(valores.Name ?? "")} />{/if}
 
-      <details class="caixa">
-        <summary>Avançado (facção, invisibilidade, variáveis…)</summary>
-        <div class="grade-campos">{#each campos([...CAMPOS_DO_MONSTRO.avancado, "common_strategy"]) as n (n)}{@render campo(n)}{/each}</div>
-      </details>
+      {#if campos(CAMPOS_DO_MONSTRO.eventos).length}
+        <section class="caixa">
+          <h3>Eventos, guerras e território</h3>
+          <p class="mini">Só importam em batalha, base de clã, território ou mapa com variáveis globais; num monstro comum ficam em 0.</p>
+          <div class="grade-campos">{#each campos(CAMPOS_DO_MONSTRO.eventos) as n (n)}{@render campo(n)}{/each}</div>
+        </section>
+      {/if}
     </div>
-    <aside class="lateral"><Visual3D {modelos} /></aside>
+    <aside class="lateral">
+      {#if existe("file_model") && String(valores.file_model ?? "").trim()}
+        <ModeloDoMonstro caminho={String(originais.file_model)} politica={num("common_strategy")} idDoMonstro={f.id ?? 0}
+          aoTrocarModelo={async (ecm) => { await salvar(tabela, indice, { file_model: ecm }); avisar("ok", `O monstro agora usa ${ecm} (no rascunho).`); await carregar(); }}
+          habilidades={[...lerHabilidades("skills", false), ...FAIXAS.flatMap(([p]) => lerHabilidades(p, true))].map((h) => h.id)} />
+      {/if}
+      {#if campos(["file_model", "file_gfx_short", "file_gfx_short_hit"]).length}
+        <section class="caixa">
+          <h3>Arquivos do modelo e efeitos</h3>
+          <div class="grade-campos uma">{#each campos(["file_model", "file_gfx_short", "file_gfx_short_hit"]) as n (n)}{@render campo(n)}{/each}</div>
+          <p class="mini">Efeito do golpe e do acerto: arquivos .gfx do cliente (sem prévia aqui — o painel não desenha GFX). O modelo muda ao gravar.</p>
+        </section>
+      {/if}
+    </aside>
   </div>
 {/if}
 
 {#if f && modal === "categoria"}
   <ModalCategoria maior="MONSTER_TYPE" idMaior={num("id_type")} idMenor={0} aoFechar={() => (modal = "")}
     aoEscolher={(a) => { valores.id_type = a; nomes.id_type = `id ${a}`; }} />
+{:else if f && modal === "lado"}
+  <ModalMascara titulo="Lado do monstro (faction)" opcoes={LADOS} valor={num("faction")} aoFechar={() => (modal = "")}
+    explica="Bit k = lado k do ENEMY_FACTION_CONFIG (nomes do ExpTypes.h; faction.h do GS)." aoAplicar={(v) => (valores.faction = v)} />
+{:else if f && (modal === "grupo" || modal === "pede" || modal === "atende")}
+  {@const c = modal === "grupo" ? "monster_faction" : modal === "pede" ? "monster_faction_ask_help" : "monster_faction_can_help"}
+  <ModalMascara titulo={modal === "grupo" ? "Grupo do monstro" : modal === "pede" ? "Quando atacado, pede ajuda a" : "Atende pedido de"}
+    opcoes={GRUPOS} valor={num(c)} aoFechar={() => (modal = "")}
+    explica="Grupos livres (não têm nome em nenhum arquivo): o mesmo número em dois monstros quer dizer o mesmo grupo." aoAplicar={(v) => (valores[c] = v)} />
+{:else if f && modal === "ovo"}
+  <SeletorDeEspaco titulo="Ovo ao ser capturado" espaco="ESSENCE" categoriaInicial="PET_EGG_ESSENCE" aoFechar={() => (modal = "")}
+    aoEscolher={(r) => { valores.id_pet_egg_captured = r.id ?? 0; nomes.id_pet_egg_captured = r.nome; ovoIcone = r.icone ?? null; }} />
 {:else if f && modal === "imune"}
   <ModalMascara titulo="Imune a" opcoes={IMUNIDADES} valor={num("immune_type")} aoFechar={() => (modal = "")}
     explica="immune_type (ExpTypes.h): bits de baixo para cima." aoAplicar={(v) => (valores.immune_type = v)} />
@@ -326,7 +405,8 @@
   .espaco { flex: 1; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 14px; align-items: start; }
   .coluna { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-  .lateral { position: sticky; top: 70px; }
+  .lateral { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 80px); overflow: auto; }
+  .uma { grid-template-columns: 1fr; }
   .dados { display: flex; flex-direction: column; gap: 8px; }
   .nome { font-size: 18px; font-weight: 600; height: 40px; }
   h4 { margin: 14px 0 6px; font-size: 13px; color: var(--texto-2); }
@@ -335,6 +415,10 @@
     background: var(--fundo-2); color: var(--texto); font: inherit; cursor: pointer; text-align: left; }
   .escolhas button.ativo { border-color: var(--ouro); background: var(--ouro-suave); }
   .marcas { margin-top: 10px; }
+  .ajuda { display: flex; flex-direction: column; gap: 8px; }
+  .explicacao { line-height: 1.3; }
+  .escolha { display: flex; align-items: center; gap: 6px; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; }
+  .legenda ul { margin: 6px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
   .odio { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .odio li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 10px; background: var(--fundo-2); }
   .explica { flex: 1; min-width: 160px; }

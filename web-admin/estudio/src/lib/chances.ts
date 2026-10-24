@@ -83,6 +83,10 @@ export interface Cartao extends Linha {
   nome: string;
   /** texto do cliente com o valor do efeito ("Ataque físico +2"); vazio = sem texto */
   descricao?: string;
+  /** ícone do item citado (hex GBK do `file_icon`, B188), para as listas de itens (drops) */
+  icone?: string | null;
+  /** nota curta ao lado do id (ex.: "linha 18 · só na 1ª rodada") */
+  extra?: string;
 }
 
 /** Efeito fixo (lista só de ids): B370. */

@@ -7,6 +7,7 @@
   import { contexto, sessao, versaoDoRealm } from "./lib/api";
   import { avisos, definirRascunho, estudio, rota } from "./lib/estado.svelte";
   import Topo from "./componentes/Topo.svelte";
+  import DicaFlutuante from "./componentes/DicaFlutuante.svelte";
   import Principal from "./telas/Principal.svelte";
   import EdicaoEquipavel from "./telas/EdicaoEquipavel.svelte";
   import EdicaoMonstro from "./telas/EdicaoMonstro.svelte";
@@ -55,6 +56,8 @@
     <Principal />
   {/if}
 </main>
+
+<DicaFlutuante />
 
 <div class="avisos" aria-live="polite">
   {#each avisos as a (a.id)}
