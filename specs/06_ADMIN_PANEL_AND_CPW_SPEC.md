@@ -299,6 +299,7 @@ textos, modelos) no rascunho escolhido no topo. Única rota nova, só leitura: `
 | B374: trocar o modelo inteiro do monstro por um GLB (malha, texturas, esqueleto e animações; `modelos/novo`) e prévia do modelo do rascunho | `testado` (ida e volta com o GLB do próprio monstro) |
 | B375: modelo do monstro em cinco cards; dica do item presa ao ícone (abre no ícone, logo acima dele) | `testado` (navegador) |
 | B376: seletor de item em tabela — prévia ao passar o mouse no ícone; colunas nível mín., nível, categoria/subcategoria (pedras: subcategoria e nível) com filtro por faixa (ou lista, nas de categoria) e ordenação no cabeçalho, sobre a tabela inteira (`GET tabelas/{T}?colunas=&ordem=&faixas=`, spec 07 §6c); paginação de 100 | `testado` (integração + navegador) |
+| B377: seletor de item só com tabelas de item (os `case` do `generate_item`, `generate_item_temp.h:5-145`) — sem `*_TYPE`, serviços, monstro, NPC, mina; trocar um drop atualiza nome e id do cartão | `testado` (navegador) |
 | Enviar ícone novo (gravar célula no atlas) | `falta` (bloco próprio, combinado) |
 | Brilho do refino no 3D | `falta` (GFX do cliente, `EC_Player.cpp:9299-9316`; sem renderizador de GFX) |
 

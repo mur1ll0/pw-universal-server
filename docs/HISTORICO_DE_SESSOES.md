@@ -17467,3 +17467,14 @@ comparação lado a lado.
       34/34 (3 novos, `lib/filtro.test.ts`). Navegador (realm_155, rascunho de teste 65, descartado): Armas 2.741 → nível
       mín. 30–40 = 153, ordenadas por nível (4 → 5); dica do "★Ju Que" com fundo 6 px acima do ícone, mesma esquerda,
       "Nv. necessário: 30". Commitado com o B375.
+377. **Sessão 2026-10-24: seletor de item — só item; troca de drop atualiza o cartão.** Relato do Murillo: ao trocar
+     um item dos drops só mudavam o ícone e o resumo, não a descrição e o id; e o seletor deixava escolher
+     `WEAPON_MAJOR_TYPE` como drop.
+    - Causa do cartão: `EdicaoMonstro.svelte::cartoesDeDrop` preferia `nomes[campo]` (nome da ficha ao abrir) ao nome do
+      item escolhido. Agora vale como o ícone: só enquanto o campo tem o valor original.
+    - Só item: `TABELAS_DE_ITEM` = os `case` do `generate_item` (`cgame/gs/template/generate_item_temp.h:5-145`); o resto
+      cai no `default` (:147-153) e devolve -1. `SeletorDeEspaco` (prop `soItens`, padrão no `ESSENCE`) filtra
+      categorias e a busca em "Todas"; a prévia usa a mesma lista.
+    - Provas: `svelte-check` 0/0, vitest 35/35 (1 novo). Navegador (realm_155, rascunho 66, descartado): 65 categorias sem
+      `*_TYPE`/serviço/monstro/NPC/mina; "Espada" em "Todas" só traz `WEAPON_ESSENCE`; trocar o 1º drop (Poção Refinada
+      de Cura, 8620) pela "☆Espada de Ponta Azulada" mostra nome e "id 22" no cartão.

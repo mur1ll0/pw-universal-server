@@ -3,14 +3,17 @@
      `ADDON` também busca pelo texto que o cliente mostra (`/api/efeitos`, B206) e mostra a descrição de cada efeito. */
   import { untrack } from "svelte";
   import { buscarEfeitosPorTexto, buscarNoEspaco, descreverEfeito, descreverEfeitos, ficha, listar, tabelas, type Pagina, type Registro } from "../lib/api";
-  import { COLUNAS_DO_SELETOR, tabelaComColunas } from "../lib/catalogo";
+  import { COLUNAS_DO_SELETOR, TABELAS_DE_ITEM, tabelaComColunas } from "../lib/catalogo";
   import { esconderDica, mostrarDica } from "../lib/dica.svelte";
   import { avisar } from "../lib/estado.svelte";
   import IconeItem from "./IconeItem.svelte";
   import Modal from "./Modal.svelte";
 
-  let { titulo, espaco, tabela = "", categoriaInicial = "", aoEscolher, aoFechar, aoCriar }:
-    { titulo: string; espaco: string; tabela?: string; categoriaInicial?: string; aoEscolher: (r: Registro) => void; aoFechar: () => void; aoCriar?: () => void } = $props();
+  /* B377: `soItens` (padrão no espaço ESSENCE) — só as tabelas para as quais o GS gera item (`TABELAS_DE_ITEM`); sem
+     `*_TYPE`, serviços de NPC, monstros, NPCs e minas, que como drop não soltam nada. */
+  let { titulo, espaco, tabela = "", categoriaInicial = "", soItens = espaco === "ESSENCE", aoEscolher, aoFechar, aoCriar }:
+    { titulo: string; espaco: string; tabela?: string; categoriaInicial?: string; soItens?: boolean; aoEscolher: (r: Registro) => void; aoFechar: () => void; aoCriar?: () => void } = $props();
+  const serve = (t?: string) => !soItens || (!!t && TABELAS_DE_ITEM.has(t));
 
   let busca = $state("");
   /* B372: filtro por categoria (a tabela do elements). Com categoria, a busca é a listagem da tabela (`GET tabelas/{T}`),
@@ -27,14 +30,12 @@
     DYE_TICKET_ESSENCE: "Tinturas", POKER_ESSENCE: "Cartas de General", GOBLIN_EQUIP_ESSENCE: "Equip. de Daimon",
     MONSTER_ESSENCE: "Monstros", NPC_ESSENCE: "NPCs", MINE_ESSENCE: "Minas",
   };
-  /* Tabelas do ESSENCE que não são item (o GS não gera exemplo delas): sem prévia. */
-  const SEM_PREVIA = /^(MONSTER|NPC|MINE)_ESSENCE$|_(TYPE|SERVICE)$/;
   const POR_PAGINA = 100;
 
   let categoria = $state(categoriaInicial);
   let categorias = $state<{ tabela: string; nome: string }[]>([]);
   if (espaco !== "ADDON") tabelas().then((t) => {
-    const l = t.tabelas.filter((x) => x.espaco === espaco && x.registros > 0 && !/_(SERVICE|TYPE)$/.test(x.nome))
+    const l = t.tabelas.filter((x) => x.espaco === espaco && x.registros > 0 && !/_(SERVICE|TYPE)$/.test(x.nome) && serve(x.nome))
       .map((x) => ({ tabela: x.nome, nome: NOMES_DE_CATEGORIA[x.nome] ?? x.nome }));
     l.sort((a, b) => Number(!NOMES_DE_CATEGORIA[a.tabela]) - Number(!NOMES_DE_CATEGORIA[b.tabela]) || a.nome.localeCompare(b.nome, "pt-BR"));
     categorias = l;
@@ -54,7 +55,8 @@
   let total = $state(0);
   let pedido = 0;
   const tituloDe = (c: string) => COLUNAS_DO_SELETOR.find((x) => x.campo === c)?.titulo ?? c;
-  const comPrevia = (r: Registro) => espaco === "ESSENCE" && !!r.id && !!r.tabela && !SEM_PREVIA.test(r.tabela);
+  // Prévia só de item (o GS gera o exemplo pelo mesmo `generate_item`).
+  const comPrevia = (r: Registro) => espaco === "ESSENCE" && !!r.id && !!r.tabela && TABELAS_DE_ITEM.has(r.tabela);
 
   async function buscar() {
     const meu = ++pedido;
@@ -72,7 +74,9 @@
         colunas = p.colunas ?? [];
         opcoes = p.opcoes ?? {};
       } else {
-        r = await buscarNoEspaco(espaco, busca.trim(), 60) as (Registro & { texto?: string })[];
+        // Pede mais e filtra: no espaço inteiro também vêm tipos, serviços e monstros.
+        r = (await buscarNoEspaco(espaco, busca.trim(), soItens ? 200 : 60) as (Registro & { texto?: string })[])
+          .filter((x) => serve(x.tabela)).slice(0, 60);
         if (meu !== pedido) return;
         total = r.length;
         colunas = [];

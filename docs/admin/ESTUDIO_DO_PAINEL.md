@@ -652,6 +652,13 @@ lista (com quantos registros) na categoria/subcategoria. Filtro e ordem são do 
 caem", `lib/dica.svelte.ts`); monstro, NPC, mina e tabelas de tipo não têm prévia. Sem categoria ("Todas") continua a
 busca no espaço inteiro, sem colunas.
 
+**Só item no seletor de item (B377):** no espaço `ESSENCE` o seletor mostra só as tabelas para as quais o GS gera item
+(`lib/catalogo.ts::TABELAS_DE_ITEM`, os `case` do `generate_item` em `cgame/gs/template/generate_item_temp.h:5-145`,
+1.5.5): `*_MAJOR_TYPE`/`*_SUB_TYPE`, serviços de NPC, monstro, NPC, mina, `SUITE`, `PET_ESSENCE` caem no `default`
+(:147-153, devolve -1 — como drop não sai nada) e não aparecem nem nas categorias nem na busca em "Todas" (pede 200 ao
+espaço e filtra até 60). Prévia pela mesma lista. Trocar um item de "Itens que caem" atualiza o nome e o id do cartão
+(o nome da ficha só vale enquanto o campo tem o item de quando abriu).
+
 **Onde nasce** (`componentes/BoxDeSpawn.svelte` + `ModalMapa.svelte`): os spawners vêm de "onde nasce" (B284); cada um é
 uma área do npcgen. O mapa usa as peças do minimapa (a geometria de `static/mapa.js`), com zoom na roda, arrasto, clique
 para o centro e alça para o tamanho. **A área é um retângulo**: o servidor sorteia dentro de `vPos ± vExts/2`

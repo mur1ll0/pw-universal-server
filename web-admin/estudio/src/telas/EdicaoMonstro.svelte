@@ -117,7 +117,9 @@
   function cartoesDeDrop(): (Cartao & { posicao: number })[] {
     if (!drops) return [];
     return drops.ids.map((c, k) => ({ k, c })).filter(({ c }) => num(c) > 0).map(({ c, k }) => ({
-      id: num(c), peso: num(drops.chances[k]), posicao: k, nome: nomes[c] ?? nomes[`item:${num(c)}`] ?? "",
+      // B377: o nome da ficha (`nomes[c]`) é do item que o campo tinha ao abrir; trocado o item, vale o do escolhido.
+      id: num(c), peso: num(drops.chances[k]), posicao: k,
+      nome: (valores[c] === originais[c] ? nomes[c] : undefined) ?? nomes[`item:${num(c)}`] ?? "",
       icone: valores[c] === originais[c] ? porNome[c]?.referencia?.icone ?? null : icones[num(c)] ?? null,
       extra: varias ? `linha ${k + 1}${k >= 16 ? " · só na 1ª rodada" : ""}` : "",
     }));
