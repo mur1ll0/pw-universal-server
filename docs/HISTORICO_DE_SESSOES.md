@@ -17384,3 +17384,61 @@ comparação lado a lado.
     ### c. Falta
     - Murillo ver no painel. Minas no drop (`drop_mines`, só 1.5.5), facção por nome e o roteiro do aipolicy na própria
       tela ficam nos Editores.
+
+372. **Sessão 2026-10-23: monstro — ajuda entre monstros e facção; ícones e filtro nos itens.** Relato do Murillo: faltava
+     a opção de ajuda (estava em Avançado), as políticas de ódio estavam confusas, a facção eram números sem sentido, e
+     os itens que caem estavam sem ícone e sem filtro por categoria.
+    ### a. Pesquisa (o que cada campo faz)
+    - Ajuda: `ainpc.h:800-876`, `npc.cpp:669-680, 2175-2190`, `config.h:67` — grito a cada ≥ 4 s até visão × 1,0; o vizinho
+      ajuda se `grupo do vizinho & pede do atacado`, `atende do vizinho & grupo do atacado` e ≤ 1 inimigo; +2 de ódio.
+      Sobrescrita por spawner no npcgen (`npcgenerator.cpp:3821-3826`; erro do original no "atende").
+    - `faction` = lado (bit k do `ENEMY_FACTION_CONFIG`, 32 nomes do cliente, conferem com `faction.h`); `monster_faction`
+      = grupo livre, sem nome em arquivo. Conferido nos dados: o Inseto de Jade é "30 · Monstro comum", grupo 26.
+    - Políticas: 0–4 iguais no GS 1.5.5 (`ainpc.cpp:209-225`), 5 segue o alvo do chefe (`aiaggro.h:9-27`), 6/7 mascote e torre.
+    ### b. O que mudou
+    - `EdicaoMonstro.svelte`/`lib/monstro.ts`: seção "Lado e ajuda entre monstros" (caixas com os nomes dos lados e os
+      grupos 1–32), invisibilidade em "O que enxerga", legenda das políticas.
+    - `ListaDeChances`: ícone do item e nota de linha separada do nome; `SeletorDeEspaco`: filtro por categoria.
+    ### c. Provas
+    - `svelte-check` 0/0; `vitest` 31/31. Navegador (dev): 32 ícones nos 32 itens que caem do Inseto de Jade; 74
+      categorias; "Materiais" + "pó" → só `MATERIAL_ESSENCE` (Pó de Esmeril 807, Pó de Corídon 808…). `pw-admin-api`
+      publicado.
+    ### d. Falta
+    - Murillo ver no painel. A sobrescrita de facção por spawner ainda não aparece na box de spawn.
+
+373. **Sessão 2026-10-23: monstro — "Avançado" explicado, ovo, modelo e animações; prévia dos itens.** Pedido do Murillo.
+    ### a. O que mudou
+    - Avançado distribuído (tabela em `ESTUDIO_DO_PAINEL.md` §9.9), cada campo com o efeito no jogo e o arquivo:linha;
+      campos 0/1 como não/sim; `role_in_war` como lista. Ovo ao capturar com seletor (categoria `PET_EGG_ESSENCE`).
+    - `ModeloDoMonstro.svelte`: ações pedidas pelo cliente com a animação de cada uma (trocar), prévia, criar a que falta,
+      exportar GLB e importar animações. Novo: `ecm::trocar_base` (+ teste em todos os `.ecm`, ida e volta byte a byte),
+      `Estudio::trocar_base_da_acao`, rota `modelos/base` (pw-recursos e painel). O efeito do refino saiu do monstro.
+    - Prévia do item: GS `item_de_exemplo` (gera como drop, não grava; `detalhe_de_registro` separado do slot), painel
+      `GET /api/realms/{r}/itens/{id}/exemplo`, `DicaFlutuante.svelte`; cartão com abrir em nova aba, trocar e tirar.
+    ### b. Provas
+    - `cargo test -p pw-data-loader trocar_base`: ok (todos os `.ecm` do cliente 1.5.5). `svelte-check` 0/0; `vitest` 31/31.
+    - `cargo test -p pw-gs --lib`: **167/0**.
+    - `pw-recursos` e `pw-admin-api` publicados. Navegador (`localhost:8000`, 1.5.5, monstro 13 "Cão-rei de Pedra"):
+      ações traduzidas com a animação de cada uma, 16 animações do esqueleto com prévia, boxes IA e "Campos antigos",
+      16 explicações, sem o refino; no rascunho de teste **#63 (descartado)** "Parado" (`站立`) passou a tocar `休闲` (o
+      publicado ficou `站立`) e a prévia animou o modelo; o seletor de ovo abre em "Ovos de mascote".
+    - A prévia de item responde 503 `consulta_desconhecida` com o GS atual nos mundos — esperado até publicar o GS.
+    ### c. Falta
+    - ~~Publicar o GS nos mundos~~ — publicado no B374 (a pedido); a prévia respondeu com o item gerado (Marreta: "Ataque
+      físico 8-14", "Durabilidade 10/10").
+
+374. **Sessão 2026-10-23: monstro — importar o modelo inteiro de um GLB.** Pedido do Murillo: além das animações, importar
+     modelo + texturas + esqueleto + animações, e commitar/publicar para testar.
+    ### a. O que mudou
+    - `ModeloDoMonstro.svelte`: "Trocar o modelo inteiro por um GLB" (pasta + título) → `modelos/novo` (B298/B299) com o
+      .ecm atual de molde (sem molde quando ele tem peles adicionais) → grava `file_model` do monstro com o .ecm novo.
+    - `pw-recursos`: o GLB (`modelos/glb`) e a ficha do .ecm leem os arquivos de modelo do rascunho antes do publicado
+      (`arquivos_de_modelo_do_rascunho`, `conteudo_de`, `ler_smd_de`, `achar_textura_de`); painel repassa `rascunho` ao GLB.
+    ### b. Provas
+    - Ida e volta no rascunho de teste #64 (1.5.5): o GLB do lobo (monstro 13, com `普攻1起`, 655.784 bytes) importado como
+      `models\npcs\estudio\teste_b374` → 35 ossos, 2 malhas, 1 animação, texturas, .smd/.bon/.ski/.ecm (o molde do lobo foi
+      recusado por ter peles adicionais; molde automático `灯笼.ecm`); `file_model` gravado; GLB do modelo novo com
+      rascunho: 200 (615.448 bytes parado, 653.672 com a animação).
+    - `svelte-check` 0/0.
+    ### c. Falta
+    - Murillo testar no painel (com um GLB dele).

@@ -581,6 +581,62 @@ Tela `telas/EdicaoMonstro.svelte`, significados em `lib/monstro.ts` (cada um com
 | `common_strategy` | id do roteiro do aipolicy (0 nenhum) | `npcgenerator.cpp:218-226` |
 | `id_skill`/`skill_level` | em Avançado, marcado como não usado | `npcgenerator.cpp:225` (comentado) |
 
+**Lado e ajuda entre monstros (B372)** — saíram do "Avançado" para o Comportamento:
+
+| campo | o que é | evidência |
+| :--- | :--- | :--- |
+| `faction` | **lado**: máscara, bit k = lado k do `ENEMY_FACTION_CONFIG` (quem é inimigo de quem). Nomes dos 32 lados no comentário do cliente (0 vazio, 1 humano, 2 bestial, 3 alado, 4 maré, 5 chefe mundial, 6/7 amigável/hostil do cenário, 8 espírito, 9 nome vermelho, 11–14 guerras, 15 duelo, 17 Imortal, 18 Demônio, 21–23 NPCs, 25 mascote, 26 invocação, 28/29 monstro Imortal/Demônio, **30 monstro comum**) | `ExpTypes.h` (`ENEMY_FACTION_CONFIG`); `cgame/gs/faction.h:8-22` |
+| `monster_faction` | **grupo** do monstro para a ajuda: grupos livres do designer, sem nome em arquivo nenhum | `ExpTypes.h` (怪物的详细派系划分) |
+| `monster_faction_ask_help` | **pede ajuda a**: grupos chamados quando ele ganha ódio (no máximo a cada 4 s, até a distância da visão × 1,0) | `ainpc.h:800-860`; `npc.cpp:2175-2190`; `config.h:67` |
+| `monster_faction_can_help` | **atende pedido de**: o vizinho entra se o grupo dele está no pedido, se o "atende" dele inclui o grupo do atacado e se tem ≤ 1 inimigo; soma 2 de ódio | `npc.cpp:669-680`; `ainpc.h:867-876` |
+| npcgen `filhos` | `bDefFaction/dwFaction`, `bDefFacHelper/dwFacHelper`, `bDefFacAccept/dwFacAccept` sobrescrevem por spawner; **o original grava o booleano `bDefFacAccept` no lugar da máscara** ao sobrescrever o "atende" (fica 0) | `npcgenerator.cpp:3821-3826, 2570-2571` |
+
+Invisibilidade (`invisible_lvl`, `uninvisible_lvl`) foi para "O que enxerga": o GS soma o nível do monstro quando não são 0
+(`npcgenerator.cpp:322-326`). As políticas de ódio ganharam a legenda "o que cada política faz": 0–4 criam a mesma
+política no GS 1.5.5 (`ainpc.cpp:209-225`); 5 (lacaio) troca o próprio ódio pelo alvo que o chefe repassa
+(`aiaggro.h:9-27`); 6/7 são de mascote e torre.
+
+**O que era "Avançado" (B373)** — cada campo na box do que afeta, com a explicação na tela (`lib/monstro.ts::EXPLICACOES`):
+
+| campo | box | o que faz | evidência |
+| :--- | :--- | :--- | :--- |
+| `common_strategy` | Inteligência (IA) | roteiro do aipolicy; id inexistente vira 0 | `npcgenerator.cpp:218-226` |
+| `highest_frequency` | IA | IA em todo ciclo mesmo parado (senão 1 a cada 30) | `npcgenerator.cpp:2458-2465`; `config.h:41` |
+| `no_auto_fight` | IA | a IA não começa luta sozinha | `aipolicy.cpp:125` |
+| `local_var_N` | IA | valor inicial das variáveis do roteiro | `npc.cpp:1996`; `npcgenerator.cpp:2520` |
+| `fixed_direction`, `stand_mode` | Movimento | direção do spawn sem girar; postura (só visual do cliente) | `npc.cpp:109` |
+| `no_accept_player_buff` | Vida e defesa | recusa ajuda (cura, bênção) de jogador | `npc.cpp:1021` |
+| `role_in_war` | Eventos, guerras e território | 1 derruba a construção-chave ao morrer, 0 conta como tropa | `instance/battleground_manager.cpp:437-446` |
+| `id_building` | idem | instalação de base de clã que cai com ele | `instance/instance_manager.cpp:1539-1543` |
+| `domain_related` | idem | o clã dono do território vira dono dele | `npcgenerator.cpp:2513-2517` |
+| `hp/defence/attack_adjust_common_value` | idem | variável global que soma −90%…+5000% ao nascer | `npcgenerator.cpp:1912-1922` (`AdjustPropByCommonValue`) |
+| `id_skill`, `skill_level` | Habilidades → Campos antigos | não usados pelo GS 1.5.5 | `npcgenerator.cpp:225` |
+| `id_pet_egg_captured` | Recompensa | seletor de ovo (`PET_EGG_ESSENCE`) | layout |
+
+**Modelo e animações (B373)** (`componentes/ModeloDoMonstro.svelte`): a lista das ações que o cliente pede ao monstro
+(`diagnostico_de_monstro`, B277), cada uma com a animação-base que toca e um seletor para trocá-la entre as animações do
+`.smd`, prévia de cada animação (GLB com `acao`), criar ação que falta (clone, `modelos/acao`), exportar o GLB da animação
+(Blender) e importar animações de GLB (`acoes_glb`, B295). Troca de base: `POST …/estudio/modelos/base {caminho, acao,
+base}` → `Estudio::trocar_base_da_acao` → `pw_data_loader::ecm::trocar_base` (só ação de uma base; a base tem de existir
+no `.smd`; teste em todos os `.ecm` do cliente, ida e volta byte a byte). O efeito do refino saiu do 3D do monstro;
+os efeitos do golpe (`file_gfx_short`, `file_gfx_short_hit`) ficam editáveis sem prévia (sem renderizador de GFX).
+
+**Modelo inteiro de um GLB (B374):** "Trocar o modelo inteiro por um GLB" na box do modelo cria no rascunho
+`<pasta>\<título>` .smd/.bon/.ski/texturas/animações/.ecm (`modelos/novo`, B298/B299; o .ecm atual é o molde e, se ele
+não servir — peles adicionais —, o servidor escolhe o molde) e grava o `file_model` do monstro com o .ecm novo. O GLB e a
+ficha do modelo passaram a ler o **rascunho** (`rascunho=` em `modelos/glb` e na ficha do .ecm: os arquivos de modelo do
+rascunho valem antes do publicado, `admin.rs::arquivos_de_modelo_do_rascunho`), então o modelo novo aparece na prévia
+com as animações antes de publicar.
+
+**Prévia e abrir item (B373):** ao passar o mouse num item que cai aparece a dica da tela de personagem, de um item
+gerado agora pelo GS como drop (`GET /api/realms/{r}/itens/{id}/exemplo` → consulta `item_de_exemplo` do GS, que não
+grava; `detalhe_do_item` passou a montar a dica de um registro, `detalhe_de_registro`). Cada cartão tem abrir em nova aba
+(tela do Estúdio quando a tabela tem, senão os Editores), trocar e tirar. **A prévia só funciona com o GS novo publicado
+nos mundos.**
+
+**Itens (B372):** os cartões de "Itens que caem" mostram o ícone; o seletor de item (espaço `ESSENCE`) tem filtro por
+categoria (a tabela do elements; as mais usadas com nome em português) — com categoria, busca pela listagem da tabela.
+
 **Onde nasce** (`componentes/BoxDeSpawn.svelte` + `ModalMapa.svelte`): os spawners vêm de "onde nasce" (B284); cada um é
 uma área do npcgen. O mapa usa as peças do minimapa (a geometria de `static/mapa.js`), com zoom na roda, arrasto, clique
 para o centro e alça para o tamanho. **A área é um retângulo**: o servidor sorteia dentro de `vPos ± vExts/2`

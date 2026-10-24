@@ -839,6 +839,14 @@ ação.
   `world_targets.txt`, mapa do `instance.txt`, chegada do `world_targets.sev`, preço, nível; "ver no mapa" abre a vista
   Mapas com a camada de teleportes no destino). Listas achatadas do layout começam em 1 (v7 e v156) — o código aceita 0
   ou 1. Outra tabela → 400. "Onde nasce" já existia (B284).
+- **GLB e ficha do modelo com o rascunho (B374)** — `GET estudio/modelos/glb?caminho=&acao=&rascunho=` e a ficha do
+  `.ecm` (`modelos/ficha?rascunho=`) leem primeiro os arquivos de modelo do rascunho (.ecm, .smd, .ski, .bon, .stck e
+  texturas: `admin.rs::arquivos_de_modelo_do_rascunho` + `conteudo_de`), depois o publicado — o modelo importado de um
+  GLB (`modelos/novo`) aparece antes de publicar. O painel repassa o `rascunho` ao GLB.
+- **Trocar a animação de uma ação (B373)** — `POST estudio/modelos/base?rascunho= {caminho, acao, base}`
+  (`Estudio::trocar_base_da_acao`; painel `POST /api/realms/{r}/estudio/modelos/base`): a linha `BaseActName:` da ação
+  combinada passa a ser `base` (`pw_data_loader::ecm::trocar_base`: só com uma base; o resto do `.ecm` igual; a base tem
+  de estar na lista de ações do `.smd` citado). Item `cliente`.
 - **De onde vem o item (B369, só leitura)** — `GET estudio/origens/{id}?rascunho=` (`Estudio::origens_do_item`; painel
   `GET /api/realms/{r}/estudio/origens/{id}`; id ≤ 0 → 400), tudo do rascunho, até 300 por lista:
   `dropado_de` (`MONSTER_ESSENCE.drop_matters_N_id` = item, com a soma dos `drop_matters_N_probability` das linhas),
