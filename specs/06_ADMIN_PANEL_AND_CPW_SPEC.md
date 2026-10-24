@@ -297,6 +297,8 @@ textos, modelos) no rascunho escolhido no topo. Única rota nova, só leitura: `
 | B372: Monstro — lado (`faction`, 32 lados com nome), grupo e ajuda entre monstros (pede/atende) com a regra do GS, invisibilidade em "O que enxerga", legenda das políticas de ódio; ícone nos itens que caem; filtro por categoria no seletor de item | `testado` (navegador) |
 | B373: Monstro — "Avançado" distribuído pelas boxes com explicação; ovo ao capturar; modelo e animações (trocar a animação de cada ação, prévia, criar ação, exportar/importar GLB); itens que caem com prévia ao passar o mouse (`GET /api/realms/{r}/itens/{id}/exemplo`, GS `item_de_exemplo`), abrir em nova aba, trocar e tirar | `testado` parcial: prévia depende do GS novo nos mundos |
 | B374: trocar o modelo inteiro do monstro por um GLB (malha, texturas, esqueleto e animações; `modelos/novo`) e prévia do modelo do rascunho | `testado` (ida e volta com o GLB do próprio monstro) |
+| B375: modelo do monstro em cinco cards; dica do item presa ao ícone (abre no ícone, logo acima dele) | `testado` (navegador) |
+| B376: seletor de item em tabela — prévia ao passar o mouse no ícone; colunas nível mín., nível, categoria/subcategoria (pedras: subcategoria e nível) com filtro por faixa (ou lista, nas de categoria) e ordenação no cabeçalho, sobre a tabela inteira (`GET tabelas/{T}?colunas=&ordem=&faixas=`, spec 07 §6c); paginação de 100 | `testado` (integração + navegador) |
 | Enviar ícone novo (gravar célula no atlas) | `falta` (bloco próprio, combinado) |
 | Brilho do refino no 3D | `falta` (GFX do cliente, `EC_Player.cpp:9299-9316`; sem renderizador de GFX) |
 

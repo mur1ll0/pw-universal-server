@@ -72,6 +72,9 @@ export interface Registro {
   nome: string;
   icone: string | null;
   tabela?: string;
+  /** B376: valores das `colunas` pedidas e, nas colunas `id_*`, o nome do registro citado. */
+  campos?: Record<string, number | null>;
+  nomes?: Record<string, string>;
 }
 
 export interface Pagina {
@@ -79,6 +82,28 @@ export interface Pagina {
   pagina: number;
   por_pagina: number;
   registros: Registro[];
+  /** B376: as colunas que a tabela tem, a ordem aplicada e os valores distintos das colunas `id_*`. */
+  colunas?: string[];
+  ordem?: string | null;
+  opcoes?: Record<string, { valor: number; nome: string | null; registros: number }[]>;
+}
+
+/** B376: colunas, ordenação (`campo` ou `-campo`) e faixas por campo — valem sobre a tabela inteira. */
+export interface FiltroDeTabela {
+  colunas?: string[];
+  ordem?: string;
+  faixas?: Record<string, { min?: number | null; max?: number | null }>;
+}
+
+export function parametrosDoFiltro(f: FiltroDeTabela): Record<string, string> {
+  const r: Record<string, string> = {};
+  if (f.colunas?.length) r.colunas = f.colunas.join(",");
+  if (f.ordem) r.ordem = f.ordem;
+  const faixas = Object.entries(f.faixas ?? {})
+    .filter(([, x]) => x.min != null || x.max != null)
+    .map(([c, x]) => `${c}:${x.min ?? ""}:${x.max ?? ""}`);
+  if (faixas.length) r.faixas = faixas.join(",");
+  return r;
 }
 
 export interface Rascunho {
@@ -118,8 +143,8 @@ export async function criarRascunho(descricao: string): Promise<number> {
 
 export const tabelas = () => api<{ tabelas: { nome: string; registros: number; espaco: string | null }[] }>(rota("tabelas"));
 
-export const listar = (tabela: string, busca: string, pagina: number, porPagina: number) =>
-  api<Pagina>(rota(`tabelas/${tabela}`, { busca, pagina, por_pagina: porPagina }));
+export const listar = (tabela: string, busca: string, pagina: number, porPagina: number, filtro: FiltroDeTabela = {}) =>
+  api<Pagina>(rota(`tabelas/${tabela}`, { busca, pagina, por_pagina: porPagina, ...parametrosDoFiltro(filtro) }));
 
 export const ficha = (tabela: string, indice: number) => api<Ficha>(rota(`tabelas/${tabela}/${indice}`));
 

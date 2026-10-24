@@ -161,6 +161,48 @@ pub fn valor_do_json(f: &FieldDef, v: &Value) -> Result<FieldValue> {
     })
 }
 
+/// B376: o que a listagem de uma tabela pode pedir além da busca (`Estudio::listar`). Só leitura.
+#[derive(Debug, Default, Clone)]
+pub struct FiltroDeListagem {
+    /// Campos numéricos a devolver em cada registro.
+    pub colunas: Vec<String>,
+    /// `campo`, `id` ou `nome`, com `-` na frente para decrescente.
+    pub ordem: Option<String>,
+    /// `(campo, mín., máx.)`, limites inclusivos.
+    pub faixas: Vec<(String, Option<f64>, Option<f64>)>,
+}
+
+impl FiltroDeListagem {
+    /// Da consulta: `colunas=a,b`, `ordem=-a`, `faixas=a:30:40,b::5` (lado vazio = sem limite).
+    pub fn da_consulta(colunas: Option<&str>, ordem: Option<&str>, faixas: Option<&str>) -> Result<Self> {
+        let lista = |s: Option<&str>| -> Vec<String> {
+            s.unwrap_or("").split(',').map(str::trim).filter(|x| !x.is_empty()).take(12).map(String::from).collect()
+        };
+        let mut f = FiltroDeListagem { colunas: lista(colunas), ordem: ordem.map(String::from), faixas: Vec::new() };
+        for x in lista(faixas) {
+            let mut p = x.splitn(3, ':');
+            let campo = p.next().unwrap_or("").to_string();
+            let lim = |s: Option<&str>| -> Result<Option<f64>> {
+                match s.map(str::trim) {
+                    None | Some("") => Ok(None),
+                    Some(v) => Ok(Some(v.parse::<f64>().with_context(|| format!("faixa de {campo}: número inválido"))?)),
+                }
+            };
+            let (min, max) = (lim(p.next())?, lim(p.next())?);
+            f.faixas.push((campo, min, max));
+        }
+        Ok(f)
+    }
+}
+
+fn valor_numerico(v: &FieldValue) -> Option<f64> {
+    match v {
+        FieldValue::Int(n) => Some(f64::from(*n)),
+        FieldValue::Float(x) => Some(f64::from(*x)),
+        _ => None,
+    }
+}
+
 impl Estudio {
     fn trava(&self, rascunho: i64) -> Arc<tokio::sync::Mutex<()>> {
         self.travas.lock().unwrap().entry(rascunho).or_default().clone()
@@ -224,6 +266,12 @@ impl Estudio {
         }))
     }
 
+    /// Listagem de uma tabela, paginada. B376: `colunas` (campos numéricos do layout a devolver em `campos`), `ordem`
+    /// (`campo`, `id` ou `nome`; `-` na frente = decrescente) e `faixas` (mín./máx. por campo) valem sobre a tabela
+    /// inteira, antes da página. Campo que a tabela não tem é ignorado (a resposta diz em `colunas` os que valeram).
+    /// Coluna `id_*` (categoria/subcategoria: ids do mesmo espaço da tabela) traz o nome em `nomes` e, em `opcoes`, os
+    /// valores distintos da tabela inteira com o nome e quantos registros usam cada um.
+    #[allow(clippy::too_many_arguments)]
     pub async fn listar(
         &self,
         gov: &Governanca,
@@ -233,29 +281,120 @@ impl Estudio {
         busca: &str,
         pagina: usize,
         por_pagina: usize,
+        filtro: &FiltroDeListagem,
     ) -> Result<Value> {
         let (e, _) = self.atual(gov, versao, rascunho).await?;
         let t = e.tabela(tabela)?;
-        let campo_nome = t.campos().into_iter().find(|(_, _, f)| f.name == "Name").map(|(_, _, f)| f.clone());
-        let busca = busca.trim().to_lowercase();
-        let mut achados = Vec::new();
-        for i in 0..t.registros.len() {
-            let id = t.id(i);
-            let nome = match &campo_nome {
-                Some(_) => match t.ler(i)?.get("Name") {
-                    Some(FieldValue::Text(s)) => s.clone(),
-                    _ => String::new(),
-                },
-                None => String::new(),
-            };
-            if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                achados.push(json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
+        let numericos: Vec<String> = t
+            .campos()
+            .into_iter()
+            .filter(|(_, _, f)| matches!(f.field_type.as_str(), "int32" | "float"))
+            .map(|(_, _, f)| f.name.clone())
+            .collect();
+        let tem = |c: &str| numericos.iter().any(|n| n == c);
+        let colunas: Vec<String> = filtro.colunas.iter().filter(|c| tem(c)).cloned().collect();
+        let faixas: Vec<&(String, Option<f64>, Option<f64>)> = filtro.faixas.iter().filter(|(c, _, _)| tem(c)).collect();
+        let (ordem, decrescente) = match filtro.ordem.as_deref().map(str::trim) {
+            Some(o) if !o.is_empty() => {
+                let (d, c) = o.strip_prefix('-').map_or((false, o), |c| (true, c));
+                (Some(c.to_string()).filter(|c| c == "id" || c == "nome" || tem(c)), d)
             }
+            _ => (None, false),
+        };
+        let precisa_ler: Vec<String> = colunas
+            .iter()
+            .cloned()
+            .chain(faixas.iter().map(|(c, _, _)| c.clone()))
+            .chain(ordem.iter().filter(|c| *c != "id" && *c != "nome").cloned())
+            .collect();
+        let campo_nome = t.campos().into_iter().any(|(_, _, f)| f.name == "Name");
+        let busca = busca.trim().to_lowercase();
+        // (índice, id, nome, valores dos campos pedidos)
+        type Achado = (usize, Option<i32>, String, HashMap<String, f64>);
+        let mut achados: Vec<Achado> = Vec::new();
+        'registro: for i in 0..t.registros.len() {
+            let id = t.id(i);
+            let reg = if campo_nome || !precisa_ler.is_empty() { Some(t.ler(i)?) } else { None };
+            let nome = match reg.as_ref().and_then(|r| r.get("Name")) {
+                Some(FieldValue::Text(s)) => s.clone(),
+                _ => String::new(),
+            };
+            if !(busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca)) {
+                continue;
+            }
+            let mut valores = HashMap::new();
+            if let Some(r) = &reg {
+                for c in &precisa_ler {
+                    if let Some(v) = r.get(c).and_then(valor_numerico) {
+                        valores.insert(c.clone(), v);
+                    }
+                }
+            }
+            for (c, min, max) in &faixas {
+                let Some(v) = valores.get(c) else { continue 'registro };
+                if min.is_some_and(|m| *v < m) || max.is_some_and(|m| *v > m) {
+                    continue 'registro;
+                }
+            }
+            achados.push((i, id, nome, valores));
+        }
+        if let Some(c) = &ordem {
+            let chave = |a: &Achado| -> f64 {
+                match c.as_str() {
+                    "id" => a.1.map_or(f64::MIN, f64::from),
+                    _ => a.3.get(c).copied().unwrap_or(f64::MIN),
+                }
+            };
+            achados.sort_by(|a, b| {
+                let o = if c == "nome" { a.2.to_lowercase().cmp(&b.2.to_lowercase()) } else { chave(a).total_cmp(&chave(b)) };
+                let o = if decrescente { o.reverse() } else { o };
+                o.then(a.0.cmp(&b.0))
+            });
+        }
+        // Nomes das colunas `id_*`: o id está no mesmo espaço da tabela (`WEAPON_MAJOR_TYPE`, `WEAPON_SUB_TYPE` etc. são
+        // do ESSENCE, como `WEAPON_ESSENCE` — `espaco_de_id`).
+        let espaco = espaco_de_id(tabela);
+        let de_id: Vec<&String> = colunas.iter().filter(|c| c.starts_with("id_")).collect();
+        let ids = if de_id.is_empty() || espaco.is_none() { HashMap::new() } else { mapa_de_ids(&e) };
+        let nome_de = |v: f64| -> Option<String> {
+            let &(ti, ri) = ids.get(&(espaco.clone()?, v as i32))?;
+            (ti != CONVERSAS).then(|| nome_do_registro(&e.tabelas[ti], ri))
+        };
+        let mut opcoes = Map::new();
+        for c in &de_id {
+            let mut contagem: std::collections::BTreeMap<i64, usize> = Default::default();
+            for i in 0..t.registros.len() {
+                if let Some(v) = t.ler(i)?.get(c.as_str()).and_then(valor_numerico) {
+                    *contagem.entry(v as i64).or_default() += 1;
+                }
+            }
+            let l: Vec<Value> =
+                contagem.into_iter().map(|(v, n)| json!({ "valor": v, "nome": nome_de(v as f64), "registros": n })).collect();
+            opcoes.insert((*c).clone(), Value::Array(l));
         }
         let total = achados.len();
         let por_pagina = por_pagina.clamp(1, 200);
-        let pagina_lista: Vec<Value> = achados.into_iter().skip(pagina * por_pagina).take(por_pagina).collect();
-        Ok(json!({ "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista }))
+        let pagina_lista: Vec<Value> = achados
+            .into_iter()
+            .skip(pagina * por_pagina)
+            .take(por_pagina)
+            .map(|(i, id, nome, valores)| {
+                let mut r = json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) });
+                if !colunas.is_empty() {
+                    r["campos"] = Value::Object(colunas.iter().map(|c| (c.clone(), json!(valores.get(c)))).collect());
+                }
+                if !de_id.is_empty() {
+                    r["nomes"] = Value::Object(
+                        de_id.iter().filter_map(|c| Some(((*c).clone(), json!(nome_de(*valores.get(*c)?)?)))).collect(),
+                    );
+                }
+                r
+            })
+            .collect();
+        Ok(json!({
+            "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista,
+            "colunas": colunas, "ordem": ordem.map(|c| if decrescente { format!("-{c}") } else { c }), "opcoes": opcoes,
+        }))
     }
 
     /// B283: os modelos de voo do elements e o modo de cada um (`ecm::encaixe_de_voo`): `FLYSWORD_ESSENCE.file_model`

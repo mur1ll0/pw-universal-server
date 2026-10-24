@@ -628,6 +628,10 @@ ficha do modelo passaram a ler o **rascunho** (`rascunho=` em `modelos/glb` e na
 rascunho valem antes do publicado, `admin.rs::arquivos_de_modelo_do_rascunho`), então o modelo novo aparece na prévia
 com as animações antes de publicar.
 
+**Arrumação (B375):** a box do modelo virou cinco cards um embaixo do outro (Modelo 3D, O que ele faz em cada ação,
+Animações do esqueleto, Trocar o modelo inteiro, Arquivos e efeitos), sem rolagem interna; a dica do item abre só sobre o
+ícone e aparece logo acima dele.
+
 **Prévia e abrir item (B373):** ao passar o mouse num item que cai aparece a dica da tela de personagem, de um item
 gerado agora pelo GS como drop (`GET /api/realms/{r}/itens/{id}/exemplo` → consulta `item_de_exemplo` do GS, que não
 grava; `detalhe_do_item` passou a montar a dica de um registro, `detalhe_de_registro`). Cada cartão tem abrir em nova aba
@@ -636,6 +640,17 @@ nos mundos.**
 
 **Itens (B372):** os cartões de "Itens que caem" mostram o ícone; o seletor de item (espaço `ESSENCE`) tem filtro por
 categoria (a tabela do elements; as mais usadas com nome em português) — com categoria, busca pela listagem da tabela.
+
+**Seletor de item em tabela (B376)** (`componentes/SeletorDeEspaco.svelte`, usado no Trocar/Adicionar de "Itens que
+caem" e nos outros seletores do espaço `ESSENCE`): com uma categoria escolhida, a lista vira tabela — ícone, nome, id e
+as colunas que a tabela tem entre nível mín. (`require_level`, `require_player_level_min`, `req_goblin_level`), nível
+(`level`), grau (`rank`), categoria (`id_major_type`) e subcategoria (`id_sub_type`), mostradas pelo nome
+(`lib/catalogo.ts::COLUNAS_DO_SELETOR`; só nas tabelas das categorias do Estúdio e em `STONE_ESSENCE`). Clique no
+cabeçalho ordena (crescente → decrescente → sem ordem); a linha de filtros tem mín./máx. nas colunas numéricas e uma
+lista (com quantos registros) na categoria/subcategoria. Filtro e ordem são do pw-recursos, sobre a tabela inteira
+(spec 07 §6c); 100 por página. Passar o mouse no ícone mostra a dica do item logo acima dele (a mesma de "Itens que
+caem", `lib/dica.svelte.ts`); monstro, NPC, mina e tabelas de tipo não têm prévia. Sem categoria ("Todas") continua a
+busca no espaço inteiro, sem colunas.
 
 **Onde nasce** (`componentes/BoxDeSpawn.svelte` + `ModalMapa.svelte`): os spawners vêm de "onde nasce" (B284); cada um é
 uma área do npcgen. O mapa usa as peças do minimapa (a geometria de `static/mapa.js`), com zoom na roda, arrasto, clique

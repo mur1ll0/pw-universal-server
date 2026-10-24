@@ -17442,3 +17442,28 @@ comparação lado a lado.
     - `svelte-check` 0/0.
     ### c. Falta
     - Murillo testar no painel (com um GLB dele).
+
+375. **Sessão 2026-10-24: Estúdio — modelo do monstro em cards e dica presa ao ícone.** Pedido do Murillo: menos
+     rolagens na parte de modelo e animações; a dica do item que cai aparecer sobre o ícone, não pela caixa inteira.
+    - `ModeloDoMonstro.svelte` em cinco cards (sem `max-height`/`overflow` na lista de ações nem na coluna da direita).
+    - `ListaDeChances.svelte`: a dica abre no `mouseenter` do ícone; `dica.svelte.ts`/`DicaFlutuante.svelte` ancoram pelo
+      pé (`bottom`) logo acima do ícone.
+    - Provas (navegador, `localhost:8000`): 5 cards, 0 áreas com rolagem na coluna; passar na caixa não abre a dica, no
+      ícone abre 6 px acima, alinhada à esquerda dele. `svelte-check` 0/0. `pw-admin-api` publicado. Commitado junto com o B376.
+376. **Sessão 2026-10-24: Estúdio — seletor de item em tabela, com prévia, filtro e ordenação.** Pedido (sessão do
+     Estúdio): no Trocar/Adicionar de "Itens que caem" e nos outros seletores do `ESSENCE`, prévia ao passar o mouse e
+     colunas para filtrar e ordenar sobre a tabela inteira.
+    - `pw-recursos`: `Estudio::listar` aceita `colunas`, `ordem` e `faixas` (`FiltroDeListagem::da_consulta`); só campos
+      `int32`/`float` do layout; faixa e ordem antes da página; colunas `id_*` com `nomes` e `opcoes` (valores distintos
+      da tabela inteira, nome pelo espaço da tabela). Painel repassa em `GET /api/realms/{r}/estudio/tabelas/{T}`.
+    - Campos conferidos em `specs/elements_layouts/v156.json` e `v7.json` (listas a partir de 1): WEAPON 4, ARMOR 7,
+      DECORATION 10, FASHION 84 (`id_major_type`, `id_sub_type`, `level`, `require_level`); FLYSWORD 23, WINGMANWING 24
+      (`require_player_level_min`); STONE 36 (`id_sub_type`, `level`); só v156: GOBLIN_EQUIP 122, POKER 185.
+    - `SeletorDeEspaco.svelte` vira tabela (cabeçalho fixo, mín./máx. por coluna numérica, lista nas de categoria,
+      ordenação ▲/▼ no clique, 100 por página) com a dica do item no ícone (`dica.svelte.ts`); sem prévia para monstro,
+      NPC, mina e tabelas de tipo. Título "escolher item" (era "escolher efeito") no seletor de item dos cartões.
+    - Provas: `tests/estudio.rs` com banco 1/1 (faixa 30–40 = contagem da tabela inteira, ordem ▲ e ▼ através das
+      páginas, nomes/opções de `id_sub_type`, faixa mín.=máx., 400 para número inválido); `svelte-check` 0/0; vitest
+      34/34 (3 novos, `lib/filtro.test.ts`). Navegador (realm_155, rascunho de teste 65, descartado): Armas 2.741 → nível
+      mín. 30–40 = 153, ordenadas por nível (4 → 5); dica do "★Ju Que" com fundo 6 px acima do ícone, mesma esquerda,
+      "Nv. necessário: 30". Commitado com o B375.

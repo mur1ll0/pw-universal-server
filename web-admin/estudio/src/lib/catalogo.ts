@@ -51,6 +51,25 @@ export const CATEGORIAS: Categoria[] = [
 export const subcategoriaPorTabela = (tabela: string) =>
   CATEGORIAS.flatMap((c) => c.subcategorias).find((s) => s.tabela === tabela);
 
+/* ---- B376: colunas do seletor de item (filtro e ordenação sobre a tabela inteira, `GET tabelas/{T}?colunas=`) ----
+   Nomes do layout (`specs/elements_layouts/v156.json` e `v7.json`, listas achatadas a partir de 1): WEAPON (4),
+   ARMOR (7), DECORATION (10) e FASHION (84) têm `id_major_type`, `id_sub_type`, `level` e `require_level`;
+   FLYSWORD (23) `level` e `require_player_level_min`; WINGMANWING (24) `require_player_level_min`; STONE (36)
+   `id_sub_type` e `level`; GOBLIN_EQUIP (122, só v156) `req_goblin_level`; POKER (185, só v156) `id_sub_type`,
+   `require_level` e `rank`. Pede-se a lista toda: o pw-recursos devolve em `colunas` só as que a tabela tem. */
+export const COLUNAS_DO_SELETOR: { campo: string; titulo: string }[] = [
+  { campo: "require_level", titulo: "Nív. mín." },
+  { campo: "require_player_level_min", titulo: "Nív. mín." },
+  { campo: "req_goblin_level", titulo: "Nív. Daimon" },
+  { campo: "level", titulo: "Nível" },
+  { campo: "rank", titulo: "Grau" },
+  { campo: "id_major_type", titulo: "Categoria" },
+  { campo: "id_sub_type", titulo: "Subcategoria" },
+];
+
+/** As tabelas cujo seletor ganha colunas: as das categorias do Estúdio e as pedras. */
+export const tabelaComColunas = (tabela: string) => tabela === "STONE_ESSENCE" || !!subcategoriaPorTabela(tabela);
+
 /* ---- boxes da edição de Equipável (B366 Armas; B370 todas as subcategorias) ----
    Uma lista só para todas as tabelas: o campo que a tabela (ou a versão) não tem não aparece. Entrada que começa com
    "/" é expressão regular sobre os nomes do layout (na ordem do arquivo). Fontes: `ExpTypes.h` — `WEAPON_ESSENCE`

@@ -405,7 +405,7 @@
   .espaco { flex: 1; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 14px; align-items: start; }
   .coluna { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-  .lateral { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 80px); overflow: auto; }
+  .lateral { display: flex; flex-direction: column; gap: 14px; }
   .uma { grid-template-columns: 1fr; }
   .dados { display: flex; flex-direction: column; gap: 8px; }
   .nome { font-size: 18px; font-weight: 600; height: 40px; }

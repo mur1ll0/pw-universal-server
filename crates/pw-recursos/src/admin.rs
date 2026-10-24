@@ -949,6 +949,10 @@ struct QEstudio {
     busca: Option<String>,
     pagina: Option<usize>,
     por_pagina: Option<usize>,
+    /// B376 (só a listagem de tabela): `colunas=a,b`, `ordem=-a`, `faixas=a:30:40`.
+    colunas: Option<String>,
+    ordem: Option<String>,
+    faixas: Option<String>,
 }
 
 fn tabela_valida(t: &str) -> R<()> {
@@ -974,9 +978,12 @@ async fn estudio_listar(
 ) -> R<Json<Value>> {
     validar(&v)?;
     tabela_valida(&tabela)?;
+    // B376: colunas, ordenação e faixas por campo, sobre a tabela inteira (`FiltroDeListagem`).
+    let filtro = crate::estudio::FiltroDeListagem::da_consulta(q.colunas.as_deref(), q.ordem.as_deref(), q.faixas.as_deref())
+        .map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?;
     let r = e
         .estudio
-        .listar(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50))
+        .listar(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50), &filtro)
         .await?;
     Ok(Json(r))
 }

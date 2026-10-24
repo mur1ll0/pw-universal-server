@@ -206,7 +206,7 @@ Motor `crates/pw-recursos/src/estudio.rs` sobre `pw_data_loader::elements_editav
 | rota (`/admin/{v}/estudio/…`) | faz |
 | :--- | :--- |
 | `GET tabelas?rascunho=` | tabelas do arquivo (registros, espaço de id) — do rascunho, ou do publicado |
-| `GET tabelas/{T}?busca=&pagina=&por_pagina=&rascunho=` | registros com id e `Name` (busca por id exato ou nome) |
+| `GET tabelas/{T}?busca=&pagina=&por_pagina=&rascunho=&colunas=&ordem=&faixas=` | registros com id e `Name` (busca por id exato ou nome); B376: colunas, ordem e faixas por campo sobre a tabela inteira (§6c) |
 | `GET tabelas/{T}/{i}?rascunho=` | a ficha: campos com tipo, tamanho, deslocamento e valor (`string` GBK sai legível) |
 | `PUT tabelas/{T}/{i}?rascunho=` `{campos}` | edita; recusa tipo errado, texto que não cabe, campo inexistente |
 | `POST tabelas/{T}/{i}/clonar?rascunho=` | registro novo com o próximo id do espaço |
@@ -847,6 +847,20 @@ ação.
   (`Estudio::trocar_base_da_acao`; painel `POST /api/realms/{r}/estudio/modelos/base`): a linha `BaseActName:` da ação
   combinada passa a ser `base` (`pw_data_loader::ecm::trocar_base`: só com uma base; o resto do `.ecm` igual; a base tem
   de estar na lista de ações do `.smd` citado). Item `cliente`.
+- **Colunas, ordem e faixas na listagem (B376, só leitura)** — `GET estudio/tabelas/{T}` aceita `colunas=a,b` (até 12
+  campos `int32`/`float` do layout; o que a tabela não tem é ignorado e a resposta diz em `colunas` os que valeram),
+  `ordem=campo|-campo` (também `id` e `nome`; `-` = decrescente; empate pelo índice) e `faixas=a:30:40,b::5` (mín./máx.
+  inclusivos, lado vazio = sem limite; número inválido → 400). Faixa e ordem valem sobre a tabela inteira, antes da
+  página (`total` = filtrados). Cada registro traz `campos {coluna: valor}`; coluna `id_*` (categoria/subcategoria — ids
+  do mesmo espaço da tabela, ex. `WEAPON_SUB_TYPE` no ESSENCE) traz também `nomes {coluna: Name}` e, no topo,
+  `opcoes {coluna: [{valor, nome, registros}]}` com os valores distintos da tabela inteira. `Estudio::listar` +
+  `FiltroDeListagem::da_consulta`; painel repassa em `GET /api/realms/{r}/estudio/tabelas/{T}` (cada parâmetro até 400
+  caracteres). Campos por versão (`v156.json`/`v7.json`, listas a partir de 1): WEAPON 4, ARMOR 7, DECORATION 10 e
+  FASHION 84 têm `id_major_type`, `id_sub_type`, `level`, `require_level`; FLYSWORD 23 `level`,
+  `require_player_level_min`; WINGMANWING 24 `require_player_level_min`; STONE 36 `id_sub_type`, `level`; só v156:
+  GOBLIN_EQUIP 122 `req_goblin_level`, POKER 185 `id_sub_type`, `require_level`, `rank`. Teste:
+  `tests/estudio.rs` (faixa 30–40 de `require_level` = contagem da tabela inteira, ordem crescente e decrescente através
+  das páginas, nomes e opções de `id_sub_type`, faixa mín.=máx., 400).
 - **De onde vem o item (B369, só leitura)** — `GET estudio/origens/{id}?rascunho=` (`Estudio::origens_do_item`; painel
   `GET /api/realms/{r}/estudio/origens/{id}`; id ≤ 0 → 400), tudo do rascunho, até 300 por lista:
   `dropado_de` (`MONSTER_ESSENCE.drop_matters_N_id` = item, com a soma dos `drop_matters_N_probability` das linhas),

@@ -252,11 +252,14 @@ def registrar_estudio(app):
 
     @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}")
     async def estudio_listar(realm: str, tabela: str, requisicao: Request, rascunho: int | None = None,
-                             busca: str = "", pagina: int = 0, por_pagina: int = 50):
+                             busca: str = "", pagina: int = 0, por_pagina: int = 50,
+                             colunas: str = "", ordem: str = "", faixas: str = ""):
         v = await _versao_do_realm(requisicao, realm)
+        # B376: colunas, ordenação e faixas por campo (só leitura; o pw-recursos valida os nomes no layout).
+        extra = {k: x[:400] for k, x in (("colunas", colunas), ("ordem", ordem), ("faixas", faixas)) if x}
         return await _repassar("GET", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}", {
             "rascunho": rascunho, "busca": busca[:100], "pagina": max(0, pagina),
-            "por_pagina": max(1, min(por_pagina, 200))})
+            "por_pagina": max(1, min(por_pagina, 200)), **extra})
 
     @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_ficha(realm: str, tabela: str, indice: int, requisicao: Request, rascunho: int | None = None):

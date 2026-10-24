@@ -306,6 +306,52 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let id0 = lista["registros"][0]["id"].as_i64().unwrap();
         let por_id = json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("busca", &id0.to_string()).call().unwrap());
         assert_eq!(por_id["total"], 1);
+
+        // B376: colunas, faixas e ordenação valem sobre a tabela inteira, não só sobre a página.
+        let todos = |q: &[(&str, &str)]| -> (u64, Vec<Value>, Value) {
+            let (mut pagina, mut regs) = (0, Vec::new());
+            let ultima = loop {
+                let mut p = pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("por_pagina", "200").query("pagina", &pagina.to_string());
+                for (k, v) in q {
+                    p = p.query(k, v);
+                }
+                let r = json_de(p.call().unwrap());
+                let n = r["registros"].as_array().unwrap().len();
+                regs.extend(r["registros"].as_array().unwrap().iter().cloned());
+                if n < 200 {
+                    break r;
+                }
+                pagina += 1;
+            };
+            (ultima["total"].as_u64().unwrap(), regs, ultima)
+        };
+        let campo = |r: &Value, c: &str| r["campos"][c].as_f64().unwrap();
+        let (total_armas, todas, _) = todos(&[("colunas", "require_level,level")]);
+        assert_eq!(total_armas as usize, todas.len());
+        let esperado = todas.iter().filter(|r| (30.0..=40.0).contains(&campo(r, "require_level"))).count();
+        assert!(esperado > 0, "o elements do 1.2.6 tem armas de nível mínimo 30–40");
+        let (total, filtradas, r) = todos(&[
+            ("colunas", "require_level,level,id_sub_type,nao_existe"),
+            ("faixas", "require_level:30:40"),
+            ("ordem", "level"),
+        ]);
+        assert_eq!((total as usize, filtradas.len()), (esperado, esperado), "a faixa vale sobre a tabela inteira");
+        assert_eq!(r["colunas"], json!(["require_level", "level", "id_sub_type"]), "campo que a tabela não tem é ignorado");
+        assert_eq!(r["ordem"], "level");
+        assert!(filtradas.iter().all(|x| (30.0..=40.0).contains(&campo(x, "require_level"))));
+        assert!(filtradas.windows(2).all(|w| campo(&w[0], "level") <= campo(&w[1], "level")), "ordem crescente através das páginas");
+        // A subcategoria vem com o nome (WEAPON_SUB_TYPE, espaço ESSENCE) e as opções contam a tabela inteira.
+        assert!(filtradas.iter().all(|x| x["nomes"]["id_sub_type"].as_str().is_some_and(|n| !n.is_empty())));
+        let opcoes = r["opcoes"]["id_sub_type"].as_array().unwrap();
+        assert_eq!(opcoes.iter().map(|o| o["registros"].as_u64().unwrap()).sum::<u64>(), total_armas);
+        let (_, desc, _) = todos(&[("colunas", "level"), ("faixas", "require_level:30:40"), ("ordem", "-level")]);
+        assert!(desc.windows(2).all(|w| campo(&w[0], "level") >= campo(&w[1], "level")), "ordem decrescente");
+        assert_eq!(desc.len(), esperado, "filtrar por campo que não está nas colunas");
+        let sub = opcoes[0]["valor"].as_i64().unwrap();
+        let (n_sub, _, _) = todos(&[("faixas", &format!("id_sub_type:{sub}:{sub}"))]);
+        assert_eq!(n_sub, opcoes[0]["registros"].as_u64().unwrap(), "faixa mín.=máx. escolhe uma subcategoria");
+        assert_eq!(erro_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("faixas", "level:x:1").call()).0, 400);
+
         let ficha = json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE/0").call().unwrap());
         let valor = |f: &Value, nome: &str| f["campos"].as_array().unwrap().iter().find(|c| c["nome"] == nome).unwrap()["valor"].clone();
         let (nome0, preco0) = (valor(&ficha, "Name"), valor(&ficha, "price"));

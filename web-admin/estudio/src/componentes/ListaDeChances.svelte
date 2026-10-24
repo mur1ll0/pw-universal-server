@@ -45,10 +45,15 @@
   {#if explica}<p class="mini">{explica}</p>{/if}
   <ul class="cartoes">
     {#each linhas as l, i (i)}
-      <li class="cartao" role="group" onmouseenter={(e) => { if (espaco !== "ADDON") mostrarDica(l.id, l.nome, e.currentTarget as HTMLElement); }}
-        onmouseleave={esconderDica}>
+      <li class="cartao">
         <button class="nome" type="button" disabled={!editavel} title={espaco === "ADDON" ? "Trocar" : "Trocar o item"} onclick={() => (seletor = { indice: i })}>
-          {#if espaco !== "ADDON"}<IconeItem hex={l.icone} nome={l.nome} tamanho={28} discreto />{/if}
+          {#if espaco !== "ADDON"}
+            <!-- B375: a prévia abre só sobre o ícone, logo acima dele. -->
+            <span class="icone-dica" role="img" aria-label="Prévia de {l.nome}"
+              onmouseenter={(e) => mostrarDica(l.id, l.nome, e.currentTarget as HTMLElement)} onmouseleave={esconderDica}>
+              <IconeItem hex={l.icone} nome={l.nome} tamanho={28} />
+            </span>
+          {/if}
           <span class="textos"><span>{l.descricao || l.nome || "(sem nome)"}</span>
             <span class="mini">{l.descricao ? `${l.nome} · ` : ""}id {l.id}{l.extra ? ` · ${l.extra}` : ""}</span></span>
         </button>
@@ -76,7 +81,7 @@
   {#if tabela}
     <SeletorDeEfeito titulo="{titulo}: escolher efeito" {tabela} aoEscolher={escolher} aoFechar={() => (seletor = null)} />
   {:else}
-    <SeletorDeEspaco titulo="{titulo}: escolher efeito" {espaco} aoEscolher={escolher} aoFechar={() => (seletor = null)} />
+    <SeletorDeEspaco titulo="{titulo}: escolher {espaco === 'ADDON' ? 'efeito' : 'item'}" {espaco} aoEscolher={escolher} aoFechar={() => (seletor = null)} />
   {/if}
 {/if}
 
@@ -85,6 +90,7 @@
   .cartao { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 160px) 64px auto auto auto; align-items: center; gap: 8px;
     padding: 6px 8px; border: 1px solid var(--borda); border-radius: 10px; background: var(--fundo-2); }
   .textos { display: flex; flex-direction: column; min-width: 0; }
+  .icone-dica { display: inline-flex; cursor: help; flex: none; }
   .nome { display: flex; flex-direction: row; gap: 8px; align-items: center; background: none; border: 0; color: var(--texto); font: inherit; cursor: pointer; text-align: left; min-width: 0; }
   .nome span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .nome:disabled { cursor: default; }

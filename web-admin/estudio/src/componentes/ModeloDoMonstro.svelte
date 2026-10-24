@@ -123,8 +123,9 @@
   }
 </script>
 
+<div class="cards">
 <section class="caixa visual">
-  <h3>Modelo e animações</h3>
+  <h3>Modelo 3D</h3>
   <canvas bind:this={tela} width="560" height="420"></canvas>
   <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada — escolha uma animação")} · arraste para girar, roda para aproximar.</p>
   <div class="linha">
@@ -135,24 +136,15 @@
     </label>
   </div>
   <p class="mini">Exportar leva o modelo com a animação em prévia; no Blender, cada ação do glTF que voltar pelo importar vira uma animação do esqueleto (substitui a de mesmo nome).</p>
-  <details class="novo">
-    <summary class="mini">Trocar o modelo inteiro por um GLB (malha, texturas, esqueleto e animações)</summary>
-    <p class="mini">Cria no rascunho <code>&lt;pasta&gt;\&lt;título&gt;</code>.smd, .bon, .ski, as texturas, as animações e o .ecm (o .ecm atual serve de molde:
-      herda o cabeçalho e as ações), e o monstro passa a usar o .ecm novo. Recusa pasta fora de models\, nome fora do GBK e arquivo que já existe.
-      Ao montar no Blender, nomeie as ações como as do cliente (站立, 普攻1起, 死亡…) para ligar sozinho.</p>
-    <div class="linha">
-      <input class="campo" bind:value={pastaNova} aria-label="Pasta do modelo novo" placeholder="models\npcs\estudio" />
-      <input class="campo" bind:value={tituloNovo} aria-label="Título" placeholder={idDoMonstro ? `monstro_${idDoMonstro}` : "título (nome dos arquivos)"} />
-      <label class="botao pequeno" class:desligado={!editavel || ocupado}>
-        <Icone nome="mais" tamanho={16} /> Escolher GLB…
-        <input type="file" accept=".glb,model/gltf-binary" hidden disabled={!editavel || ocupado} onchange={importarModelo} />
-      </label>
-    </div>
-  </details>
+  <button class="botao" type="button" disabled title="editor 3D: depois">Editar malha</button>
+</section>
 
-  {#if erro}<p class="erro">{erro}</p>{:else if !ficha}<p class="suave">Carregando o modelo…</p>
-  {:else}
-    <h4>O que ele faz em cada ação</h4>
+
+{#if erro}<section class="caixa"><p class="erro">{erro}</p></section>
+{:else if !ficha}<section class="caixa"><p class="suave">Carregando o modelo…</p></section>
+{:else}
+  <section class="caixa">
+    <h3>O que ele faz em cada ação</h3>
     <ul class="acoes">
       {#each pedidos as p (p.indice)}
         <li class:falta={!p.combinada}>
@@ -187,21 +179,39 @@
         <ul class="acoes">{#each outras as c (c.nome)}<li><strong>{traduzir(c.nome)}</strong> <span class="mini">{c.nome} · {c.bases.map(traduzir).join(" → ") || "sem animação"}</span></li>{/each}</ul>
       </details>
     {/if}
-    <h4>Animações do esqueleto ({ficha.bases_do_smd?.length ?? 0})</h4>
+  </section>
+  <section class="caixa">
+    <h3>Animações do esqueleto <span class="mini">{ficha.bases_do_smd?.length ?? 0}</span></h3>
+    <p class="mini">Clique para ver no Modelo 3D.</p>
     <div class="chips">
       {#each ficha.bases_do_smd ?? [] as b (b)}
         <button type="button" class:ativo={tocando === b} onclick={() => tocar(b)} title={b}>▶ {traduzir(b)}</button>
       {/each}
     </div>
-  {/if}
-  <button class="botao" type="button" disabled title="editor 3D: depois">Editar malha</button>
+  </section>
+{/if}
+<section class="caixa novo">
+  <h3>Trocar o modelo inteiro</h3>
+    <p class="mini">Por um GLB com malha, texturas, esqueleto e animações.</p>
+    <p class="mini">Cria no rascunho <code>&lt;pasta&gt;\&lt;título&gt;</code>.smd, .bon, .ski, as texturas, as animações e o .ecm (o .ecm atual serve de molde:
+      herda o cabeçalho e as ações), e o monstro passa a usar o .ecm novo. Recusa pasta fora de models\, nome fora do GBK e arquivo que já existe.
+      Ao montar no Blender, nomeie as ações como as do cliente (站立, 普攻1起, 死亡…) para ligar sozinho.</p>
+    <div class="linha">
+      <input class="campo" bind:value={pastaNova} aria-label="Pasta do modelo novo" placeholder="models\npcs\estudio" />
+      <input class="campo" bind:value={tituloNovo} aria-label="Título" placeholder={idDoMonstro ? `monstro_${idDoMonstro}` : "título (nome dos arquivos)"} />
+      <label class="botao pequeno" class:desligado={!editavel || ocupado}>
+        <Icone nome="mais" tamanho={16} /> Escolher GLB…
+        <input type="file" accept=".glb,model/gltf-binary" hidden disabled={!editavel || ocupado} onchange={importarModelo} />
+      </label>
+    </div>
 </section>
+</div>
 
 <style>
   .visual { display: flex; flex-direction: column; gap: 8px; }
   canvas { width: 100%; max-width: 560px; align-self: center; aspect-ratio: 4 / 3; background: #20242a; border-radius: 8px; cursor: grab; }
-  h4 { margin: 10px 0 4px; font-size: 13px; color: var(--texto-2); }
-  .acoes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow: auto; }
+  .cards { display: flex; flex-direction: column; gap: 14px; }
+  .acoes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .acoes li { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 10px; background: var(--fundo-2); }
   .acoes li.falta { border-color: var(--vermelho); }
   .acoes select { flex: 1; min-width: 0; height: 30px; }

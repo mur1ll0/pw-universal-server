@@ -5,7 +5,8 @@ import { api, buscarNoEspaco, contexto, linkDosEditores } from "./api";
 import { subcategoriaPorTabela } from "./catalogo";
 import { parametros } from "./estado.svelte";
 
-export const dica = $state<{ visivel: boolean; x: number; y: number; linhas: string[] }>({ visivel: false, x: 0, y: 0, linhas: [] });
+/* B375: a dica fica presa ao ícone, logo acima dele (`base` = distância do pé da janela até o topo do ícone). */
+export const dica = $state<{ visivel: boolean; x: number; base: number; linhas: string[] }>({ visivel: false, x: 0, base: 0, linhas: [] });
 
 const cache = new Map<string, Promise<string[]>>();
 let pedido = 0;
@@ -23,8 +24,8 @@ function linhasDe(id: number): Promise<string[]> {
 export async function mostrarDica(id: number, nome: string, alvo: HTMLElement) {
   const meu = ++pedido;
   const r = alvo.getBoundingClientRect();
-  const x = r.right + 8 + 340 > window.innerWidth ? Math.max(4, r.left - 348) : r.right + 8;
-  Object.assign(dica, { visivel: true, x, y: Math.max(4, r.top), linhas: [`^ffffff${nome || `Item ${id}`}`, "^b0b0b0…"] });
+  const x = Math.max(4, Math.min(r.left, window.innerWidth - 348));
+  Object.assign(dica, { visivel: true, x, base: window.innerHeight - r.top + 6, linhas: [`^ffffff${nome || `Item ${id}`}`, "^b0b0b0…"] });
   try {
     const l = await linhasDe(id);
     if (meu === pedido) dica.linhas = l;
