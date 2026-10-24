@@ -17498,3 +17498,22 @@ comparação lado a lado.
       avisos às 19:31:09 (1 minuto), :39 (30 s) e :59 (10 s) UTC, `reiniciar` às 19:32:10, mundo de volta às 19:32:19,
       `reinicio_agendado` nulo depois. Agendado 2 min e cancelado: aviso "2 minutos", aviso "cancelado", sem reinício.
       Falta ver a mensagem no chat do cliente (ninguém online no 155 no teste: `enviados` 0).
+379. **Sessão 2026-10-24: Avaliar item no 1.2.6.** Relato do Murillo: avaliar a Perneiras do Purgatório (5020) no char WB
+     (11458) não fazia nada.
+    - Log do `pw-world-126` às 19:15–19:17 UTC: "11458 pediu o serviço de NPC 17, ainda não tratado" — o GS ignorava.
+      17 = `SERVICE_ID_IDENTIFY` (`serviceprovider.h:282`), `GP_NPCSEV_IDENTIFY` no cliente. O item do WB (bolsa, slot
+      14) tem 3 efeitos id 336 (`item_addon_random`) — "a avaliar".
+    - Porte: `identify_provider`/`identify_executor` (`serviceprovider.cpp:2256-2388`), `IdentifyItemAddon`
+      (`player.cpp:11646-11675`), `RegenAddon` (`equip_item.cpp:157-183`), `generate_addon_from_rands`
+      (`itemdataman.cpp:1059-1104`). Taxa de `NPC_IDENTIFY_SERVICE.fee` (`servicos.rs`, campo `avaliar`); S2C
+      `ITEM_IDENTIFY` 162 `{u8, u8}` (`EC_GPDataType.h:2870-2874`); erro 15 `ERR_SERVICE_ERR_REQUEST`.
+    - O commit do B378 (`f08277b`, outra sessão) levou a linha `servico::AVALIAR` do `bus_server.rs` sem o resto: só
+      compila com o commit do B379.
+    - Provas: `geracao::avaliar_troca_os_efeitos_a_avaliar` com o elements do realm_126 (5020); `avaliar_155`/`_126`
+      no `subcomandos_no_mundo` com banco (taxa, `OWN_ITEM_INFO`, 162 = 0, efeitos 336 → 300; de novo → 15 e 2 sem
+      cobrar; sem dinheiro → 16); `item_identify` contra o IR e campo a campo (protocolo 45/45). Suíte do workspace com banco: interrompida
+      (201 aprovados até `carga_dos_realms::a_geracao_de_equipamento_do_126`, que falha porque o rascunho "v1" do
+      Murillo, publicado na 1.2.6 v5, trocou os efeitos da foice 15964 para 591/415/1323 — dado, não código); a segunda
+      rodada foi parada a pedido: CPU a 100% e 5,4 GB num binário.
+    - Limites (pedido do Murillo): `.cargo/config.toml` com `jobs = 6` e `RUST_TEST_THREADS = 3`; regra de uma suíte por
+      vez e um serviço por `docker compose build` na skill `pw-testar-e-publicar`, no `AGENTS.md` e no agente.

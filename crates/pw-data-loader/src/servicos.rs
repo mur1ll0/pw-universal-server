@@ -63,6 +63,9 @@ pub struct ServicosDoNpc {
     pub incrustar: bool,
     /// `id_uninstall_service` ≠ 0 → remover as pedras, serviço 11 (`npcgenerator.cpp:601-604`).
     pub remover_pedras: bool,
+    /// B379 — `id_identify_service` → `NPC_IDENTIFY_SERVICE.fee`: avaliar, serviço 17 (`npcgenerator.cpp:688-704`;
+    /// taxa negativa, o original não monta o NPC — aqui fica sem o serviço). Nos layouts v156 e v7.
+    pub avaliar: Option<i32>,
     /// `combined_services & 0x4000` → refinar, serviço 35 (`npcgenerator.cpp:975-979`). No `gs`
     /// 1.2.6 o mesmo bit, lido em `NPC_ESSENCE+0x348` (`npc_stubs_manager::LoadTemplate`, VA
     /// 0x80efff8) — o campo que o layout v7 chama `combined_services` desde o B163.
@@ -142,6 +145,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
     let ensinos_de_mascote = por_id(g, "NPC_PETLEARNSKILL_SERVICE");
     let restauracoes = por_id(g, "NPC_RESETPROP_SERVICE");
     let itens = por_id(g, "NPC_TASK_MATTER_SERVICE");
+    let avaliacoes = por_id(g, "NPC_IDENTIFY_SERVICE");
     let preco_e_item = |r: Option<&Record>| r.map(|r| (i(r, "price").max(0), i(r, "id_object_need").max(0)));
     g.get("NPC_ESSENCE")
         .iter()
@@ -169,6 +173,7 @@ pub fn carregar(g: &GenericElementsData) -> HashMap<u32, ServicosDoNpc> {
                 restauracao_de_atributos: restauracao(restauracoes.get(&i(npc, "id_resetprop_service"))),
                 incrustar: i(npc, "id_install_service") != 0,
                 remover_pedras: i(npc, "id_uninstall_service") != 0,
+                avaliar: avaliacoes.get(&i(npc, "id_identify_service")).map(|r| i(r, "fee")).filter(|&t| t >= 0),
                 refinar: i(npc, "combined_services") & 0x4000 != 0,
                 transferir_refino: i(npc, "combined_services") & 0x10000 != 0,
                 furar_acessorio: i(npc, "combined_services2") & 0x80000 != 0,

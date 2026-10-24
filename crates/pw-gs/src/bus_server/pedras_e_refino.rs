@@ -215,6 +215,58 @@ impl BusServer {
         self.relatar(roleid, "removeu as pedras de", tipo, feito, envio).await;
     }
 
+    /// B379 — `GP_NPCSEV_IDENTIFY` (17), avaliar: `{ int iSlot; int tidItem; }`, 8 bytes (`c2s_SendCmdNPCSevIdentify`,
+    /// `EC_SendC2SCmds.cpp:3693-3715`; `identify_executor::player_request`, `serviceprovider.cpp:2338-2346`).
+    ///
+    /// Porte do `identify_executor`/`identify_provider` (`serviceprovider.cpp:2256-2388`) e de
+    /// `gplayer_imp::IdentifyItemAddon` (`player.cpp:11646-11675`):
+    /// - `SendRequest`: slot dentro da bolsa e item do tipo pedido, senão recusa calada;
+    /// - `TryServe`: dinheiro menor que a taxa do NPC → `ERR_OUT_OF_FUND`;
+    /// - `IdentifyItemAddon`: os efeitos a avaliar sorteados de novo ([`crate::geracao::avaliar_equipamento`]); feito,
+    ///   cobra a taxa (`spend_money`), reenvia o item (`PlayerGetItemInfo` → `OWN_ITEM_INFO`) e `identify_result` 0;
+    ///   nada a avaliar → `ERR_SERVICE_ERR_REQUEST` e `identify_result` 2, sem cobrar.
+    pub(super) async fn avaliar_item(&self, roleid: i32, conteudo: &[u8], envio: &EnvioAoCliente) {
+        let mut r = Reader::new(conteudo);
+        let (Ok(slot), Ok(tipo)) = (r.i32(), r.i32()) else { return };
+        if conteudo.len() != 8 {
+            warn!("mundo: pedido de avaliar de {roleid} com {} B (esperados 8)", conteudo.len());
+            return;
+        }
+        let taxa = self.servicos_em_conversa(roleid).await.and_then(|s| s.avaliar);
+        let feito = self
+            .com_contexto(roleid, |ctx| {
+                if slot < 0 || tipo == -1 {
+                    return Err(None);
+                }
+                let indice = slot as usize;
+                let mut item = ctx.bolsa.item_no_slot(indice).filter(|i| i.item_id as i32 == tipo).cloned().ok_or(None)?;
+                let taxa = taxa.ok_or(Some(erro::SERVICO_INDISPONIVEL))? as i64;
+                if ctx.p.money < taxa {
+                    return Err(Some(erro::SEM_DINHEIRO));
+                }
+                let novo = bloco_do_equipamento(&item, ctx.dados)
+                    .and_then(|(bloco, ficha)| crate::geracao::avaliar_equipamento(ctx.dados, item.item_id, &bloco, &ficha).map(|b| (b, ficha)));
+                let Some((bloco, ficha)) = novo else {
+                    ctx.para_mim.push(S2CGamedataSend::error_message(erro::PEDIDO_DE_SERVICO_INVALIDO).data);
+                    ctx.para_mim.push(S2CGamedataSend::item_identify(indice as u8, 2).data);
+                    return Err(None);
+                };
+                item.octets = bloco;
+                item.sockets = furos_de(&item.octets, &ficha);
+                ctx.bolsa.por(indice, Some(item.clone()));
+                ctx.gastar_dinheiro(taxa);
+                ctx.para_mim.push(S2CGamedataSend::spend_money(taxa as u32).data);
+                let pacote = ContainerType::Inventory.pacote_do_cliente().unwrap_or(0);
+                let octetos = BusServer::octetos_atuais(&item);
+                ctx.para_mim.push(S2CGamedataSend::item_info(pacote, indice as u8, item.item_id as i32, 0, 0, item.count, &octetos, None).data);
+                ctx.para_mim.push(S2CGamedataSend::item_identify(indice as u8, 0).data);
+                ctx.mudou = true;
+                Ok(taxa as i32)
+            })
+            .await;
+        self.relatar(roleid, "avaliou", tipo, feito, envio).await;
+    }
+
     /// `GP_NPCSEV_REFINE` (35): `{ int inv_index; int item_type; int rt_index; }`, 12 bytes
     /// (`refine_service_executor::player_request`; `c2s_SendCmdNPCSevRefine`). `rt_index` < 0 é
     /// sem talismã.

@@ -264,6 +264,8 @@ pub fn mascara_das_pedras(familia: Familia, furos: &[i32], mascara: u16, cor_e_g
 /// Os erros (`common/protocol.h`, enum `ERR_*`; os mesmos números empurrados no `gs` 1.2.6).
 pub mod erro {
     pub const SERVICO_INDISPONIVEL: i32 = 14;
+    /// `ERR_SERVICE_ERR_REQUEST` (15, `common/protocol.h:695`) — o avaliar sem efeito a avaliar.
+    pub const PEDIDO_DE_SERVICO_INVALIDO: i32 = 15;
     /// `ERR_OUT_OF_FUND` (0x10 no 1.2.6, `install_executor::OnServe` VA 0x810b2e1).
     pub const SEM_DINHEIRO: i32 = 16;
     /// `ERR_CANNOT_EMBED` (0x15 no 1.2.6, VA 0x810b29d).

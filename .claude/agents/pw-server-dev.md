@@ -94,6 +94,10 @@ sempre é leitura de fonte C++, e é aí que dá para melhorar na próxima.
 É o mesmo número do `/context` e do cartão de uso do app. Se a ferramenta não responder, diga "indisponível" —
 nunca estime.
 
+**Não trave a máquina (pedido de 2026-10-24).** O `.cargo/config.toml` limita a 6 compilações e 3 testes por
+binário; não suba esses números. Uma suíte inteira por vez (com `-- --test-threads=2`, confira antes se outra sessão
+está compilando) e um serviço por `docker compose build`.
+
 **Rebuild do Docker é caro em tempo, não em tokens** — desde que a saída seja filtrada. Se
 ainda assim for pesado, ofereça ao Murillo rodar ele mesmo, com o comando pronto.
 

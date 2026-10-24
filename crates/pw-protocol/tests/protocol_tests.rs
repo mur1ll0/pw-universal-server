@@ -1273,3 +1273,10 @@ fn duelo_resultado_e_comeco() {
     assert_eq!(S2CGamedataSend::duel_prepare(9, 3).data, vec![216, 0, 9, 0, 0, 0, 3, 0, 0, 0]);
     assert_eq!(S2CGamedataSend::player_duel_start(7).data, vec![229, 0, 7, 0, 0, 0]);
 }
+
+/// B379 — `ITEM_IDENTIFY` (162): `cmd_item_identify { u8 ivtr_index; u8 result; }` (`EC_GPDataType.h:2870-2874`).
+#[test]
+fn item_identify_tem_dois_bytes() {
+    let d = pw_protocol::packets::s2c::S2CGamedataSend::item_identify(14, 2).data;
+    assert_eq!(d, vec![162, 0, 14, 2]);
+}

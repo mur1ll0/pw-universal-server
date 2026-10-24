@@ -1300,6 +1300,14 @@ Serviços de NPC 10 (incrustar), 11 (remover as pedras), 35 (refinar) e 47 (fura
   `0x8000`, a máscara das pedras é recalculada; `EMBED_ITEM` e `SPEND_MONEY`. Os addons vêm das duas
   listas gravadas na pedra ou, sem octetos (nossas pedras não têm), do `generate_addon` de
   `id_addon_damage`/`id_addon_defence`.
+- **Avaliar (serviço 17, B379; 1.2.6 e 1.5.5):** `{ int slot; int tipo }` (8 B). Quem oferece: `id_identify_service` →
+  `NPC_IDENTIFY_SERVICE.fee` (taxa negativa = sem serviço). Item no slot com o tipo (senão calado) → sem o serviço 14 →
+  dinheiro < taxa 16 → `IdentifyItemAddon`: cada efeito com tratador `item_addon_random` (ids 336/410/472,
+  `item_addon.cpp:724-740,1670,1764,1831`) é sorteado de novo da lista `rands` do equipamento (32 posições, até 4
+  tentativas enquanto sair o mesmo id; o mesmo id ou um sem tratador tira o efeito — `itemdataman.cpp:1059-1104`,
+  `equip_item.cpp:157-183`); o que entra vai à essência (`addon_update_ess_data`), cabeçalho igual. Feito:
+  `SPEND_MONEY` da taxa, `OWN_ITEM_INFO` e `ITEM_IDENTIFY` (162, `{u8 slot; u8 result}`) 0. Nada a avaliar:
+  erro 15 e `ITEM_IDENTIFY` 2, sem cobrar. `geracao::avaliar_equipamento` + `BusServer::avaliar_item`.
 - **Remover:** soma o `uninstall_price` de cada pedra; sem pedra ou sem dinheiro, recusa calada;
   senão zera os furos, tira os addons `0x8000` e manda só o `CLEAR_TESSERA`.
 - **Refinar:** `levelup_addon` e `material_need` do equipamento, Pedra Celestial 11208; talismã

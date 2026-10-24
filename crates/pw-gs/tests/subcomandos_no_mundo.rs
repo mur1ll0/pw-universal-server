@@ -10141,6 +10141,80 @@ async fn conferir_pedras_e_refino(versao: GameVersion) {
     assert_eq!(resto.map(|i| i.count), Some(10), "weapon_slot_material_count[1][0] = 10");
 }
 
+/// B379 — Avaliar (serviço 17, `identify_executor`): `{ int iSlot; int tidItem; }`. Os efeitos a avaliar
+/// (`item_addon_random`, id 336) viram efeitos da lista `rands`; cobra a taxa do NPC (`SPEND_MONEY`), reenvia o item
+/// (`OWN_ITEM_INFO`) e responde `ITEM_IDENTIFY` (162) com 0. Sem efeito a avaliar: `ERR_SERVICE_ERR_REQUEST` (15) e
+/// `ITEM_IDENTIFY` 2, sem cobrar. Sem dinheiro: `ERR_OUT_OF_FUND` (16).
+async fn conferir_avaliar(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let dados = Arc::make_mut(&mut m.data_manager);
+        dados.geracao.get_mut(&(ARMA_GERADA as u32)).unwrap().addons_da_producao = vec![(300, 1.0)];
+        dados.addons.por_id.insert(
+            336,
+            pw_data_loader::addons::DadosDoAddon { tratador: "item_addon_random".into(), num_params: 0, params: [0, 0, 0], familias: None },
+        );
+        dados.servicos_de_npc.get_mut(&TEMPLATE_DO_NPC).unwrap().avaliar = Some(50);
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.npc_em_conversa = Some(NPC);
+        p.money = 1000;
+    }
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let ficha = mundo.read().await.data_manager.equipamentos.ficha(ARMA_GERADA as u32).unwrap();
+    let a_avaliar = pw_core::AddonDoItem::novo(336, vec![]);
+    let mut bloco = pw_core::ConteudoDeEquipamento::novo(ficha.clone(), 100, 100);
+    bloco.addons = vec![a_avaliar.clone(), a_avaliar];
+    let mut arma = peca(roleid, pw_core::ContainerType::Inventory, 3, ARMA_GERADA, 100, 100);
+    arma.octets = bloco.escrever();
+    itens.upsert_item(&arma).await.unwrap();
+    let pedido = |slot: i32| {
+        let mut c = slot.to_le_bytes().to_vec();
+        c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+        BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(17, &c) }
+    };
+
+    link.enviar(pedido(3)).await.unwrap();
+    let gasto = esperar_comando(&mut link, 77).await;
+    assert_eq!(i32_em(&gasto, 2), 50, "SPEND_MONEY: a taxa do NPC_IDENTIFY_SERVICE");
+    let info = esperar_comando(&mut link, 40).await;
+    assert_eq!(i32_em(&info, 4), ARMA_GERADA, "OWN_ITEM_INFO do item avaliado");
+    let r = esperar_comando(&mut link, 162).await;
+    assert_eq!(&r[2..], &[3, 0], "ITEM_IDENTIFY: slot 3, avaliado");
+    let i = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 3).await.unwrap().expect("a arma");
+    let c = pw_core::ConteudoDeEquipamento::ler(&i.octets, &ficha).expect("bloco avaliado");
+    assert_eq!(c.addons, vec![pw_core::AddonDoItem { tipo: 300 | 1 << 13, args: vec![9] }; 2], "os dois 336 viram 300");
+    assert_eq!(mundo.read().await.players.get(&(roleid as i64)).unwrap().money, 950);
+
+    // De novo: nada a avaliar — erro 15 e resultado 2, sem cobrar.
+    link.enviar(pedido(3)).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 15, "ERR_SERVICE_ERR_REQUEST");
+    let r = esperar_comando(&mut link, 162).await;
+    assert_eq!(&r[2..], &[3, 2]);
+    assert_eq!(mundo.read().await.players.get(&(roleid as i64)).unwrap().money, 950);
+
+    // Sem dinheiro: ERR_OUT_OF_FUND.
+    let mut outra = arma.clone();
+    outra.slot = 4;
+    itens.upsert_item(&outra).await.unwrap();
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money = 10;
+    link.enviar(pedido(4)).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 16, "ERR_OUT_OF_FUND");
+}
+
+#[tokio::test]
+async fn avaliar_155() {
+    conferir_avaliar(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn avaliar_126() {
+    conferir_avaliar(GameVersion::V1_2_6).await;
+}
+
 #[tokio::test]
 async fn pedras_e_refino_155() {
     conferir_pedras_e_refino(GameVersion::V1_5_5).await;

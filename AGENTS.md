@@ -91,6 +91,8 @@ não.
 
 - Comando com muita saída sempre termina em filtro (`grep -E`, `awk`, `tail -n`, `head -n`).
   Nunca rode `cargo test`, `cargo build`, `docker compose build` ou `docker logs` sem filtro.
+- Não travar a máquina: `.cargo/config.toml` limita a 6 compilações e 3 testes por binário; uma suíte inteira por vez
+  (sempre com `-- --test-threads=2`) e um serviço por `docker compose build` (skill `pw-testar-e-publicar`).
 - Precisa de um número? Calcule no shell e traga só o número:
   ```bash
   TEST_DATABASE_URL="postgres://pw_admin:pw_secure_password_2026@127.0.0.1:5432/pw_database" \

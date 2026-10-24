@@ -32,6 +32,10 @@ Só vá ao `panicked at` de um teste específico depois de saber qual é:
 - **`--test-threads=2`**: no paralelismo máximo, `aceitar_forma_o_grupo…` e
   `a_consulta_de_jogador…` falham por contenção no pool do Postgres e passam isoladas (B74,
   B80). Com 2 fios a rodada inteira passa — é assim que vale a pena medir.
+- **Não travar a máquina do Murillo (2026-10-24).** O `.cargo/config.toml` limita a 6 compilações (`jobs`) e 3
+  testes por binário (`RUST_TEST_THREADS`) — não suba esses números. **Uma** suíte inteira por vez na máquina (confira
+  `Get-Process cargo,rustc` antes; outra sessão pode estar compilando) e **um** serviço por `docker compose build`
+  (ou `COMPOSE_PARALLEL_LIMIT=1`). Suíte inteira sempre com `-- --test-threads=2`.
 - Referência (2026-09-24, B98): **674 testes, 0 falhas** com dois fios.
 - **Não rode a suíte junto com um build pesado** (Docker, launcher): os testes do mundo usam prazos
   de tempo real e, com a CPU tomada, falham longe da causa. Foi o "intermitente" do Guerreiro 1.2.6
