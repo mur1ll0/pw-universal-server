@@ -17478,3 +17478,23 @@ comparação lado a lado.
     - Provas: `svelte-check` 0/0, vitest 35/35 (1 novo). Navegador (realm_155, rascunho 66, descartado): 65 categorias sem
       `*_TYPE`/serviço/monstro/NPC/mina; "Espada" em "Todas" só traz `WEAPON_ESSENCE`; trocar o 1º drop (Poção Refinada
       de Cura, 8620) pela "☆Espada de Ponta Azulada" mostra nome e "id 22" no cartão.
+378. **Sessão 2026-10-24: drop do Batatinha sem efeito; reinício agendado com aviso.** Relato do Murillo: editou os drops
+     do Batatinha, publicou a versão 5 (dois rascunhos), reiniciou, e o monstro seguia com os drops antigos.
+    - Diagnóstico: a 1.2.6 v5 = alterações {1, 59} (o rascunho "v1" com o Batatinha, id 15955, e mapas) gravou o
+      `elements.data` no `config` do realm_126 às 15:01:50; o `pw-world-126` tinha subido às 14:37:53 (reinício por fora
+      do painel, sem log de encerramento) e não subiu de novo — o painel mostrava `aguarda_reinicio: true`. O arquivo
+      publicado tinha as pedras nv. 5. O GS lê o `MONSTER_ESSENCE` só na partida (`monstros.rs:478`). Reiniciado pelo painel
+      às 16:04 (0 online); `aguarda_reinicio: false`. A 1.5.5 v5 = {58}, só mapas.
+    - Pedido: depois de publicar, tempo para avisar os jogadores e reiniciar sozinho; 0 = na hora.
+    - GS: consulta `avisar` → `ChatSingleCast` canal 9, `srcroleid` 0 (a fala `$S`, `aitrigger.cpp:552-668`; cliente
+      `EC_GameSession.cpp:4752-4909`) a todos do processo. Painel: `reiniciar` com `em_minutos` (agenda, avisa nos marcos,
+      reinicia), `DELETE` cancela, `servidor` mostra o agendado. Recursos do cliente: caixa "Reiniciar os mundos desta
+      versão em [5] min" ao publicar; Editores: "Cancelar o reinício".
+    - Provas: `canal_administrativo` 39/39 com banco (1 novo: o aviso chega ao jogador como canal 9/remetente 0; vazio e
+      >200 recusados); painel `teste_recursos` 14/14 no contêiner (1 novo: 5 min → 5 avisos e o reinício; cancelar não
+      reinicia; 0–120). Publicados `pw-admin-api` e `pw-world-155` (o `up` interrompido deixou os dois "Dead"; removidos
+      e subidos de novo). `pw-world-126` com a imagem nova pronta, não recriado (1 jogador online).
+    - Navegador/mundo 155: caixa "Reiniciar os mundos desta versão em [5] min" na tela; agendado 1 min no realm_155 →
+      avisos às 19:31:09 (1 minuto), :39 (30 s) e :59 (10 s) UTC, `reiniciar` às 19:32:10, mundo de volta às 19:32:19,
+      `reinicio_agendado` nulo depois. Agendado 2 min e cancelado: aviso "2 minutos", aviso "cancelado", sem reinício.
+      Falta ver a mensagem no chat do cliente (ninguém online no 155 no teste: `enviados` 0).

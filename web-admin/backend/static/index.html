@@ -434,6 +434,8 @@
             <div id="recursos-rascunhos"></div>
             <div class="recursos-publicar">
               <label class="recursos-marca"><input id="recursos-obrigar" type="checkbox"> Obrigar todos a atualizar (versão mínima = a nova)</label>
+              <label class="recursos-marca" title="Os jogadores recebem a mensagem do sistema no começo e a 10, 5, 2 e 1 minuto, 30 e 10 segundos do fim; depois, todos são salvos e desconectados e o servidor de mundo sobe com a versão nova."><input id="recursos-reiniciar" type="checkbox" checked> Reiniciar os mundos desta versão em
+                <input id="recursos-reiniciar-minutos" class="campo recursos-minutos" type="number" min="0" max="120" step="1" value="5" aria-label="Minutos até reiniciar"> min, avisando os jogadores (0 = na hora)</label>
               <button id="recursos-publicar" class="botao botao-primario" type="button" disabled>Publicar selecionados</button>
               <button id="recursos-teste" class="botao botao-secundario" type="button" title="Os rascunhos marcados num canal só do GM, sem publicar">Canal de teste (GM)</button>
             </div>

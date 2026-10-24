@@ -484,6 +484,60 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
             r = await self.cliente.post("/api/realms/realm_126/recarregar", json={})
             self.assertEqual(r.status_code, 403, "sem CSRF")
 
+    async def test_reinicio_agendado_avisa_e_reinicia(self):
+        """B378: com `em_minutos`, o painel avisa os jogadores (consulta "avisar" do GS) no começo e nos marcos, e só
+        então manda "reiniciar"; cancelar avisa e não reinicia; 0 reinicia na hora; fora de 0–120 é recusado."""
+        import asyncio
+        import painel.recursos as rec
+        await self.entrar()
+        csrf = await self.csrf()
+        self.assertEqual(rec.marcos_do_aviso(300), [300, 120, 60, 30, 10])
+        self.assertEqual(rec.marcos_do_aviso(45), [45, 30, 10])
+        self.assertIn("5 minutos", rec.texto_do_aviso(300))
+        self.assertIn("1 minuto ", rec.texto_do_aviso(60))
+        self.assertIn("10 segundos", rec.texto_do_aviso(10))
+        aplicar = AsyncMock(return_value=[{"estado": "aplicado"}])
+
+        async def sem_espera(_):
+            await asyncio.sleep(0)
+        with patch("painel.recursos.aplicar_no_realm", aplicar), patch("painel.recursos._dormir", sem_espera):
+            for ruim in (-1, 121, "5", True):
+                r = await self.cliente.post("/api/realms/realm_126/reiniciar", headers=csrf, json={"confirmar": "realm_126", "em_minutos": ruim})
+                self.assertEqual(r.status_code, 422, ruim)
+            r = await self.cliente.post("/api/realms/realm_126/reiniciar", headers=csrf, json={"confirmar": "realm_126", "em_minutos": 5})
+            self.assertEqual((r.status_code, r.json()["estado"], r.json()["segundos"]), (200, "agendado", 300))
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if not rec._reinicios:
+                    break
+            tipos = [c.args[2]["tipo"] for c in aplicar.call_args_list]
+            self.assertEqual(tipos, ["avisar"] * 5 + ["reiniciar"])
+            self.assertIn("5 minutos", aplicar.call_args_list[0].args[2]["texto"])
+            self.assertIn("10 segundos", aplicar.call_args_list[4].args[2]["texto"])
+            self.assertEqual(rec._reinicios, {})
+        # Cancelar: o tempo não passa; a situação mostra o agendado; cancelar avisa e não reinicia.
+        aplicar.reset_mock()
+        parado = asyncio.Event()
+
+        async def nunca(_):
+            await parado.wait()
+        mundos = AsyncMock(return_value=[{"presenca": "observada", "mapas": [], "iniciado_em": 1000}])
+        with patch("painel.recursos.aplicar_no_realm", aplicar), patch("painel.recursos._dormir", nunca),                 patch("painel.recursos.consultar_daemons", mundos):
+            r = await self.cliente.post("/api/realms/realm_126/reiniciar", headers=csrf, json={"confirmar": "realm_126", "em_minutos": 10})
+            self.assertEqual(r.json()["estado"], "agendado")
+            situacao = (await self.cliente.get("/api/realms/realm_126/servidor")).json()
+            self.assertEqual(situacao["reinicio_agendado"]["segundos"], 600)
+            r = await self.cliente.delete("/api/realms/realm_126/reiniciar", headers=csrf)
+            self.assertEqual((r.status_code, r.json()["estado"]), (200, "cancelado"))
+            await asyncio.sleep(0)
+            tipos = [c.args[2]["tipo"] for c in aplicar.call_args_list]
+            self.assertNotIn("reiniciar", tipos)
+            self.assertIn("cancelado", aplicar.call_args_list[-1].args[2]["texto"])
+            self.assertIsNone((await self.cliente.get("/api/realms/realm_126/servidor")).json()["reinicio_agendado"])
+            self.assertEqual((await self.cliente.delete("/api/realms/realm_126/reiniciar", headers=csrf)).status_code, 404)
+            r = await self.cliente.delete("/api/realms/realm_126/reiniciar")
+            self.assertEqual(r.status_code, 403, "sem CSRF")
+
     async def test_envio_do_cliente_original(self):
         """B332: o envio em blocos passa do limite de 8 KiB só na rota do bloco (até 16 MiB), e tudo é repassado ao
         pw-recursos como veio (caminho e deslocamento na consulta, os bytes crus no corpo)."""

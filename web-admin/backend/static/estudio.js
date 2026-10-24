@@ -786,6 +786,23 @@ async function verificarReinicio(antes) {
     r.addEventListener("click", () => recarregarRealm(s));
     caixa.append(" ", b, " ", r);
   }
+  // B378: reinício agendado (depois de publicar): quando e cancelar.
+  if (s.reinicio_agendado) {
+    caixa.hidden = false;
+    const a = s.reinicio_agendado;
+    const linha = criar("div", "", `Reinício agendado para ${new Date(a.em * 1000).toLocaleTimeString()} — os jogadores estão sendo avisados. `);
+    const c = criar("button", "botao botao-pequeno", "Cancelar o reinício");
+    c.type = "button";
+    c.addEventListener("click", async () => {
+      try {
+        await api(`/api/realms/${encodeURIComponent(estudio.realm)}/reiniciar`, { method: "DELETE" });
+        alerta("ok", "Editores", "Reinício cancelado; os jogadores foram avisados.", { toast: true });
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
+      verificarReinicio();
+    });
+    linha.append(c);
+    caixa.append(linha);
+  }
   if (s.falhas_da_recarga && s.falhas_da_recarga.length) {
     caixa.hidden = false;
     caixa.append(criar("div", "texto-suave", `A última recarga foi recusada (os dados em uso continuam): ${s.falhas_da_recarga.join(", ")}`));

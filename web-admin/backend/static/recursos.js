@@ -233,9 +233,17 @@ async function publicarRecursos() {
   const ids = [...recursos.selecionados].sort((a, b) => a - b);
   const atual = recursos.versoes.find((v) => v.versao === recursos.versao);
   const obrigar = elemento("recursos-obrigar").checked;
+  // B378: reinício dos mundos depois de publicar, com aviso aos jogadores (0 = na hora).
+  const reiniciar = elemento("recursos-reiniciar").checked;
+  const minutos = Number(elemento("recursos-reiniciar-minutos").value);
+  if (reiniciar && !(Number.isInteger(minutos) && minutos >= 0 && minutos <= 120)) {
+    alerta("aviso", "Publicar", "Tempo até reiniciar: de 0 a 120 minutos (0 = na hora).", { toast: true });
+    return;
+  }
   const texto = `Publica a versão ${atual.atual + 1} do cliente ${recursos.versao} com ${ids.map((i) => `#${i}`).join(", ")}. ` +
     (obrigar ? "O launcher vai exigir a atualização antes de jogar." : "Quem estiver na versão anterior ainda pode jogar.") +
-    " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los (aviso no topo dos Editores).";
+    " Arquivos de destino \"servidor\"/\"ambos\" (elements, npcgen, precinct, region, world_targets) são gravados no realm, que precisa ser reiniciado para lê-los." +
+    (reiniciar ? ` Os mundos dos realms ${recursos.versao} ${minutos ? `reiniciam em ${minutos} min, com aviso aos jogadores` : "reiniciam assim que publicar"}.` : " Sem reinício: reinicie pelo aviso no topo dos Editores.");
   // B365: o total de diferenças registradas nos rascunhos escolhidos (o detalhe lado a lado fica em cada item).
   const escolhidos = recursos.rascunhos.filter((r) => ids.includes(r.id));
   const total = escolhidos.reduce((s, r) => s + r.lista.reduce((t, i) => t + linhasDeDiferenca(i.resumo).length, 0), 0);
@@ -245,8 +253,28 @@ async function publicarRecursos() {
     const r = await api(rotaRecursos("publicar"), { method: "POST", body: JSON.stringify({ rascunhos: ids, minima: obrigar ? atual.atual + 1 : null }) });
     recursos.selecionados.clear();
     elemento("recursos-obrigar").checked = false;
+    if (reiniciar) await reiniciarRealmsDaVersao(recursos.versao, minutos);
     return r;
-  }, "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo dos Editores.");
+  }, reiniciar ? "Versão publicada: o launcher já oferece a atualização." : "Versão publicada: o launcher já oferece a atualização. Se havia arquivo do servidor, reinicie o realm pelo aviso no topo dos Editores.");
+}
+
+/* B378: depois de publicar, cada realm da versão reinicia (agora ou em `minutos`, com aviso aos jogadores). */
+async function reiniciarRealmsDaVersao(versao, minutos) {
+  const { realms = [] } = await api("/api/realms");
+  const alvos = realms.filter((r) => r.versao === versao);
+  if (!alvos.length) return;
+  const linhas = [];
+  for (const realm of alvos) {
+    try {
+      const r = await api(`/api/realms/${encodeURIComponent(realm.id)}/reiniciar`, {
+        method: "POST", body: JSON.stringify({ confirmar: realm.id, em_minutos: minutos }),
+      });
+      linhas.push(r.estado === "agendado"
+        ? `${realm.id}: reinicia às ${new Date(r.em * 1000).toLocaleTimeString()} (jogadores avisados; cancelar no topo dos Editores).`
+        : `${realm.id}: reiniciando agora (${r.online ?? 0} online, salvos).`);
+    } catch (erro) { linhas.push(`${realm.id}: não reiniciou — ${erro.message}`); }
+  }
+  alerta("ok", "Reinício dos mundos", linhas.join(" "));
 }
 
 /* B333: canal de teste do GM — os rascunhos marcados, por cima da versão atual, sem publicar. O painel mostra o

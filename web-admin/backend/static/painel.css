@@ -733,6 +733,7 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .recursos-rascunho > header { justify-content: space-between; margin-bottom: 8px; }
 .recursos-item { margin-top: 10px; }
 .recursos-marca { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.recursos-minutos { width: 64px; padding: 2px 6px; }
 .recursos-publicar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .recursos-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
 .recursos-tabela th, .recursos-tabela td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--borda); vertical-align: middle; }

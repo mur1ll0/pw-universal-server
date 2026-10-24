@@ -642,6 +642,33 @@ async fn reiniciar_desconecta_todos_salvando_e_encerra() {
     c.encerrar().await;
 }
 
+/// B378: "avisar" manda a mensagem do sistema (canal 9, `srcroleid` 0 — a fala `$S`) a quem está online; texto
+/// vazio ou longo é recusado.
+#[tokio::test]
+async fn avisar_manda_mensagem_do_sistema_a_quem_esta_online() {
+    let c = Cenario::montar().await;
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir(&c.realm, json!({"tipo":"avisar","texto":"O servidor reinicia em 5 minutos."})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["tipo"].as_str(), r["dados"]["enviados"].as_u64()), (Some("aplicado"), Some("avisar"), Some(1)), "{r}");
+    let esperado: Vec<u8> = "O servidor reinicia em 5 minutos.".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let chegou = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match bus.receber().await.unwrap() {
+                Some(BusMessage::ChatSingleCast { channel, srcroleid, dstroleid, msg, .. }) => break (channel, srcroleid, dstroleid, msg),
+                Some(_) => continue,
+                None => panic!("o bus fechou"),
+            }
+        }
+    })
+    .await
+    .expect("o aviso não chegou");
+    assert_eq!(chegou, (9, 0, c.personagem, esperado));
+    assert_eq!(c.pedir(&c.realm, json!({"tipo":"avisar","texto":"  "})).await["dados"]["codigo"], "texto_invalido");
+    assert_eq!(c.pedir(&c.realm, json!({"tipo":"avisar","texto":"x".repeat(201)})).await["dados"]["codigo"], "texto_invalido");
+    c.encerrar().await;
+}
+
 #[tokio::test]
 async fn queda_do_link_salva_e_remove_a_entidade() {
     let c = Cenario::montar().await;

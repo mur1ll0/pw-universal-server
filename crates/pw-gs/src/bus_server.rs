@@ -5124,6 +5124,7 @@ impl BusServer {
             servico::RESTAURAR_ATRIBUTOS => self.restaurar_atributos(roleid, c, envio).await,
             servico::INCRUSTAR_PEDRA => self.incrustar_pedra(roleid, c, envio).await,
             servico::LIMPAR_PEDRAS => self.remover_pedras(roleid, c, envio).await,
+            servico::AVALIAR => self.avaliar_item(roleid, c, envio).await,
             servico::REFINAR => self.refinar(roleid, c, envio).await,
             servico::FURAR => self.furar(roleid, c, envio).await,
             servico::TRANSFERIR_REFINO => self.transferir_refino(roleid, c, envio).await,
@@ -6735,6 +6736,28 @@ impl BusServer {
             }
         }
         debug!("mundo: o monstro {id} falou ({canal:?}): {texto}");
+    }
+
+    /// B378: mensagem do sistema a todos os jogadores deste mapa (aviso de reinício do painel). É a fala `$S` do
+    /// `op_say` (`aitrigger.cpp:552-668`): `CHAT_CHANNEL_BROADCAST` (9) com `srcroleid` 0, a mesma de [`Self::monstro_falou`].
+    /// Devolve a quantos foi.
+    pub async fn avisar_sistema(&self, texto: &str) -> usize {
+        let msg: Vec<u8> = texto.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let sessoes = self.sessoes.read().await;
+        let mut n = 0;
+        for (&roleid, s) in sessoes.iter() {
+            let enviado = s.envio.try_send(BusMessage::ChatSingleCast {
+                channel: 9,
+                emotion: 0,
+                srcroleid: 0,
+                dstroleid: roleid,
+                dstlocalsid: s.localsid,
+                msg: msg.clone(),
+                data: Vec::new(),
+            });
+            n += usize::from(enviado.is_ok());
+        }
+        n
     }
 
     /// Quantos jogadores este servidor de mundo está atendendo.

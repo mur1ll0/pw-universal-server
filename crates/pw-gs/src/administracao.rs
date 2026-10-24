@@ -76,6 +76,9 @@ pub enum Consulta {
     /// os lê uma vez, ao montar o `GameDataManager`. Desconecta todos (salvando) e encerra o processo; o Docker o sobe
     /// de novo (`restart: unless-stopped`) e o `pw-link` reconecta sozinho (`pw-link/src/uplink.rs:133`).
     Reiniciar,
+    /// B378: mensagem do sistema a todos os jogadores do processo (o aviso do reinício agendado pelo painel). Até 200
+    /// caracteres; vazio é recusado.
+    Avisar { texto: String },
     /// B331: reler os arquivos do `config` sem reiniciar nem desconectar ([`crate::mapas::RoteadorDeMapas::recarregar_em_segundo_plano`]).
     Recarregar,
     /// Edição de personagem (E5): um só de `dinheiro` (dar), `exp`/`sp` (somar, só online),
@@ -703,6 +706,16 @@ impl ServidorAdministrativo {
                             encerrar();
                         });
                         json!({"estado":"aplicado","tipo":"reiniciar","online":online})
+                    }
+                    Consulta::Avisar { texto } => {
+                        let texto = texto.trim();
+                        if texto.is_empty() || texto.chars().count() > 200 {
+                            json!({"codigo":"texto_invalido"})
+                        } else {
+                            let enviados = self.roteador.avisar_todos(texto).await;
+                            tracing::info!(administrador = pedido.administrador_id, enviados, "admin: aviso do sistema: {texto}");
+                            json!({"estado":"aplicado","tipo":"avisar","enviados":enviados})
+                        }
                     }
                     Consulta::Recarregar => match self.roteador.recarregar_em_segundo_plano() {
                         Ok(()) => {

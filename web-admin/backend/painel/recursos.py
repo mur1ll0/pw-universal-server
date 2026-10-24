@@ -7,7 +7,9 @@ pw-recursos (`RECURSOS_URL`, `RECURSOS_SEGREDO`). Spec: `specs/07_RECURSOS_DO_CL
 """
 import asyncio
 import json
+import logging
 import os
+import time
 import re
 import urllib.error
 import urllib.parse
@@ -90,6 +92,72 @@ def _envio(id_envio):
     if not ENVIO.match(id_envio):
         raise HTTPException(404, "Envio inexistente.")
     return id_envio
+
+
+# ---- B378: reinício agendado, com aviso aos jogadores ----
+# Um por realm, na memória deste processo (o painel roda com um só processo do uvicorn, `Dockerfile`); se o painel cair
+# no meio, o agendamento some e o realm segue como estava (o aviso "aguarda reinício" continua no topo dos Editores).
+# Os avisos saem pela consulta "avisar" do GS (mensagem do sistema, canal 9, a todos do realm) no começo e a 10, 5, 2
+# e 1 minuto, 30 e 10 segundos do fim; no fim, a consulta "reiniciar" de sempre (salva e desconecta todos).
+AVISOS_ANTES_S = (600, 300, 120, 60, 30, 10)
+MAXIMO_DE_MINUTOS = 120
+_reinicios = {}  # realm -> {"em": epoch s, "segundos": total, "por": conta, "tarefa": asyncio.Task}
+_dormir = asyncio.sleep  # os testes trocam
+REGISTRO = logging.getLogger("pw_admin")
+
+
+def texto_do_aviso(faltam_s):
+    if faltam_s >= 60:
+        m = round(faltam_s / 60)
+        quando = f"{m} minuto{'s' if m != 1 else ''}"
+    else:
+        quando = f"{int(faltam_s)} segundos"
+    return f"[Sistema] O servidor vai reiniciar em {quando} para aplicar uma atualização. Procure um lugar seguro."
+
+
+def marcos_do_aviso(segundos):
+    """Quanto falta em cada aviso: o total e os marcos fixos menores que ele, do maior para o menor."""
+    return sorted({segundos, *(x for x in AVISOS_ANTES_S if x < segundos)}, reverse=True)
+
+
+async def _reinicio_agendado(realm, administrador, segundos):
+    fim = time.monotonic() + segundos
+    try:
+        for faltam in marcos_do_aviso(segundos):
+            espera = fim - faltam - time.monotonic()
+            if espera > 0:
+                await _dormir(espera)
+            r = await aplicar_no_realm(realm, administrador, {"tipo": "avisar", "texto": texto_do_aviso(faltam)})
+            if isinstance(r, str):
+                REGISTRO.warning("reinício agendado de %s: aviso não saiu (%s)", realm, r)
+        espera = fim - time.monotonic()
+        if espera > 0:
+            await _dormir(espera)
+        r = await aplicar_no_realm(realm, administrador, {"tipo": "reiniciar"})
+        REGISTRO.warning("reinício agendado de %s: %s", realm, "falha: " + r if isinstance(r, str) else "aplicado")
+    finally:
+        atual = _reinicios.get(realm)
+        if atual and atual["tarefa"] is asyncio.current_task():
+            _reinicios.pop(realm, None)
+
+
+def agendar_reinicio(realm, administrador, segundos):
+    cancelar_reinicio(realm)
+    tarefa = asyncio.get_running_loop().create_task(_reinicio_agendado(realm, administrador, segundos))
+    _reinicios[realm] = {"em": int(time.time() + segundos), "segundos": segundos, "por": administrador, "tarefa": tarefa}
+    return _reinicios[realm]
+
+
+def cancelar_reinicio(realm):
+    atual = _reinicios.pop(realm, None)
+    if atual:
+        atual["tarefa"].cancel()
+    return atual
+
+
+def reinicio_agendado(realm):
+    atual = _reinicios.get(realm)
+    return {"em": atual["em"], "segundos": atual["segundos"], "por": atual["por"]} if atual else None
 
 
 def registrar_recursos(app):
@@ -506,6 +574,7 @@ def registrar_reinicio(app):
         online = sum(m.get("jogadores_online", 0) for r in respostas for m in r.get("mapas", []))
         recargas = [r.get("recarga") or {} for r in respostas]
         return {"versao": v, "ultima": ultima, "iniciado_em": iniciado, "dados_em": dados_em, "aguarda_reinicio": aguarda,
+                "reinicio_agendado": reinicio_agendado(realm),
                 "jogadores_online": online, "recarregando": any(x.get("em_andamento") for x in recargas),
                 "falhas_da_recarga": sorted({f for x in recargas for f in (x.get("falhas") or [])})}
 
@@ -515,16 +584,35 @@ def registrar_reinicio(app):
 
     @app.post("/api/realms/{realm}/reiniciar")
     async def reiniciar_realm(realm: str, requisicao: Request):
-        """Desconecta todos (salvando) e encerra cada GS do realm; o Docker os sobe de novo."""
+        """Desconecta todos (salvando) e encerra cada GS do realm; o Docker os sobe de novo. B378: com `em_minutos` > 0,
+        agenda — avisa os jogadores (mensagem do sistema) e reinicia no fim; 0 ou ausente = agora."""
         await _versao_do_realm(requisicao, realm)
         dados = await requisicao.json()
         if dados.get("confirmar") != realm:
             raise HTTPException(422, "Confirme digitando o id do realm.")
-        resultado = await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"], {"tipo": "reiniciar"})
+        minutos = dados.get("em_minutos", 0)
+        if isinstance(minutos, bool) or not isinstance(minutos, (int, float)) or not 0 <= minutos <= MAXIMO_DE_MINUTOS:
+            raise HTTPException(422, f"Tempo inválido: de 0 a {MAXIMO_DE_MINUTOS} minutos.")
+        administrador = requisicao.state.administrador["conta_id"]
+        if minutos > 0:
+            a = agendar_reinicio(realm, administrador, int(round(minutos * 60)))
+            return {"estado": "agendado", "realm": realm, "em": a["em"], "segundos": a["segundos"]}
+        cancelar_reinicio(realm)
+        resultado = await aplicar_no_realm(realm, administrador, {"tipo": "reiniciar"})
         if isinstance(resultado, str):
             return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
         return {"estado": "aplicado", "realm": realm, "online": sum(d.get("online", 0) for d in resultado),
                 "processos": len(resultado)}
+
+    @app.delete("/api/realms/{realm}/reiniciar")
+    async def cancelar_reinicio_do_realm(realm: str, requisicao: Request):
+        """B378: cancela o reinício agendado e avisa os jogadores."""
+        await _versao_do_realm(requisicao, realm)
+        if not cancelar_reinicio(realm):
+            raise HTTPException(404, "Não há reinício agendado neste realm.")
+        await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"],
+                               {"tipo": "avisar", "texto": "[Sistema] O reinício do servidor foi cancelado."})
+        return {"estado": "cancelado", "realm": realm}
 
     @app.post("/api/realms/{realm}/recarregar")
     async def recarregar_realm(realm: str, requisicao: Request):
