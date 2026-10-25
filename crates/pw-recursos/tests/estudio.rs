@@ -1235,6 +1235,93 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm)).0, 400, "o .smd já a cita");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "caixa.ski").send_bytes(&gm)).0, 400, "já existe no cliente");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "a\\b.ski").send_bytes(&gm)).0, 400, "só o nome");
+        // B380: "Exportar GLB" do .ecm com todas as ações-base (no rascunho, o .smd tem "andar", do B295): malha,
+        // esqueleto e a animação com o nome do cliente em extras.angelica.nome.
+        let ler_glb = |rel: ureq::Request| -> Vec<u8> {
+            let mut b = Vec::new();
+            std::io::Read::read_to_end(&mut rel.call().unwrap().into_reader(), &mut b).unwrap();
+            b
+        };
+        let doc_de = |g: &[u8]| -> Value {
+            let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
+            serde_json::from_slice(&g[20..20 + nj]).unwrap()
+        };
+        // O mesmo GLB com o JSON mudado (BIN igual) — o que o Blender devolveria com outro nome ou outro esqueleto.
+        // O GLB com o JSON (e o BIN) mudados — o que o Blender devolveria com outro nome, outro esqueleto ou animado.
+        let reempacotar = |g: &[u8], mudar: &dyn Fn(&mut Value, &mut Vec<u8>)| -> Vec<u8> {
+            let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
+            let mut d: Value = serde_json::from_slice(&g[20..20 + nj]).unwrap();
+            let mut bin = g[20 + nj + 8..].to_vec();
+            mudar(&mut d, &mut bin);
+            d["buffers"][0]["byteLength"] = json!(bin.len());
+            let mut t = serde_json::to_vec(&d).unwrap();
+            while t.len() % 4 != 0 { t.push(b' '); }
+            let mut s = b"glTF".to_vec();
+            s.extend_from_slice(&2u32.to_le_bytes());
+            s.extend_from_slice(&((12 + 8 + t.len() + 8 + bin.len()) as u32).to_le_bytes());
+            s.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            s.extend_from_slice(b"JSON");
+            s.extend_from_slice(&t);
+            s.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            s.extend_from_slice(b"BIN\0");
+            s.extend_from_slice(&bin);
+            s
+        };
+        let rs = ri.to_string();
+        let gt = ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("todas", "true").query("rascunho", &rs));
+        let dt = doc_de(&gt);
+        // O osso do modelo sintético não tem junta (`primeira_junta` −1): nenhuma trilha se aplica e a ação "andar" (B295)
+        // não vira animação — com modelos reais, `importar::testes::acoes_ida_e_volta` (várias ações, nome legível).
+        assert!(dt["meshes"].is_array() && dt["skins"][0]["joints"].as_array().is_some_and(|j| j.len() == 2), "malha e esqueleto juntos: {dt}");
+        // Uma animação em "raiz" com nome legível e sem extras (a rotação de 90° em 1 s do B295): volta como "andar".
+        let animado = |nome: &'static str| move |d: &mut Value, bin: &mut Vec<u8>| {
+            let o = bin.len();
+            bin.extend([0.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.7071, 0.0, 0.7071].iter().flat_map(|x| x.to_le_bytes()));
+            let (nv, na) = (d["bufferViews"].as_array().unwrap().len(), d["accessors"].as_array().unwrap().len());
+            d["bufferViews"].as_array_mut().unwrap().extend([json!({ "buffer": 0, "byteOffset": o, "byteLength": 8 }), json!({ "buffer": 0, "byteOffset": o + 8, "byteLength": 32 })]);
+            d["accessors"].as_array_mut().unwrap().extend([json!({ "bufferView": nv, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] }), json!({ "bufferView": nv + 1, "componentType": 5126, "count": 2, "type": "VEC4" })]);
+            let raiz = d["nodes"].as_array().unwrap().iter().position(|n| n["name"] == "raiz").unwrap();
+            d["animations"] = json!([{ "name": nome, "channels": [{ "sampler": 0, "target": { "node": raiz, "path": "rotation" } }], "samplers": [{ "input": na, "output": na + 1 }] }]);
+        };
+        let legivel = reempacotar(&gt, &animado("Andando · andar"));
+        let ia = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes").send_bytes(&legivel).unwrap());
+        assert_eq!((ia["resultado"]["acoes"][0]["nome"].as_str(), ia["resultado"]["acoes_do_modelo"].as_u64()), (Some("andar"), Some(1)), "{ia}");
+        // O .smd v8 passa a citar a pasta das trilhas onde a .stck foi gravada (`A3DSkinModelMan.cpp:214-224`): a prévia
+        // da ação (com o rascunho) acha a .stck — antes, 400 ("\andar.stck" fora da pasta).
+        let (sa, ma) = erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").query("rascunho", &rs).call());
+        assert_eq!(sa, 200, "{ma}");
+        let outro_esq = reempacotar(&gt, &|d, _| {
+            for n in d["nodes"].as_array_mut().unwrap() { if n["name"] == "raiz" { n["name"] = json!("outro_osso"); } }
+        });
+        let (s, m) = erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes").send_bytes(&outro_esq));
+        assert!(s == 400 && m.contains("esqueleto do GLB não é o do modelo") && m.contains("raiz") && m.contains("tudo"), "{s} {m}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo").send_bytes(&outro_esq)).0, 400, "modelo também exige o esqueleto");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "x").send_bytes(&gt)).0, 400, "modo");
+        // Só o modelo: a pele <.ecm>.ski (caixa.ski, a que o jogo põe no monstro) com a malha do GLB; as ações ficam.
+        let im = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo").send_bytes(&gt).unwrap());
+        assert_eq!((im["resultado"]["malhas"].as_u64(), im["resultado"]["esqueleto"].as_str().map(|x| x.to_lowercase())), (Some(1), Some("models\\teste\\caixa.bon".into())), "{im}");
+        // Sem uso: caixa.ecm sai (nenhum registro o cita); o .smd fica (doador.ecm usa), e com ele caixa.ski e o .bon.
+        // (No rascunho r16, que já tem o caixa.ecm: um caminho só fica em um rascunho aberto — 409 em outro.)
+        let su = json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={r16}")).send_json(json!({"caminho": ecm_cam})).unwrap());
+        let tirados: Vec<String> = su["removidos"].as_array().unwrap().iter().map(|x| x["caminho"].as_str().unwrap().to_lowercase()).collect();
+        assert_eq!(tirados, [ecm_cam.to_lowercase()], "{su}");
+        assert!(su["mantidos"].as_array().unwrap().iter().any(|x| x["motivo"] == "outro .ecm usa o mesmo .smd"), "{su}");
+        // O modelo do B298 (só no rascunho) sai do rascunho — .ecm, .smd, .bon, .ski —, mas a textura em Textures\ fica:
+        // um segundo modelo novo na mesma pasta (só no rascunho) a usa.
+        let mn2 = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_novo").query("titulo", "boneco2").send_bytes(&gm).unwrap());
+        assert_eq!(mn2["resultado"]["ecm"].as_str(), Some("models\\teste_novo\\boneco2.ecm"), "{mn2}");
+        let sb =json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={rs}")).send_json(json!({"caminho": "models\\teste_novo\\boneco.ecm"})).unwrap());
+        let mut tb: Vec<String> = sb["removidos"].as_array().unwrap().iter().map(|x| format!("{} {}", x["caminho"].as_str().unwrap().to_lowercase(), x["acao"].as_str().unwrap())).collect();
+        tb.sort();
+        assert_eq!(tb, ["models\\teste_novo\\boneco.bon tirado do rascunho", "models\\teste_novo\\boneco.ecm tirado do rascunho", "models\\teste_novo\\boneco.ski tirado do rascunho",
+            "models\\teste_novo\\boneco.smd tirado do rascunho"], "{sb}");
+        assert!(sb["mantidos"].as_array().unwrap().iter().any(|x| x["caminho"].as_str().is_some_and(|c| c.to_lowercase().ends_with("textures\\caixa.dds"))), "{sb}");
+        // Um modelo citado no elements fica: o 1º registro com `file_model` não vazio.
+        let fm0 = json_de(pedir("GET", "estudio/tabelas/MONSTER_ESSENCE/0").call().unwrap());
+        if let Some(cit) = fm0["campos"].as_array().and_then(|c| c.iter().find(|x| x["nome"] == "file_model")).and_then(|x| x["valor"].as_str()).filter(|x| !x.is_empty()) {
+            let sc = json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={rs}")).send_json(json!({"caminho": cit})).unwrap());
+            assert!(sc["removidos"].as_array().unwrap().is_empty() && sc["usado_por"]["tabela"].is_string(), "{sc}");
+        }
         // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
         assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);

@@ -843,6 +843,37 @@ ação.
   `.ecm` (`modelos/ficha?rascunho=`) leem primeiro os arquivos de modelo do rascunho (.ecm, .smd, .ski, .bon, .stck e
   texturas: `admin.rs::arquivos_de_modelo_do_rascunho` + `conteudo_de`), depois o publicado — o modelo importado de um
   GLB (`modelos/novo`) aparece antes de publicar. O painel repassa o `rascunho` ao GLB.
+- **GLB do modelo para o Blender e de volta (B380)** —
+  - `GET estudio/modelos/glb?caminho=&todas=true&rascunho=`: malha, texturas, esqueleto e **uma animação glTF por
+    ação-base do `.smd`** (`glb::do_modelo_com_acoes`; trilhas do `.bon` v5 ou a `.stck` de cada ação; ação cuja
+    `.stck` não lê fica de fora, com aviso no log). Nome da animação legível, com o original depois de `" · "`
+    (`"Parado · 站立"`, tabela `admin.rs::TRADUCOES_DE_ACAO`, a mesma da tela; 起/落 só como sufixo; se sobra
+    ideograma, vai só o original — `落石术施放落` não vira "— golpe石术…") e o original em `extras.angelica.nome`. Sem
+    `todas`, como antes (pose parada, ou `acao=` para a prévia).
+  - Volta: `importar::nome_original` — `extras.angelica.nome`, senão o que vem depois do último `" · "`, senão o nome
+    inteiro — vale para todo importador de animação (`acoes_do_glb`: `acoes_glb`, `importar_glb`, `modelos/novo`). O
+    importador glTF do Blender não leva os `extras` da animação para a ação; a extensão PW Estúdio (1.1.0) os grava na
+    ação ao importar, e o exportador glTF do Blender devolve as propriedades da ação como `extras` (`export_extras`).
+  - `POST estudio/modelos/importar_glb?rascunho=&caminho=<.ecm>&modo=modelo|animacoes` (corpo: GLB;
+    `Estudio::importar_glb_no_modelo`): antes, `importar::conferir_esqueleto` — os ossos do GLB (`esqueleto_do_glb`) têm
+    de ser os do `.bon` do modelo, mesmo nome e mesma mãe; senão 400 com o que falta, sobra ou mudou de mãe e "importe
+    com tudo". `modelo`: a malha vira `<.ecm>.ski` (a pele que o jogo põe no NPC/monstro, B282; acrescentada se não
+    existe), texturas em `Textures\`, esqueleto e ações intactos. `animacoes`: `importar_acoes` no `.smd` do `.ecm`.
+    "Tudo" continua sendo `modelos/novo` (B298); o molde preferido (o `.ecm` atual) é lido com o rascunho (pode ser um
+    modelo importado antes). `importar_acoes` (B295) agora grava a pasta das trilhas no `.smd` v8 que a tinha vazia — no
+    v8 o motor usa a pasta do arquivo (`A3DSkinModelMan.cpp:214-224`), e a `.stck` em `tcks_<título>` não seria achada.
+    Com `.bon` v5, reimportar uma ação emenda as chaves no fim da trilha (as antigas ficam sem uso): o `.bon` cresce a
+    cada ida e volta.
+  - `POST estudio/modelos/sem_uso?rascunho= {caminho: <.ecm antigo>}` (`Estudio::remover_modelo_sem_uso`): nada sai se o
+    `.ecm` ainda é citado em algum registro do elements com o rascunho (busca dos bytes GBK do caminho, terminados em
+    zero, sem diferenciar maiúsculas — um falso "usado" só deixa arquivo a mais), é filho de outro `.ecm` (`ChildPath:`,
+    `EC_Model.cpp:152/4777`, agora em `ecm::Ecm::filhos` e no índice) ou é de um objeto dinâmico. Senão saem: o `.ecm`;
+    o `.smd` se nenhum outro `.ecm` nem registro o cita; os arquivos do `.smd` (`dependencias_do_smd`: `.bon`, peles,
+    `.stck`) e a `<.ecm>.ski` que nenhum outro `.smd` cita (o mantido conta, com o que o rascunho tem); as texturas das
+    peles que saem — `Tex_<título>\` é só da pele, `Textures\` só sai se nenhuma outra `.ski` da mesma pasta (publicada
+    ou do rascunho) a cita. A primeira chamada depois de reiniciar o `pw-recursos` monta o índice de `.ecm` (~1 min no
+    1.5.5).
+    Publicado → item `remover`; só no rascunho → sai do rascunho. Devolve `removidos` e `mantidos` (com o motivo).
 - **Trocar a animação de uma ação (B373)** — `POST estudio/modelos/base?rascunho= {caminho, acao, base}`
   (`Estudio::trocar_base_da_acao`; painel `POST /api/realms/{r}/estudio/modelos/base`): a linha `BaseActName:` da ação
   combinada passa a ser `base` (`pw_data_loader::ecm::trocar_base`: só com uma base; o resto do `.ecm` igual; a base tem

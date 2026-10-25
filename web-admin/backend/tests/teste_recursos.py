@@ -145,6 +145,23 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"], p["corpo"]), ("/admin/1.2.6/estudio/modelos/novo",
                          {"rascunho": ["3"], "pasta": ["models/npcs/x"], "titulo": ["x"]}, glb))
+        # B380: GLB no modelo do monstro (só modelo / só animações), modo conferido; sem uso, com o caminho do .ecm.
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/importar_glb",
+                                    params={"rascunho": 3, "caminho": "models\\a.ecm", "modo": "animacoes"}, content=glb,
+                                    headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"], p["corpo"]), ("/admin/1.5.5/estudio/modelos/importar_glb",
+                         {"rascunho": ["3"], "caminho": ["models\\a.ecm"], "modo": ["animacoes"]}, glb))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/importar_glb",
+                                    params={"rascunho": 3, "caminho": "models\\a.ecm", "modo": "tudo"}, content=glb,
+                                    headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 422)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/sem_uso", params={"rascunho": 3},
+                                    json={"caminho": "models\\a.ecm"}, headers=csrf)
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], json.loads(p["corpo"])), ("/admin/1.5.5/estudio/modelos/sem_uso", {"caminho": "models\\a.ecm"}))
         # B301: texto de habilidade (até 2.047 caracteres; em UTF-8 passa de 8 KiB) chega inteiro.
         desc = "技" * 2000
         r = await self.cliente.put("/api/realms/realm_155/estudio/habilidades/5/texto", params={"rascunho": 3},
@@ -391,6 +408,10 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/modelos")
         await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "models\\a.ski"})
         self.assertEqual(RecursosFalso.pedidos[-1]["consulta"]["caminho"], ["models\\a.ski"])
+        self.assertNotIn("todas", RecursosFalso.pedidos[-1]["consulta"])
+        # B380: o GLB com todas as ações (o que vai para o Blender).
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "models\\a.ecm", "todas": "true"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"]["todas"], ["true"])
         # Ação nova no .ecm (B280).
         r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/acao", params={"rascunho": 5}, headers=csrf,
                                     json={"caminho": "models\\a.ecm", "origem": "x", "nova": "y", "extra": 1})

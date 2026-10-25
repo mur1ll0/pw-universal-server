@@ -180,7 +180,9 @@ export const definirTexto = (arquivo: string, chave: number, texto: string) =>
 export const novoTexto = (arquivo: string, id: number, texto: string) =>
   api(rota(`textos/${arquivo}`), { method: "POST", body: JSON.stringify({ id, texto }) });
 
-export const rotaDoGlb = (caminho: string, acao?: string) => rota("modelos/glb", acao ? { caminho, acao } : { caminho });
+/** GLB do modelo: pose parada, uma ação (`acao`, a prévia) ou, com `todas`, todas as ações-base (o que vai ao Blender, B380). */
+export const rotaDoGlb = (caminho: string, acao?: string, todas = false) =>
+  rota("modelos/glb", todas ? { caminho, todas: "true" } : acao ? { caminho, acao } : { caminho });
 
 /** Ícone do item: o `file_icon` em bytes GBK, em hexadecimal (B188). */
 export const urlDoIcone = (hex: string | null | undefined) => (hex ? `/api/icones/m/${hex}.png` : "");
@@ -300,6 +302,20 @@ export async function importarAcoesGlb(smd: string, glb: ArrayBuffer) {
 
 /** B374: um modelo inteiro (esqueleto, pele, texturas, animações, .smd e .ecm) a partir de um GLB, em `<pasta>\<título>.*`
     (`modelos/novo`, B298/B299); `molde` = o .ecm de onde o novo herda o cabeçalho e as ações. */
+/** B380: GLB no modelo (.ecm) do monstro — só o modelo (malha e texturas) ou só as animações, com o mesmo esqueleto. */
+export async function importarGlbNoModelo(caminho: string, modo: "modelo" | "animacoes", glb: ArrayBuffer) {
+  const r = await fetch(rota("modelos/importar_glb", { caminho, modo }), {
+    method: "POST", credentials: "same-origin", body: glb,
+    headers: { "Content-Type": "application/octet-stream", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new ErroDaApi(d?.mensagem || d?.detail || `HTTP ${r.status}`, r.status);
+  return d;
+}
+/** B380: os arquivos do modelo antigo que nada mais usa saem no rascunho. */
+export const removerModeloSemUso = (caminho: string) =>
+  api<{ removidos: { caminho: string; acao: string }[]; mantidos?: { caminho: string; motivo: string }[]; motivo?: string; usado_por?: { tabela: string; id: number | null; nome: string } }>(
+    rota("modelos/sem_uso"), { method: "POST", body: JSON.stringify({ caminho }) });
 export async function importarModeloGlb(pasta: string, titulo: string, molde: string, glb: ArrayBuffer) {
   const r = await fetch(rota("modelos/novo", molde ? { pasta, titulo, molde } : { pasta, titulo }), {
     method: "POST", credentials: "same-origin", body: glb,

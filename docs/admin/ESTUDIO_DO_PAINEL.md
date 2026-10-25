@@ -632,6 +632,20 @@ com as animações antes de publicar.
 Animações do esqueleto, Trocar o modelo inteiro, Arquivos e efeitos), sem rolagem interna; a dica do item abre só sobre o
 ícone e aparece logo acima dele.
 
+**Editar no Blender (B380):** no card Modelo 3D, **Exportar GLB (Blender)** baixa `<título do .ecm>.glb` com malha,
+texturas, esqueleto e **todas** as animações do `.smd` (`modelos/glb?todas=true`), cada uma com o nome legível e o do
+cliente (`"Parado · 站立"`; o original também em `extras.angelica.nome`). No Blender, use a extensão PW Estúdio
+(`tools/blender/pw_estudio`, 1.1.0): "Importar GLB do Estúdio" (guarda o nome do cliente em cada ação) e "Exportar GLB
+para o Estúdio" (verifica o GBK pelo nome do cliente). **Importar GLB**, no mesmo card, com três modos:
+- *Só o modelo* — malha e texturas viram a pele `<.ecm>.ski`; esqueleto e animações ficam (`modelos/importar_glb?modo=modelo`);
+- *Só as animações* — substitui as de mesmo nome e acrescenta as novas (`modo=animacoes`);
+- *Tudo* — pasta e título, `modelos/novo` com o .ecm atual de molde, o monstro passa a usar o .ecm novo e o antigo vai
+  para `modelos/sem_uso`, que marca para remoção no rascunho o que nada mais usa (outro monstro, NPC, mascote, filho de
+  outro `.ecm`, objeto dinâmico; .smd/.bon/peles/.stck/texturas compartilhados ficam).
+Os dois primeiros exigem o mesmo esqueleto (mesmos ossos, mesmas mães) e recusam com a lista do que difere. O card
+"Trocar o modelo inteiro" saiu (virou o modo *Tudo*). A prévia redesenha quando o `.ecm` muda ou o rascunho muda (antes
+só desenhava se nada estivesse desenhado) e pede o GLB com `cache: "no-store"`.
+
 **Prévia e abrir item (B373):** ao passar o mouse num item que cai aparece a dica da tela de personagem, de um item
 gerado agora pelo GS como drop (`GET /api/realms/{r}/itens/{id}/exemplo` → consulta `item_de_exemplo` do GS, que não
 grava; `detalhe_do_item` passou a montar a dica de um registro, `detalhe_de_registro`). Cada cartão tem abrir em nova aba

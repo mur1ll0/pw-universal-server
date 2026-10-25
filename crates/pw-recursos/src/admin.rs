@@ -522,6 +522,35 @@ struct QModelo {
     acao: Option<String>,
     /// B374: com o rascunho, os arquivos de modelo dele valem antes do publicado.
     rascunho: Option<i64>,
+    /// B380: todas as ações-base do `.smd` (o GLB que vai para o Blender).
+    todas: Option<bool>,
+}
+
+/// B380: o nome legível de uma ação do cliente para o GLB ("站立" → "Parado · 站立"), com o original depois do
+/// separador (`importar::SEPARADOR_DO_NOME`), que o importador recupera. A mesma tabela que a tela mostra
+/// (`web-admin/estudio/src/componentes/ModeloDoMonstro.svelte`, `TRADUCOES`) — só para ler; o arquivo guarda o original.
+const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[("站立", "Parado"), ("休闲", "Ocioso"), ("戒备", "Em guarda"), ("慢速移动", "Andando"), ("快速移动", "Correndo"),
+    ("普攻", "Ataque "), ("魔攻", "Ataque mágico "), ("技能", "Habilidade "), ("施放", "lançar "), ("吟唱", "concentrar "), ("死亡", "Morrendo"),
+    ("受伤", "Apanhando"), ("叠加", " (sobreposto)"), ("起", " — início"), ("落", " — golpe"), ("挂点", "Ponto de encaixe"), ("飞行", "Voando"),
+    ("游泳", "Nadando"), ("跳", "Pulo"), ("眩晕", "Atordoado"), ("出生", "Nascendo")];
+
+fn nome_legivel_da_acao(original: &str) -> String {
+    // 起/落 (início/golpe do ataque) só como sufixo: no meio são outra palavra (`落石术` = "pedra que cai").
+    let (miolo, sufixo) = match original.strip_suffix('起').map(|m| (m, " — início")).or_else(|| original.strip_suffix('落').map(|m| (m, " — golpe"))) {
+        Some(x) => x,
+        None => (original, ""),
+    };
+    let mut t = miolo.to_string();
+    for (a, b) in TRADUCOES_DE_ACAO.iter().filter(|(a, _)| *a != "起" && *a != "落") {
+        t = t.replace(a, b);
+    }
+    let t = format!("{}{sufixo}", t.split_whitespace().collect::<Vec<_>>().join(" "));
+    // Sobrou ideograma (nome sem tradução na tabela): o legível misturado só confunde — vai o original.
+    if t == original || t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+        original.to_string()
+    } else {
+        format!("{t}{}{original}", pw_data_loader::importar::SEPARADOR_DO_NOME)
+    }
 }
 
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModelo>) -> R<Response> {
@@ -584,27 +613,58 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
             .collect();
         let lista: Vec<pw_data_loader::glb::PeleDoModelo> = lidas.iter().zip(&fornecedores).map(|((_, s), f)| pw_data_loader::glb::PeleDoModelo { ski: s, textura: f.as_ref() }).collect();
         // B276: com `acao`, a animação dela — trilhas embutidas no .bon v5 ou o .stck da ação (pasta das trilhas: a do
-        // .smd v8, ou `tcks_<título>`).
-        if let (Some(nome_acao), Ok(b)) = (q.acao.as_deref(), esqueleto.as_ref()) {
-            let a = cabeca.lista_de_acoes.iter().find(|a| a.nome == nome_acao).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("ação {nome_acao} não existe")))?;
+        // .smd v8, ou `tcks_<título>`). B380: com `todas`, uma animação glTF por ação-base do .smd (o "Exportar GLB"),
+        // com o nome legível ("Parado · 站立") e o original em `extras.angelica.nome`; ação cuja trilha não lê fica de fora.
+        let escolhidas: Vec<&pw_data_loader::smd::Acao> = if q.todas == Some(true) {
+            cabeca.lista_de_acoes.iter().collect()
+        } else if let Some(nome_acao) = q.acao.as_deref() {
+            vec![cabeca.lista_de_acoes.iter().find(|a| a.nome == nome_acao).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("ação {nome_acao} não existe")))?]
+        } else {
+            Vec::new()
+        };
+        if let (false, Ok(b)) = (escolhidas.is_empty(), esqueleto.as_ref()) {
             if b.fps <= 0 || (cabeca.versao < 7 && b.versao >= 6) {
-                return Err(Erro(StatusCode::BAD_REQUEST, "o motor descarta as ações deste modelo (.smd < 7 com .bon v6)".into()));
+                if q.todas != Some(true) {
+                    return Err(Erro(StatusCode::BAD_REQUEST, "o motor descarta as ações deste modelo (.smd < 7 com .bon v6)".into()));
+                }
+                return glb_como_resposta(&nome, pw_data_loader::glb::do_modelo(&lista, Some(b), &nome));
             }
-            let stck;
-            let trilhas: Vec<(i32, &pw_data_loader::trilha::TrilhaDeOsso)> = if b.versao < 6 {
-                b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect()
-            } else {
-                let arquivo = a.stck.clone().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "a ação não cita .stck".into()))?;
-                let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
-                let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
-                let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
-                let (_, bytes) = conteudo_de(&e, &v, rr, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
-                stck = pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
-                stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
-            };
+            let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
+            let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
+            // As .stck lidas antes (as trilhas das animações apontam para elas); `None` = trilha embutida no .bon v5.
+            let mut lidas_stck: Vec<(&pw_data_loader::smd::Acao, Option<pw_data_loader::stck::Stck>)> = Vec::new();
+            for a in &escolhidas {
+                if b.versao < 6 {
+                    lidas_stck.push((a, None));
+                    continue;
+                }
+                let lida = (|| -> Result<pw_data_loader::stck::Stck, Erro> {
+                    let arquivo = a.stck.clone().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "a ação não cita .stck".into()))?;
+                    let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
+                    let (_, bytes) = conteudo_de(&e, &v, rr, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
+                    pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))
+                })();
+                match lida {
+                    Ok(s) => lidas_stck.push((a, Some(s))),
+                    Err(x) if q.todas == Some(true) => tracing::warn!("GLB de {nome}: ação {} fora ({})", a.nome, x.1),
+                    Err(x) => return Err(x),
+                }
+            }
             let fps = b.fps as f32;
-            let anim = pw_data_loader::glb::AnimacaoDoModelo { nome: a.nome.clone(), trilhas, inicio_ms: a.quadro_inicial * 1000.0 / fps, fim_ms: a.quadro_final * 1000.0 / fps };
-            let glb = pw_data_loader::glb::do_modelo_animado(&lista, b, &anim, &nome);
+            let anims: Vec<pw_data_loader::glb::AnimacaoDoModelo> = lidas_stck
+                .iter()
+                .map(|(a, s)| pw_data_loader::glb::AnimacaoDoModelo {
+                    nome: if q.todas == Some(true) { nome_legivel_da_acao(&a.nome) } else { a.nome.clone() },
+                    trilhas: match s {
+                        Some(s) => s.trilhas.iter().map(|(j, t)| (*j, t)).collect(),
+                        None => b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect(),
+                    },
+                    inicio_ms: a.quadro_inicial * 1000.0 / fps,
+                    fim_ms: a.quadro_final * 1000.0 / fps,
+                    nome_original: Some(a.nome.clone()),
+                })
+                .collect();
+            let glb = pw_data_loader::glb::do_modelo_com_acoes(&lista, b, &anims, &nome);
             return glb_como_resposta(&nome, glb);
         }
         let glb = pw_data_loader::glb::do_modelo(&lista, esqueleto.as_ref().ok(), &nome);
@@ -803,6 +863,33 @@ async fn estudio_texto_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id))
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
     Ok(Json(e.estudio.definir_texto_da_habilidade(&e.gov, &v, r, id, p.nome, p.descricao).await?))
+}
+
+#[derive(Deserialize)]
+struct QImportarGlb {
+    rascunho: Option<i64>,
+    caminho: String,
+    modo: String,
+}
+
+/// B380: GLB no modelo (`.ecm`) do monstro — só o modelo ou só as animações, com o mesmo esqueleto
+/// (`Estudio::importar_glb_no_modelo`).
+async fn estudio_importar_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImportarGlb>, corpo: Bytes) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    Ok(Json(e.estudio.importar_glb_no_modelo(&e.gov, &v, r, &q.caminho, &q.modo, corpo.to_vec()).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoSemUso {
+    caminho: String,
+}
+
+/// B380: marca para remoção os arquivos do modelo antigo que nada mais usa (`Estudio::remover_modelo_sem_uso`).
+async fn estudio_modelo_sem_uso(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoSemUso>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_modelo_sem_uso(&e.gov, &v, r, &p.caminho).await?))
 }
 
 #[derive(Deserialize)]
@@ -1830,6 +1917,8 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/modelos/pele_nova", post(estudio_nova_pele))
         .route("/admin/{v}/estudio/modelos/acoes_glb", post(estudio_acoes_glb))
         .route("/admin/{v}/estudio/modelos/novo", post(estudio_modelo_novo))
+        .route("/admin/{v}/estudio/modelos/importar_glb", post(estudio_importar_glb))
+        .route("/admin/{v}/estudio/modelos/sem_uso", post(estudio_modelo_sem_uso))
         .route("/admin/{v}/estudio/habilidades", get(estudio_habilidades))
         .route("/admin/{v}/estudio/habilidades/{id}", get(estudio_habilidade))
         .route("/admin/{v}/estudio/habilidades/{id}/texto", put(estudio_texto_da_habilidade))
@@ -1863,4 +1952,21 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .layer(DefaultBodyLimit::max(MAIOR_ARQUIVO))
         .route_layer(middleware::from_fn_with_state(estado.clone(), exigir_segredo))
         .with_state(estado)
+}
+
+#[cfg(test)]
+mod testes_b380 {
+    /// B380: nome legível da ação no GLB, com o original depois do separador (o importador o recupera).
+    #[test]
+    fn nome_legivel_da_acao() {
+        assert_eq!(super::nome_legivel_da_acao("站立"), "Parado · 站立");
+        assert_eq!(super::nome_legivel_da_acao("普攻1起"), "Ataque 1 — início · 普攻1起");
+        assert_eq!(super::nome_legivel_da_acao("andar"), "andar");
+        assert_eq!(super::nome_legivel_da_acao("受伤叠加"), "Apanhando (sobreposto) · 受伤叠加");
+        // Sem tradução de tudo, só o original (antes: "— golpe石术lançar — golpe").
+        assert_eq!(super::nome_legivel_da_acao("落石术施放落"), "落石术施放落");
+        assert_eq!(super::nome_legivel_da_acao("弓箭站立"), "弓箭站立");
+        let v = serde_json::json!({ "name": super::nome_legivel_da_acao("魔攻2落") });
+        assert_eq!(pw_data_loader::importar::nome_original(&v).as_deref(), Some("魔攻2落"));
+    }
 }

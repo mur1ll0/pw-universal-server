@@ -17517,3 +17517,59 @@ comparação lado a lado.
       rodada foi parada a pedido: CPU a 100% e 5,4 GB num binário.
     - Limites (pedido do Murillo): `.cargo/config.toml` com `jobs = 6` e `RUST_TEST_THREADS = 3`; regra de uma suíte por
       vez e um serviço por `docker compose build` na skill `pw-testar-e-publicar`, no `AGENTS.md` e no agente.
+
+380. **Sessão 2026-10-24/25: modelo do monstro ↔ Blender — exportar tudo, importar em três modos, modelo antigo sem uso.**
+     Relato do Murillo: "Exportar GLB (blender)" saía sem as animações; editou e usou "Trocar o modelo inteiro → Escolher
+     GLB", a prévia não atualizou e as animações sumiram.
+    ### a. Diagnóstico
+    - O "Exportar" baixava o GLB da animação em prévia (`acao=`) — na pose parada, nenhuma: `do_modelo_com` só aceitava
+      uma ação.
+    - A prévia: o `$effect` só chamava `tocar("")` com `!parar`; depois do primeiro desenho `parar` nunca volta a `null`,
+      então o `caminho` novo (o `file_model` trocado) recarregava a ficha e não o GLB. Sem cache envolvido (o painel não
+      manda cabeçalho de cache no GLB); mesmo assim o `fetch` agora é `no-store`.
+    - As animações "perdidas": o GLB que voltou não tinha nenhuma (o exportado não as levava).
+    - Achado no teste: `importar_acoes` (B295) gravava a `.stck` em `tcks_<título>` sem gravar a pasta no `.smd` v8 que a
+      tinha vazia — e no v8 o motor usa a pasta do arquivo (`A3DSkinModelMan.cpp:214-224`): a trilha não seria achada.
+    ### b. O que mudou
+    - `pw-data-loader`: `glb::do_modelo_com_acoes` (várias animações; `AnimacaoDoModelo::nome_original` →
+      `extras.angelica.nome`); `importar::nome_original` (extras → depois do último " · " → nome inteiro), usado por
+      `acoes_do_glb`; `importar::conferir_esqueleto` (nome e mãe de cada osso); `ecm::Ecm::filhos` (`ChildPath:`,
+      `EC_Model.cpp:152/4777`).
+    - `pw-recursos`: `modelos/glb?todas=true` (todas as ações-base, nome legível pela tabela `TRADUCOES_DE_ACAO`, a mesma
+      da tela); `POST modelos/importar_glb?modo=modelo|animacoes` (`Estudio::importar_glb_no_modelo`: confere o esqueleto;
+      modelo → `<.ecm>.ski`, a pele do NPC/monstro, B282); `POST modelos/sem_uso` (`Estudio::remover_modelo_sem_uso`:
+      elements com o rascunho, `ChildPath`, objetos dinâmicos; `.smd`, `.bon`, peles, `.stck` e texturas só se nada mais
+      usa); índice de `.ecm` com `filhos` e `dependencias` por `.smd`; `importar_acoes` grava a pasta das trilhas no v8.
+    - Painel: rotas `importar_glb` (modo conferido), `sem_uso` e `todas` no GLB.
+    - Estúdio: card Modelo 3D com "Exportar GLB (Blender)" (tudo) e "Importar GLB" em três modos; o card "Trocar o modelo
+      inteiro" saiu; prévia redesenha quando o `.ecm` ou o rascunho muda.
+    - Extensão PW Estúdio 1.1.0: "Importar GLB do Estúdio" grava o nome do cliente em cada ação (o importador glTF do
+      Blender não leva os `extras` da animação — `io_scene_gltf2/blender/imp/animation_utils.py:110`, só o nome); o
+      exportador devolve as propriedades da ação como `extras` (`exp/animation/action.py:992-994`); "Verificar" confere o
+      GBK pelo nome do cliente.
+    - Nomes em português no GLB: viável e sem quebrar o cliente — o arquivo do jogo continua com o original (GBK); o
+      legível só existe no GLB e no Blender, e volta pelo `extras` ou pelo " · ".
+    - Achados na conferência no navegador e corrigidos: o painel cortava o GLB (> 8 KiB) na rota nova (`seguranca.py`,
+      lista de rotas de envio); o "Tudo" sobre um modelo que só existe no rascunho falhava (o molde lia só o publicado);
+      a remoção sem uso tirava as `Textures\` que um modelo novo do rascunho, na mesma pasta, usava (só olhava as `.ski`
+      publicadas); nomes mistos ("— golpe石术lançar…") — 起/落 só como sufixo e, se sobra ideograma, só o original.
+    ### c. Provas
+    - `pw-data-loader --lib` 127/0 (`acoes_ida_e_volta`: 40 modelos reais — esqueleto do GLB confere, com osso renomeado
+      não; duas ações num GLB voltam com o nome do cliente pelo extras e pelo " · "; `nome_original_da_animacao`).
+    - `pw-recursos` com `TEST_DATABASE_URL` 30/0 (`tests/estudio.rs`: GLB `todas`; só animações com nome legível sem
+      extras → "andar"; esqueleto trocado → 400 com "raiz" e "tudo"; só modelo → `caixa.ski`; prévia da ação acha a
+      `.stck` com a pasta gravada; sem uso: `caixa.ecm` sai e o `.smd` fica (outro `.ecm`); o modelo do rascunho sai
+      inteiro menos a textura que outro modelo novo da pasta usa; modelo citado no elements fica). Painel
+      `teste_recursos` 14/14 no contêiner. `svelte-check` 0/0; `vitest` 35/35. Clippy sem aviso novo.
+    - Blender 5.1 sem janela (extensão do repositório): GLB real do registro 12 (`地洞侏儒商人.ecm`, 21 animações,
+      1,36 MB) → 21 ações com o nome do cliente guardado → "Verificar" OK → exportado com `extras.angelica.nome` nas 21.
+    - Navegador (`localhost:8000`, realm_155, monstro 997, rascunho **#70, descartado**): exportar 21 animações; "Só o
+      modelo" com o GLB do Blender → 200 (3 malhas, 842 vértices, texturas iguais não regravadas); "Só as animações" →
+      21 substituídas; GLB de outro monstro → recusa "28 ossos no modelo, 26 no GLB: faltam 7…"; "Tudo" → `file_model`
+      novo, prévia pediu o GLB do `.ecm` novo, antigo mantido ("usado por MONSTER_ESSENCE 6493"); "Tudo" de novo →
+      o modelo do rascunho anterior saiu (25 arquivos) e as 3 texturas ficaram (usadas pelo novo). Sem o card "Trocar o
+      modelo inteiro".
+    ### d. Falta
+    - Murillo: reinstalar a extensão 1.1.0 e testar com o Blender dele (roteiro no ESTADO §3.3).
+    - `.bon` v5: reimportar animações iguais faz o `.bon` crescer (ESTADO §5).
+

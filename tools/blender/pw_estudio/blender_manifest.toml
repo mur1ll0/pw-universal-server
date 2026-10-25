@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "pw_estudio"
-version = "1.0.0"
+version = "1.1.0"
 name = "PW Estúdio"
 tagline = "Verifica e exporta modelos para o Estúdio do pw-universal-server"
 maintainer = "pw-universal-server"

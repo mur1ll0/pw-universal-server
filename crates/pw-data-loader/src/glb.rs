@@ -108,6 +108,9 @@ pub struct AnimacaoDoModelo<'a> {
     pub trilhas: Vec<(i32, &'a crate::trilha::TrilhaDeOsso)>,
     pub inicio_ms: f32,
     pub fim_ms: f32,
+    /// B380: o nome que o `.smd` guarda (GBK), quando `nome` é o legível ("Parado · 站立"): vai em
+    /// `extras.angelica.nome` da animação, de onde o importador (`importar::nome_original`) o recupera.
+    pub nome_original: Option<String>,
 }
 
 /// O valor da trilha no tempo `t` a partir das amostras (linear entre vizinhas; o motor interpola posição e faz SLERP
@@ -136,7 +139,13 @@ fn valor_em<const N: usize>(amostras: &[(f32, [f32; N])], t: f32) -> [f32; N] {
 
 /// O GLB do modelo com uma ação animada (canais de translação e rotação por osso, tempos a partir de 0 s).
 pub fn do_modelo_animado(peles: &[PeleDoModelo], esqueleto: &Bon, acao: &AnimacaoDoModelo, nome: &str) -> Vec<u8> {
-    do_modelo_com(peles, Some(esqueleto), Some(acao), nome)
+    do_modelo_com(peles, Some(esqueleto), std::slice::from_ref(acao), nome)
+}
+
+/// B380: o GLB do modelo com várias ações (uma animação glTF por ação, cada uma com tempos a partir de 0 s) — o
+/// "Exportar GLB" do Estúdio leva todas as ações-base do `.smd` para o Blender.
+pub fn do_modelo_com_acoes(peles: &[PeleDoModelo], esqueleto: &Bon, acoes: &[AnimacaoDoModelo], nome: &str) -> Vec<u8> {
+    do_modelo_com(peles, Some(esqueleto), acoes, nome)
 }
 
 /// Matriz do Direct3D (linha × matriz, em ordem de linha) → glTF (coluna, em ordem de coluna) com a troca de mão: o
@@ -185,10 +194,10 @@ pub fn inversa(m: &Matriz) -> Option<Matriz> {
 /// esqueleto; v ≥ 9, pelo nome) e o 4º peso `1 − soma`; a malha rígida fica presa ao osso dela com peso 1.
 /// Pele que não casa com o esqueleto (osso inexistente ou nome sem par) vai sem `skin`.
 pub fn do_modelo(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, nome: &str) -> Vec<u8> {
-    do_modelo_com(peles, esqueleto, None, nome)
+    do_modelo_com(peles, esqueleto, &[], nome)
 }
 
-fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&AnimacaoDoModelo>, nome: &str) -> Vec<u8> {
+fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acoes: &[AnimacaoDoModelo], nome: &str) -> Vec<u8> {
     let mut m = Montagem { bin: Vec::new(), views: Vec::new(), accessors: Vec::new() };
     let mut images = Vec::new();
     let mut materiais: Vec<Value> = Vec::new();
@@ -377,7 +386,7 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
     }
     // Animação (B276): por osso, a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`), no intervalo da ação.
     let mut animacoes = Vec::new();
-    if let (Some(a), Some(b)) = (acao, esqueleto) {
+    for (a, b) in acoes.iter().filter_map(|a| esqueleto.map(|b| (a, b))) {
         let mut canais = Vec::new();
         let mut samplers = Vec::new();
         for (i, o) in b.ossos.iter().enumerate() {
@@ -412,7 +421,11 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acao: Option<&
             canais.push(json!({ "sampler": samplers.len() - 1, "target": { "node": i, "path": "rotation" } }));
         }
         if !canais.is_empty() {
-            animacoes.push(json!({ "name": a.nome, "channels": canais, "samplers": samplers }));
+            let mut anim = json!({ "name": a.nome, "channels": canais, "samplers": samplers });
+            if let Some(o) = &a.nome_original {
+                anim["extras"] = json!({ "angelica": { "nome": o } });
+            }
+            animacoes.push(anim);
         }
     }
     m.alinhar();
@@ -585,7 +598,7 @@ mod testes {
                     stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
                 };
                 let fps = b.fps as f32;
-                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps, nome_original: None };
                 let sem = |_: usize| None;
                 let lista: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();
                 let g = do_modelo_animado(&lista, &b, &acao, "t");

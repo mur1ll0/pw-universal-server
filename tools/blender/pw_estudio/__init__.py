@@ -16,8 +16,16 @@ Estúdio espera. As regras vêm do formato, não de gosto:
   modelo real exportado pelo painel e devolvido pelo Blender: rotação com erro até 5e-2 a 24/s, até 1,4e-4 a 15/s.
 """
 
+import json
+import struct
+
 import bpy
 
+# B380: o Estúdio exporta cada animação com o nome legível ("Parado · 站立") e o nome do cliente em
+# `extras.angelica.nome`; o importador glTF do Blender não leva os `extras` da animação para a ação, então "Importar GLB
+# do Estúdio" os grava na ação (`acao["angelica"]["nome"]`), e o exportador glTF devolve as propriedades da ação como
+# `extras` (`export_extras`). O Estúdio lê primeiro `extras.angelica.nome`, depois o que vem após o último " · ".
+SEPARADOR_DO_NOME = " · "
 PREFIXOS_DE_GANCHO = ("HH_", "CC_")
 MAX_VERTICES = 65536
 MAX_INFLUENCIAS = 4
@@ -31,6 +39,30 @@ def cabe_em_gbk(texto):
         return True
     except UnicodeEncodeError:
         return False
+
+
+def nome_original(acao):
+    """O nome da ação no jogo (o que o cliente procura): o guardado na importação, senão o que vem depois de " · "."""
+    a = acao.get("angelica") if hasattr(acao, "get") else None
+    if a is not None and hasattr(a, "get") and a.get("nome"):
+        return str(a.get("nome"))
+    return acao.name.rsplit(SEPARADOR_DO_NOME, 1)[-1].strip()
+
+
+def nomes_das_animacoes(caminho):
+    """(nome glTF, nome original) de cada animação do GLB que tem `extras.angelica.nome`."""
+    with open(caminho, "rb") as f:
+        dados = f.read()
+    if dados[:4] != b"glTF":
+        return []
+    n = struct.unpack_from("<I", dados, 12)[0]
+    doc = json.loads(dados[20:20 + n].decode("utf-8"))
+    r = []
+    for a in doc.get("animations", []):
+        orig = ((a.get("extras") or {}).get("angelica") or {}).get("nome")
+        if orig and a.get("name"):
+            r.append((a["name"], orig))
+    return r
 
 
 def armadura_de(obj):
@@ -106,9 +138,11 @@ def verificar(objetos):
     if bpy.data.actions and round(fps, 3) not in FPS_DO_JOGO:
         r.append(('AVISO', f"A cena está a {fps:g} quadros/s; o jogo usa 15 ou 30 — a exportação reamostra fora da grade e a animação perde precisão (use \"Importar GLB do Estúdio\" ou mude o FPS antes de animar)."))
     for a in bpy.data.actions:
-        if not cabe_em_gbk(a.name):
-            r.append(('ERRO', f"Ação \"{a.name}\": nome fora do GBK."))
-        if any(c in a.name for c in "\\/"):
+        # B380: o que vai para o jogo é o nome original (o legível "Parado · 站立" é só para ler).
+        nome = nome_original(a)
+        if not cabe_em_gbk(nome):
+            r.append(('ERRO', f"Ação \"{a.name}\": o nome \"{nome}\" fica fora do GBK."))
+        if any(c in nome for c in "\\/"):
             r.append(('ERRO', f"Ação \"{a.name}\": o nome vira o arquivo <ação>.stck — sem barras."))
     for o in objetos:
         if o.type == 'EMPTY' and o.name.startswith(PREFIXOS_DE_GANCHO) and not (o.parent and o.parent_type == 'BONE'):
@@ -143,8 +177,20 @@ class PWE_OT_importar(bpy.types.Operator):
     def execute(self, context):
         context.scene.render.fps = int(self.fps)
         context.scene.render.fps_base = 1.0
+        antes = set(bpy.data.actions)
         bpy.ops.import_scene.gltf(filepath=self.filepath)
-        self.report({'INFO'}, f"Importado a {self.fps} quadros/s: {self.filepath}")
+        # B380: o nome do cliente de cada animação vai para a ação (o importador glTF não leva os extras dela).
+        novas = [a for a in bpy.data.actions if a not in antes]
+        guardados = 0
+        for nome, orig in nomes_das_animacoes(self.filepath):
+            # O Blender corta nome comprido (63 bytes até o 4.x): casa pelo começo.
+            for a in novas:
+                if a.name == nome or (len(a.name) >= 20 and nome.startswith(a.name)):
+                    a["angelica"] = {"nome": orig}
+                    a.use_fake_user = True
+                    guardados += 1
+                    break
+        self.report({'INFO'}, f"Importado a {self.fps} quadros/s ({guardados} ações com o nome do cliente): {self.filepath}")
         return {'FINISHED'}
 
     def invoke(self, context, event):

@@ -845,6 +845,14 @@ e cada ação do `.smd` é um intervalo de quadros dela. Medido em 1.163 ações
 Testado em 30 modelos reais (10 com `.smd` v5, 20 com v6; 1.144 trilhas de junta): os dois arquivos releem, o
 `cabeca` vê a ação no intervalo, e cada junta ganha as chaves e o segmento esperados.
 
+**Várias ações e nome do cliente (B380):** `glb::do_modelo_com_acoes(peles, esqueleto, acoes, nome)` põe uma animação
+glTF por ação; `AnimacaoDoModelo::nome_original` vai em `extras.angelica.nome`. `importar::nome_original(anim)` devolve o
+nome da ação no `.smd`: `extras.angelica.nome`, senão o que vem depois do último `" · "` (`SEPARADOR_DO_NOME`), senão o
+nome inteiro — `acoes_do_glb` usa. `importar::conferir_esqueleto(glb, bon)`: os ossos do glTF (`esqueleto_do_glb`) e os
+do `.bon` têm os mesmos nomes e cada um a mesma mãe; `Err` lista os que faltam, sobram ou mudaram de mãe (teste:
+`acoes_ida_e_volta`, 40 modelos reais — o GLB exportado confere, com um osso renomeado não). `ecm::Ecm::filhos`: os
+`ChildPath:` (`EC_Model.cpp:152/4777`).
+
 **Esqueleto do glTF (B297, S6):** `importar::esqueleto_do_glb(glb)` monta um `.bon` v6 a partir das juntas da 1ª `skin`
 (sem a vaga "esqueleto").
 

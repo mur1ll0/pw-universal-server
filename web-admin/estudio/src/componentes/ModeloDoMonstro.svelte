@@ -2,11 +2,13 @@
   /* B373: o modelo do monstro e as ações dele. O cliente pede ao monstro ações pelo nome (parado, andar, atacar, morrer…;
      a lista sai do `diagnostico_de_monstro`, B277) e cada uma é uma ação combinada do `.ecm` que toca uma animação-base
      do `.smd` (`BaseActName:`). Aqui se vê cada animação (GLB do servidor animado na CPU) e se troca a animação de cada
-     ação (`POST modelos/base`, `ecm::trocar_base`); ação que falta se cria clonando outra (`modelos/acao`). Exportar =
-     GLB da animação (Blender); importar = animações de um GLB viram ações do `.smd` (`acoes_glb`, B295). Efeitos (GFX)
-     não têm prévia: o painel não tem renderizador de GFX. */
+     ação (`POST modelos/base`, `ecm::trocar_base`); ação que falta se cria clonando outra (`modelos/acao`). B380: exportar
+     = GLB com malha, texturas, esqueleto e todas as ações-base (nome legível "Parado · 站立", original em
+     `extras.angelica.nome`); importar = um GLB em três modos — só o modelo ou só as animações (`modelos/importar_glb`,
+     mesmo esqueleto) ou tudo (`modelos/novo` + `file_model` + `modelos/sem_uso` para o antigo que nada mais usa).
+     Efeitos (GFX) não têm prévia: o painel não tem renderizador de GFX. */
   import { onDestroy } from "svelte";
-  import { acaoNova, fichaDoModelo, importarAcoesGlb, importarModeloGlb, rotaDoGlb, trocarBase, type FichaDoModelo } from "../lib/api";
+  import { acaoNova, fichaDoModelo, importarGlbNoModelo, importarModeloGlb, removerModeloSemUso, rotaDoGlb, trocarBase, type FichaDoModelo } from "../lib/api";
   import { desenharGlb } from "../lib/glb";
   import { avisar, estudio } from "../lib/estado.svelte";
   import Icone from "./Icone.svelte";
@@ -15,6 +17,9 @@
     { caminho: string; habilidades?: number[]; politica?: number; idDoMonstro?: number; aoTrocarModelo?: (ecm: string) => Promise<void> } = $props();
   let pastaNova = $state("models\\npcs\\estudio");
   let tituloNovo = $state("");
+  /** O que o GLB importado substitui (B380). */
+  let modoDeImportar = $state<"modelo" | "animacoes" | "tudo">("modelo");
+  const arquivoDoGlb = $derived(`${(caminho.split("\\").pop() ?? "modelo").replace(/\.[^.]*$/, "")}.glb`);
   const editavel = $derived(!!estudio.rascunho);
 
   let ficha = $state<FichaDoModelo | null>(null);
@@ -48,13 +53,20 @@
     tocando = base;
     parar?.(); parar = null; erroDoGlb = ""; carregando = true;
     try {
-      const r = await fetch(rotaDoGlb(caminho, base || undefined), { credentials: "same-origin" });
+      // `no-store`: depois de importar no rascunho o mesmo endereço devolve outro modelo (B380).
+      const r = await fetch(rotaDoGlb(caminho, base || undefined), { credentials: "same-origin", cache: "no-store" });
       if (!r.ok) throw new Error(`GLB: HTTP ${r.status}${r.status === 400 ? " — " + ((await r.json().catch(() => ({}))).detail || "") : ""}`);
       if (tela) parar = desenharGlb(tela, await r.arrayBuffer());
     } catch (e) { erroDoGlb = (e as Error).message; }
     finally { carregando = false; }
   }
-  $effect(() => { if (tela && ficha && !parar && !carregando) tocar(""); });
+  /* B380: a prévia redesenha quando o modelo muda (o "tudo" troca o `file_model`, e o `caminho` chega novo) ou o rascunho
+     muda — antes só desenhava se nada estivesse desenhado (`!parar`), e o modelo novo nunca aparecia. */
+  let mostrado = "";
+  $effect(() => {
+    const chave = `${caminho}|${estudio.rascunho ?? ""}`;
+    if (tela && ficha && !carregando && chave !== mostrado) { mostrado = chave; tocar(""); }
+  });
   onDestroy(() => parar?.());
 
   const combinada = (nome: string) => ficha?.combinadas.find((c) => c.nome === nome);
@@ -80,33 +92,9 @@
     catch (e) { avisar("erro", (e as Error).message); }
     finally { ocupado = false; }
   }
-  /** Modelo completo de um GLB: cria os arquivos no rascunho (o .ecm atual é o molde) e o monstro passa a usar o .ecm novo. */
-  async function importarModelo(e: Event) {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    (e.target as HTMLInputElement).value = "";
-    if (!f) return;
-    if (!editavel) { avisar("aviso", "Escolha um rascunho no alto para importar."); return; }
-    const titulo = (tituloNovo.trim() || f.name.replace(/\.glb$/i, "")).trim();
-    if (!pastaNova.trim().toLowerCase().startsWith("models\\")) { avisar("aviso", "A pasta tem de ficar dentro de models\\ (ex.: models\\npcs\\estudio)."); return; }
-    ocupado = true;
-    try {
-      const glb = await f.arrayBuffer();
-      let d;
-      try { d = await importarModeloGlb(pastaNova.trim(), titulo, caminho, glb); }
-      catch (er) {
-        // O .ecm atual não serve de molde quando tem peles adicionais (regra do B299): o servidor escolhe um sozinho.
-        if (!/molde/i.test((er as Error).message)) throw er;
-        avisar("aviso", `O .ecm atual não serve de molde (${(er as Error).message}); usando o molde automático.`);
-        d = await importarModeloGlb(pastaNova.trim(), titulo, "", glb);
-      }
-      const r = d?.resultado ?? {};
-      if (!r.ecm) throw new Error("O servidor não devolveu o .ecm do modelo novo.");
-      avisar("ok", `Modelo novo no rascunho: ${r.ossos ?? "?"} ossos, ${r.malhas ?? "?"} malhas, ${(r.acoes ?? []).length} animações (${r.ecm}).${(r.relatorio ?? []).length ? " Relatório: " + r.relatorio.join(" · ") : ""}`);
-      if (aoTrocarModelo) await aoTrocarModelo(r.ecm);
-    } catch (er) { avisar("erro", (er as Error).message); }
-    finally { ocupado = false; }
-  }
-
+  /** B380: importa o GLB escolhido no modo escolhido. "modelo" e "animacoes" mantêm o .ecm (o servidor confere o esqueleto);
+      "tudo" cria o modelo novo no rascunho (o .ecm atual é o molde), o monstro passa a usá-lo e o antigo que nada mais usa
+      é marcado para remoção. */
   async function importar(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = "";
@@ -114,12 +102,42 @@
     if (!editavel) { avisar("aviso", "Escolha um rascunho no alto para importar."); return; }
     ocupado = true;
     try {
-      const d = await importarAcoesGlb(ficha.smd, await f.arrayBuffer());
-      const r = d?.resultado ?? {};
-      avisar("ok", `Animações importadas: ${(r.acoes ?? []).map((a: any) => a.nome).join(", ") || "nenhuma"}. O esqueleto agora tem ${r.acoes_do_modelo ?? "?"}.`);
-      await carregar();
+      const glb = await f.arrayBuffer();
+      if (modoDeImportar === "tudo") await importarTudo(f, glb);
+      else {
+        const d = await importarGlbNoModelo(caminho, modoDeImportar, glb);
+        const r = d?.resultado ?? {};
+        if (modoDeImportar === "animacoes")
+          avisar("ok", `Animações importadas: ${(r.acoes ?? []).map((a: any) => `${traduzir(a.nome)} (${a.acao})`).join(", ") || "nenhuma"}. O esqueleto agora tem ${r.acoes_do_modelo ?? "?"}.`);
+        else
+          avisar("ok", `Modelo trocado no rascunho: ${r.malhas ?? "?"} malhas, ${r.ossos ?? "?"} ossos (${r.pele ?? r.caminho ?? caminho}).${(r.relatorio ?? []).length ? " Relatório: " + r.relatorio.join(" · ") : ""}`);
+        await carregar();
+        await tocar(tocando && ficha?.bases_do_smd?.includes(tocando) ? tocando : "");
+      }
     } catch (er) { avisar("erro", (er as Error).message); }
     finally { ocupado = false; }
+  }
+
+  async function importarTudo(f: File, glb: ArrayBuffer) {
+    const titulo = (tituloNovo.trim() || f.name.replace(/\.glb$/i, "")).trim();
+    if (!pastaNova.trim().toLowerCase().startsWith("models\\")) throw new Error("A pasta tem de ficar dentro de models\\ (ex.: models\\npcs\\estudio).");
+    let d;
+    try { d = await importarModeloGlb(pastaNova.trim(), titulo, caminho, glb); }
+    catch (er) {
+      // O .ecm atual não serve de molde quando tem peles adicionais (regra do B299): o servidor escolhe um sozinho.
+      if (!/molde/i.test((er as Error).message)) throw er;
+      avisar("aviso", `O .ecm atual não serve de molde (${(er as Error).message}); usando o molde automático.`);
+      d = await importarModeloGlb(pastaNova.trim(), titulo, "", glb);
+    }
+    const r = d?.resultado ?? {};
+    if (!r.ecm) throw new Error("O servidor não devolveu o .ecm do modelo novo.");
+    avisar("ok", `Modelo novo no rascunho: ${r.ossos ?? "?"} ossos, ${r.malhas ?? "?"} malhas, ${(r.acoes ?? []).length} animações (${r.ecm}).${(r.relatorio ?? []).length ? " Relatório: " + r.relatorio.join(" · ") : ""}`);
+    const antigo = caminho;
+    if (aoTrocarModelo) await aoTrocarModelo(r.ecm);
+    if (antigo.toLowerCase() === String(r.ecm).toLowerCase()) return;
+    const s = await removerModeloSemUso(antigo);
+    if (s.removidos.length) avisar("ok", `Modelo antigo sem uso: ${s.removidos.length} arquivo(s) marcados para remoção no rascunho (${antigo}).${s.mantidos?.length ? ` Ficaram ${s.mantidos.length} que outros modelos usam.` : ""}`);
+    else avisar("aviso", `O modelo antigo fica: ${s.motivo ?? "nada a remover"}${s.usado_por ? ` (${s.usado_por.tabela} ${s.usado_por.id ?? ""} ${s.usado_por.nome})` : ""}.`);
   }
 </script>
 
@@ -129,13 +147,30 @@
   <canvas bind:this={tela} width="560" height="420"></canvas>
   <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada — escolha uma animação")} · arraste para girar, roda para aproximar.</p>
   <div class="linha">
-    <a class="botao pequeno" href={rotaDoGlb(caminho, tocando || undefined)} download><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
+    <a class="botao pequeno" href={rotaDoGlb(caminho, undefined, true)} download={arquivoDoGlb}><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
+  </div>
+  <p class="mini">Leva malha, texturas, esqueleto e todas as animações, com o nome legível ("Parado · 站立"); no Blender, abra pela
+    extensão PW Estúdio ("Importar GLB do Estúdio") e exporte por ela ("Exportar GLB para o Estúdio") — o nome que o cliente procura volta sozinho.</p>
+  <fieldset class="importar" disabled={!editavel || ocupado}>
+    <legend class="mini">Importar GLB{editavel ? "" : " — escolha um rascunho no alto"}</legend>
+    <label class="mini"><input type="radio" bind:group={modoDeImportar} value="modelo" /> Só o modelo — malha e texturas; esqueleto e animações ficam</label>
+    <label class="mini"><input type="radio" bind:group={modoDeImportar} value="animacoes" /> Só as animações — substitui as de mesmo nome, acrescenta as novas</label>
+    <label class="mini"><input type="radio" bind:group={modoDeImportar} value="tudo" /> Tudo — modelo, texturas, esqueleto e animações (arquivos novos)</label>
+    {#if modoDeImportar === "tudo"}
+      <div class="linha">
+        <input class="campo" bind:value={pastaNova} aria-label="Pasta do modelo novo" placeholder="models\npcs\estudio" />
+        <input class="campo" bind:value={tituloNovo} aria-label="Título" placeholder={idDoMonstro ? `monstro_${idDoMonstro}` : "título (nome dos arquivos)"} />
+      </div>
+      <p class="mini">Cria <code>&lt;pasta&gt;\&lt;título&gt;</code>.smd, .bon, .ski, as texturas, as animações e o .ecm (o atual serve de molde), o
+        monstro passa a usá-lo e os arquivos do modelo antigo que nada mais usa (outro monstro, NPC, mascote…) saem no rascunho.</p>
+    {:else}
+      <p class="mini">Exige o mesmo esqueleto do modelo (mesmos ossos, mesmas mães); se mudou, use "Tudo".</p>
+    {/if}
     <label class="botao pequeno" class:desligado={!editavel || ocupado}>
-      <Icone nome="mais" tamanho={16} /> Importar animações (GLB)
+      <Icone nome="mais" tamanho={16} /> Escolher GLB…
       <input type="file" accept=".glb,model/gltf-binary" hidden disabled={!editavel || ocupado} onchange={importar} />
     </label>
-  </div>
-  <p class="mini">Exportar leva o modelo com a animação em prévia; no Blender, cada ação do glTF que voltar pelo importar vira uma animação do esqueleto (substitui a de mesmo nome).</p>
+  </fieldset>
   <button class="botao" type="button" disabled title="editor 3D: depois">Editar malha</button>
 </section>
 
@@ -190,21 +225,6 @@
     </div>
   </section>
 {/if}
-<section class="caixa novo">
-  <h3>Trocar o modelo inteiro</h3>
-    <p class="mini">Por um GLB com malha, texturas, esqueleto e animações.</p>
-    <p class="mini">Cria no rascunho <code>&lt;pasta&gt;\&lt;título&gt;</code>.smd, .bon, .ski, as texturas, as animações e o .ecm (o .ecm atual serve de molde:
-      herda o cabeçalho e as ações), e o monstro passa a usar o .ecm novo. Recusa pasta fora de models\, nome fora do GBK e arquivo que já existe.
-      Ao montar no Blender, nomeie as ações como as do cliente (站立, 普攻1起, 死亡…) para ligar sozinho.</p>
-    <div class="linha">
-      <input class="campo" bind:value={pastaNova} aria-label="Pasta do modelo novo" placeholder="models\npcs\estudio" />
-      <input class="campo" bind:value={tituloNovo} aria-label="Título" placeholder={idDoMonstro ? `monstro_${idDoMonstro}` : "título (nome dos arquivos)"} />
-      <label class="botao pequeno" class:desligado={!editavel || ocupado}>
-        <Icone nome="mais" tamanho={16} /> Escolher GLB…
-        <input type="file" accept=".glb,model/gltf-binary" hidden disabled={!editavel || ocupado} onchange={importarModelo} />
-      </label>
-    </div>
-</section>
 </div>
 
 <style>
@@ -219,5 +239,8 @@
   .chips button { padding: 4px 8px; border-radius: 999px; border: 1px solid var(--borda); background: var(--fundo-2); color: var(--texto); font: inherit; font-size: 12px; cursor: pointer; }
   .chips button.ativo { border-color: var(--ouro); background: var(--ouro-suave); }
   .desligado { opacity: .45; pointer-events: none; }
-  .novo .linha input { flex: 1; min-width: 120px; }
+  .importar { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--borda); border-radius: 10px; padding: 8px 10px; margin: 0; }
+  .importar label.mini { display: flex; gap: 6px; align-items: baseline; }
+  .importar .linha input { flex: 1; min-width: 120px; }
+  .importar .botao { align-self: flex-start; }
 </style>

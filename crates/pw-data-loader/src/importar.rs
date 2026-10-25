@@ -207,6 +207,57 @@ pub struct AcaoImportada {
     pub quadro_final: f32,
 }
 
+/// Separador do nome legível que o Estúdio põe nas animações do GLB exportado (B380): "Parado · 站立".
+pub const SEPARADOR_DO_NOME: &str = " · ";
+
+/// B380: o nome da ação no `.smd` (o que o cliente procura, em GBK) a partir de uma animação glTF: primeiro
+/// `extras.angelica.nome` (o Estúdio grava ao exportar; a extensão PW Estúdio do Blender o guarda na ação e o exportador
+/// glTF do Blender o devolve, `export_extras`); sem ele, o que vem depois do último " · " do nome ("Parado · 站立" →
+/// "站立"); sem separador, o nome inteiro (GLB feito fora do Estúdio, com o nome do cliente).
+pub fn nome_original(anim: &Value) -> Option<String> {
+    if let Some(n) = anim["extras"]["angelica"]["nome"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
+        return Some(n.to_string());
+    }
+    let nome = anim["name"].as_str()?;
+    Some(nome.rsplit_once(SEPARADOR_DO_NOME).map_or(nome, |x| x.1).trim().to_string()).filter(|n| !n.is_empty())
+}
+
+/// B380: o esqueleto do glTF é o do modelo? Compara pelo nome de cada osso e o nome da mãe (o importador de ações e o de
+/// pele casam os ossos pelo nome, e a trilha de cada osso só vale relativa à mãe dele). `Err` com o que difere.
+pub fn conferir_esqueleto(glb: &[u8], esqueleto: &Bon) -> Result<(), String> {
+    let (doglb, _) = esqueleto_do_glb(glb)?;
+    let maes = |b: &Bon| -> std::collections::BTreeMap<String, String> {
+        b.ossos.iter().map(|o| (o.nome.clone(), usize::try_from(o.mae).ok().and_then(|m| b.ossos.get(m)).map_or(String::new(), |m| m.nome.clone()))).collect()
+    };
+    let (a, b) = (maes(esqueleto), maes(&doglb));
+    let lista = |v: Vec<&String>| -> String {
+        let n = v.len();
+        let mut t: Vec<String> = v.into_iter().take(5).cloned().collect();
+        if n > 5 {
+            t.push(format!("+{}", n - 5));
+        }
+        t.join(", ")
+    };
+    let faltam: Vec<&String> = a.keys().filter(|k| !b.contains_key(*k)).collect();
+    let sobram: Vec<&String> = b.keys().filter(|k| !a.contains_key(*k)).collect();
+    let outra_mae: Vec<&String> = a.iter().filter(|(k, m)| b.get(*k).is_some_and(|x| x != *m)).map(|x| x.0).collect();
+    let mut partes = Vec::new();
+    if !faltam.is_empty() {
+        partes.push(format!("faltam {} osso(s) do modelo ({})", faltam.len(), lista(faltam)));
+    }
+    if !sobram.is_empty() {
+        partes.push(format!("sobram {} osso(s) que o modelo não tem ({})", sobram.len(), lista(sobram)));
+    }
+    if !outra_mae.is_empty() {
+        partes.push(format!("{} osso(s) com outra mãe ({})", outra_mae.len(), lista(outra_mae)));
+    }
+    if partes.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("o esqueleto do GLB não é o do modelo ({} ossos no modelo, {} no GLB): {}", a.len(), b.len(), partes.join("; ")))
+    }
+}
+
 /// B295 (S6): as animações do glTF como ações do modelo, para o esqueleto `esqueleto`.
 /// - Cada osso usa a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`), e **todo** osso precisa de uma: sem
 ///   ela, `GetBoneStateOnTrack` falha (`:379-384`) e o chamador usa posição e rotação sem valor. Osso sem canal no glTF
@@ -234,7 +285,7 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
     }
     let mut r = Vec::new();
     for (ai, anim) in j["animations"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let nome = anim["name"].as_str().map(str::to_string).unwrap_or_else(|| format!("acao{ai}"));
+        let nome = nome_original(anim).unwrap_or_else(|| format!("acao{ai}"));
         // (nó, caminho) → (tempos, valores, interpolação)
         let mut canais: std::collections::HashMap<(usize, String), (Vec<f32>, Vec<Vec<f32>>, String)> = std::collections::HashMap::new();
         let mut duracao = 0f32;
@@ -815,6 +866,18 @@ mod testes {
     use super::*;
     use crate::glb::{do_modelo, PeleDoModelo};
 
+    /// B380: o nome do cliente de uma animação glTF — extras primeiro, depois o que vem após o último " · ".
+    #[test]
+    fn nome_original_da_animacao() {
+        let n = |v: Value| nome_original(&v);
+        assert_eq!(n(serde_json::json!({ "name": "Parado · 站立", "extras": { "angelica": { "nome": "休闲" } } })).as_deref(), Some("休闲"));
+        assert_eq!(n(serde_json::json!({ "name": "Ataque 1 — início · 普攻1起" })).as_deref(), Some("普攻1起"));
+        assert_eq!(n(serde_json::json!({ "name": "站立" })).as_deref(), Some("站立"));
+        assert_eq!(n(serde_json::json!({ "name": "a · b · 死亡" })).as_deref(), Some("死亡"));
+        assert_eq!(n(serde_json::json!({ "name": "Parado · " })), None);
+        assert_eq!(n(serde_json::json!({})), None);
+    }
+
     /// As influências de um vértice: (nome do osso, peso normalizado), na ordem dos 4 lugares. O 4º peso é implícito
     /// (`1 − soma`) e, medido, sobra como ruído de arredondamento (~1e-8) num lado e some no outro — o osso desse lugar
     /// é o que estiver no índice. Influências abaixo de 1e-6 não contam.
@@ -888,7 +951,7 @@ mod testes {
                     stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
                 };
                 let fps = b.fps as f32;
-                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas: trilhas.clone(), inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas: trilhas.clone(), inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps, nome_original: None };
                 if acao.fim_ms <= acao.inicio_ms { continue; }
                 let sem = |_: usize| None;
                 let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();
@@ -897,6 +960,18 @@ mod testes {
                 let Some(nova) = acoes.first() else { continue };
                 if b.versao < 6 { v5 += 1 } else { v6 += 1 }
                 assert_eq!(nova.nome, ac.nome);
+                // B380: o esqueleto do GLB exportado é o do modelo; com um osso renomeado, não é.
+                conferir_esqueleto(&glb, &b).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+                let mut outro = b.clone();
+                outro.ossos[0].nome.push_str("_x");
+                assert!(conferir_esqueleto(&glb, &outro).is_err_and(|e| e.contains("faltam 1") && e.contains("sobram 1")), "{}", p.display());
+                // B380: várias ações num GLB (o "Exportar GLB"), com nome legível: o nome do cliente volta pelo
+                // `extras.angelica.nome` e, sem ele, pelo que vem depois de " · ".
+                let com_extras = AnimacaoDoModelo { nome: format!("Parado{SEPARADOR_DO_NOME}outro"), trilhas: trilhas.clone(), inicio_ms: acao.inicio_ms, fim_ms: acao.fim_ms, nome_original: Some(ac.nome.clone()) };
+                let sem_extras = AnimacaoDoModelo { nome: format!("Legível{SEPARADOR_DO_NOME}{}", ac.nome), trilhas: trilhas.clone(), inicio_ms: acao.inicio_ms, fim_ms: acao.fim_ms, nome_original: None };
+                let duas = crate::glb::do_modelo_com_acoes(&peles, &b, &[com_extras, sem_extras], "t");
+                let (lidas, _) = acoes_do_glb(&duas, &b).unwrap();
+                assert_eq!(lidas.iter().map(|a| a.nome.as_str()).collect::<Vec<_>>(), [ac.nome.as_str(), ac.nome.as_str()], "{}", p.display());
                 let w = crate::stck::escrever(&nova.stck);
                 assert!(crate::stck::ler(&w).is_ok_and(|s| crate::stck::escrever(&s) == w));
                 for o in &b.ossos {
@@ -1076,7 +1151,7 @@ mod testes {
                 if skis.is_empty() { continue; }
                 let fps = b.fps as f32;
                 let trilhas: Vec<(i32, &crate::trilha::TrilhaDeOsso)> = b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect();
-                let acao = AnimacaoDoModelo { nome: "nova_acao".into(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                let acao = AnimacaoDoModelo { nome: "nova_acao".into(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps, nome_original: None };
                 if acao.fim_ms <= acao.inicio_ms { continue; }
                 let sem = |_: usize| None;
                 let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();

@@ -33,12 +33,15 @@ pub struct Ecm {
     pub acoes: Vec<AcaoCombinada>,
     /// `AddiSkinPath:` (B282) — relativas a `Models\` (`EC_Model.cpp:678-689`, só no editor).
     pub peles_adicionais: Vec<String>,
+    /// B380: `ChildPath:` — o `.ecm` de cada modelo filho (`EC_Model.cpp:152`, lido em `:4777`), para saber se um
+    /// modelo ainda é usado por outro.
+    pub filhos: Vec<String>,
 }
 
 pub fn ler(b: &[u8]) -> Option<Ecm> {
     let corpo = b.strip_prefix(b"MOXT").unwrap_or(b);
     let texto = crate::ski::gbk(corpo);
-    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new() };
+    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new(), filhos: Vec::new() };
     let mut viu_versao = false;
     let mut filha_aberta = false;
     for linha in texto.lines() {
@@ -73,6 +76,8 @@ pub fn ler(b: &[u8]) -> Option<Ecm> {
                 f.rastro = linha["IsTrail: ".len()..].trim().parse::<i32>().map_or(false, |x| x != 0);
             }
             filha_aberta = false;
+        } else if let Some(v) = linha.strip_prefix("ChildPath: ") {
+            e.filhos.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("AddiSkinPath: ") {
             e.peles_adicionais.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("BaseActName: ") {

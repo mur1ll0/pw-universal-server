@@ -71,7 +71,7 @@ def eh_importacao_de_modelo(escopo):
     partes = escopo["path"].strip("/").split("/")
     # api / realms / <realm> / estudio / modelos / importar | pele_nova
     return (escopo["method"] == "POST" and len(partes) == 6 and partes[:2] == ["api", "realms"]
-            and partes[3:5] == ["estudio", "modelos"] and partes[5] in ("importar", "pele_nova", "acoes_glb", "novo"))
+            and partes[3:5] == ["estudio", "modelos"] and partes[5] in ("importar", "pele_nova", "acoes_glb", "novo", "importar_glb"))
 
 
 LIMITE_TEXTO_DE_HABILIDADE = 32 << 10

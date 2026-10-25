@@ -14,7 +14,7 @@ use pw_data_loader::elements_editavel::{espaco_de_id, ElementsEditavel};
 use pw_data_loader::generic_elements::{FieldDef, FieldValue};
 use pw_storage::ItemDeRecurso;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub const CAMINHO: &str = "data\\elements.data";
@@ -119,6 +119,32 @@ pub struct Estudio {
 pub struct IndiceDeEcm {
     pub ecms: Vec<(String, u32, String, Vec<(String, Vec<String>)>)>,
     pub smds: HashMap<String, (Option<String>, Vec<String>)>,
+    /// B380: os `.ecm` citados como modelo filho (`ChildPath:`) por algum `.ecm`, em minúsculas.
+    pub filhos: HashSet<String>,
+    /// B380: o que cada `.smd` (minúsculas) usa: `.bon`, peles e `.stck` (`dependencias_do_smd`), em minúsculas.
+    pub dependencias: HashMap<String, Vec<String>>,
+}
+
+/// B380: os arquivos que um `.smd` usa, como o motor os acha (`A3DSkinModelMan::LoadModelFromFile`, ao lado do `.smd`):
+/// o esqueleto, as peles e a `.stck` de cada ação (pasta das trilhas: a do `.smd` v8, senão `tcks_<título>`; com `.bon`
+/// v5 as trilhas são embutidas e a ação não cita `.stck`).
+fn dependencias_do_smd(smd: &str, c: &pw_data_loader::smd::CabecaDoSmd) -> Vec<String> {
+    let mut r = Vec::new();
+    if !c.esqueleto.is_empty() {
+        r.push(ao_lado(smd, &c.esqueleto));
+    }
+    r.extend(c.peles.iter().filter(|p| !p.trim().is_empty()).map(|p| ao_lado(smd, p)));
+    let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0);
+    let pasta = if c.versao >= 8 { c.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
+    for a in &c.lista_de_acoes {
+        if let Some(s) = a.stck.as_ref().filter(|s| !s.is_empty()) {
+            let caminho = ao_lado(smd, &format!("{pasta}\\{s}"));
+            if !r.contains(&caminho) {
+                r.push(caminho);
+            }
+        }
+    }
+    r
 }
 
 /// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
@@ -4317,7 +4343,7 @@ impl Estudio {
         // B299: o .ecm (o que a tabela cita para NPC e monstro; o jogo põe a pele <.ecm>.ski, B282 — a <título>.ski ao
         // lado) a partir de um .ecm do cliente como molde (`ecm::ecm_novo`): uma ação combinada por ação, de mesmo nome.
         let nomes_acoes: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
-        let (molde_usado, b_ecm) = self.molde_de_ecm(gov, versao, molde, &c_smd, &nomes_acoes).await?;
+        let (molde_usado, b_ecm) = self.molde_de_ecm(gov, versao, Some(rascunho), molde, &c_smd, &nomes_acoes).await?;
         pw_data_loader::ecm::ler(&b_ecm).context("o .ecm gerado não relê")?;
         let texturas = self.gravar_texturas(gov, versao, rascunho, &c_ski, imp.texturas_novas).await?;
         let trava = self.trava(rascunho);
@@ -4337,10 +4363,11 @@ impl Estudio {
     /// B299: o `.ecm` novo a partir de um molde do cliente. Com `preferido`, esse `.ecm`; senão, entre os `.ecm` da versão de
     /// `.ecm` mais comum desta versão de jogo, o 1º (em ordem de caminho) que serve (`ecm::ecm_novo`: sem peles
     /// adicionais nem modelo filho, com uma ação combinada simples) — reproduzível. Devolve o molde usado e os bytes.
-    async fn molde_de_ecm(&self, gov: &Governanca, versao: &str, preferido: Option<&str>, smd: &str, acoes: &[String]) -> Result<(String, Vec<u8>)> {
+    async fn molde_de_ecm(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, preferido: Option<&str>, smd: &str, acoes: &[String]) -> Result<(String, Vec<u8>)> {
         if let Some(p) = preferido.filter(|p| !p.trim().is_empty()) {
-            let (nome, b) = gov.conteudo(versao, p)?;
-            return Ok((nome, pw_data_loader::ecm::ecm_novo(&b, smd, acoes).map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?));
+            // B380: o molde preferido (o .ecm atual do monstro) pode existir só no rascunho (um modelo importado antes).
+            let b = self.bytes_do_cliente(gov, versao, p, rascunho).await.map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?;
+            return Ok((p.to_string(), pw_data_loader::ecm::ecm_novo(&b, smd, acoes).map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?));
         }
         let i = self.indice_de_ecm(gov, versao).await?;
         let mut contagem: HashMap<u32, usize> = HashMap::new();
@@ -4405,6 +4432,11 @@ impl Estudio {
         }
         let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0).to_string();
         let pasta = modelo.pasta_das_trilhas.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| format!("tcks_{titulo}"));
+        // B380: no `.smd` v8 a pasta das trilhas é a gravada nele (`A3DSkinModelMan.cpp:214-224`; antes do v8,
+        // `tcks_<título>`). Vazia, a `.stck` em `tcks_<título>` não seria achada: grava-se a pasta.
+        if modelo.versao >= 8 && modelo.pasta_das_trilhas.as_deref().is_none_or(str::is_empty) {
+            modelo.pasta_das_trilhas = Some(pasta.clone());
+        }
         let mut feitas = Vec::new();
         for a in &acoes {
             if a.nome.is_empty() || a.nome.contains(['\\', '/']) {
@@ -4446,6 +4478,199 @@ impl Estudio {
         }
         let mudanca = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
         self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo, resumo, mudanca))).await
+    }
+
+    /// B380: importa um GLB no modelo de um monstro/NPC (o `.ecm` `caminho`, lido com o rascunho), conferindo antes que o
+    /// esqueleto do GLB é o do modelo (`importar::conferir_esqueleto`, pelo nome de cada osso e da mãe):
+    /// - `modelo`: só malha e texturas — o glTF vira a pele `<.ecm>.ski`, a que o jogo põe no NPC/monstro
+    ///   (`CECNPC::LoadNPCModel`, `EC_NPC.cpp:186-222`, B282), com os ossos casados pelo nome no `.bon`; esqueleto e
+    ///   animações ficam. Se o `<.ecm>.ski` ainda não existe, é acrescentado.
+    /// - `animacoes`: só as animações, como ações do `.smd` (`importar_acoes`; o nome volta ao do cliente por
+    ///   `importar::nome_original`).
+    /// O "tudo" (modelo + texturas + esqueleto + animações) é o `modelo_novo`, com `remover_modelo_sem_uso` depois.
+    pub async fn importar_glb_no_modelo(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str, modo: &str, glb: Vec<u8>) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") {
+            bail!("o modelo do monstro é um .ecm");
+        }
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+        let smd = ecm.smd.trim().replace('/', "\\");
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if c.esqueleto.is_empty() {
+            bail!("{smd} não cita esqueleto: importe com \"tudo\"");
+        }
+        let caminho_bon = ao_lado(&smd, &c.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        pw_data_loader::importar::conferir_esqueleto(&glb, &bon).map_err(|x| anyhow::anyhow!("{x}. Para trocar o esqueleto, importe com \"tudo\"."))?;
+        match modo {
+            "animacoes" => self.importar_acoes(gov, versao, rascunho, &smd, glb).await,
+            "modelo" => {
+                let destino = format!("{}.ski", caminho.rsplit_once('.').map_or(caminho, |x| x.0));
+                if self.bytes_do_cliente(gov, versao, &destino, Some(rascunho)).await.is_ok() {
+                    return self.importar_pele(gov, versao, rascunho, &smd, &destino, glb).await;
+                }
+                let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                let bytes = imp.ski.escrever();
+                pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
+                let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &destino, imp.texturas_novas).await?;
+                {
+                    let trava = self.trava(rascunho);
+                    let _guarda = trava.lock().await;
+                    gov.gravar_arquivo(versao, rascunho, &destino, bytes, "cliente").await?;
+                }
+                Ok(json!({ "resultado": { "pele": destino, "acao": "adicionada", "texturas_gravadas": texturas_gravadas,
+                    "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "ossos": imp.ski.ossos.len(), "esqueleto": caminho_bon, "relatorio": imp.relatorio } }))
+            }
+            _ => bail!("modo de importação: modelo ou animacoes (o \"tudo\" é modelos/novo)"),
+        }
+    }
+
+    /// B380: depois de trocar o modelo inteiro, marca para remoção no rascunho os arquivos do modelo antigo (`.ecm`
+    /// `caminho`) que nada mais usa. Primeiro o `.ecm`: se algum registro do elements (com o rascunho) ainda o cita, se
+    /// algum `.ecm` o tem como filho (`ChildPath:`) ou um objeto dinâmico o usa, nada sai. Depois, cada arquivo do modelo
+    /// só sai se nenhum outro o usa: a pele `<.ecm>.ski`; o `.smd` (nenhum outro `.ecm` nem registro o cita) e, com ele,
+    /// o `.bon`, as peles e as `.stck` que nenhum outro `.smd` cita; e as texturas de cada pele que sai — a de
+    /// `Tex_<título>\` é só dela, a de `Textures\` só sai se nenhuma outra `.ski` da mesma pasta a cita (o cliente acha a
+    /// textura só na pasta da própria pele, `A3DSkin::Load`, B273). Arquivo publicado vira item `remover`; arquivo que só
+    /// existe no rascunho sai do rascunho.
+    pub async fn remover_modelo_sem_uso(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str) -> Result<Value> {
+        let norma = |c: &str| c.trim().replace('/', "\\").trim_start_matches('\\').to_lowercase();
+        let alvo = norma(caminho);
+        if !alvo.ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        // O caminho como o elements o guarda (GBK, campo de texto fixo terminado em zero), sem diferenciar maiúsculas
+        // ASCII. Um falso "ainda usado" só deixa arquivo a mais — nunca tira um usado.
+        let citado = |c: &str| -> Option<Value> {
+            let alvo = nomes::gbk_de_unicode(c)?.to_ascii_lowercase();
+            for t in &e.tabelas {
+                for (i, r) in t.registros.iter().enumerate() {
+                    let baixo = r.to_ascii_lowercase();
+                    let achou = baixo.windows(alvo.len()).enumerate().any(|(k, w)| {
+                        w == alvo.as_slice() && (k == 0 || baixo[k - 1] == 0) && baixo.get(k + alvo.len()).is_none_or(|x| *x == 0)
+                    });
+                    if achou {
+                        return Some(json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i) }));
+                    }
+                }
+            }
+            None
+        };
+        if let Some(u) = citado(caminho.trim()) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo ainda é usado por outro registro do elements", "usado_por": u }));
+        }
+        let indice = self.indice_de_ecm(gov, versao).await?;
+        if indice.filhos.contains(&alvo) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo é filho de outro .ecm (ChildPath)" }));
+        }
+        if self.modelos_dos_objetos(gov, versao).await.values().any(|m| norma(m) == alvo) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo é usado por um objeto dinâmico (DynamicObjects.data)" }));
+        }
+        let mut sair: Vec<String> = vec![caminho.trim().to_string()];
+        let mut mantidos: Vec<Value> = Vec::new();
+        let mut peles: Vec<String> = Vec::new();
+        let irma = format!("{}.ski", caminho.trim().rsplit_once('.').map_or(caminho.trim(), |x| x.0));
+        let irmas_de_outros: HashSet<String> = indice.ecms.iter().filter(|x| norma(&x.0) != alvo).map(|x| format!("{}.ski", norma(&x.0).trim_end_matches(".ecm"))).collect();
+        if self.bytes_do_cliente(gov, versao, &irma, Some(rascunho)).await.is_ok() {
+            peles.push(irma.clone());
+        }
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho.trim(), Some(rascunho)).await?).context("o .ecm não lê")?;
+        let smd = ecm.smd.trim().replace('/', "\\");
+        let outro_ecm_usa_smd = indice.ecms.iter().any(|x| norma(&x.0) != alvo && x.2 == norma(&smd));
+        // O .smd sai? Então os arquivos dele (os do rascunho, que pode tê-lo mudado) só ficam se outro .smd os usa.
+        let smd_sai = if smd.is_empty() {
+            None
+        } else if outro_ecm_usa_smd {
+            mantidos.push(json!({ "caminho": smd, "motivo": "outro .ecm usa o mesmo .smd" }));
+            None
+        } else if let Some(u) = citado(&smd) {
+            mantidos.push(json!({ "caminho": smd, "motivo": "citado no elements", "usado_por": u }));
+            None
+        } else {
+            self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await.ok().and_then(|b| pw_data_loader::smd::cabeca(&b).ok())
+        };
+        let deps_do_smd = smd_sai.as_ref().map(|c| dependencias_do_smd(&smd, c)).unwrap_or_default();
+        // O que outros modelos usam: as dependências dos outros .smd (o mantido conta como outro, com as do rascunho).
+        let mut usados: HashSet<String> = indice.dependencias.iter().filter(|(s, _)| **s != norma(&smd)).flat_map(|x| x.1.iter().cloned()).collect();
+        usados.extend(irmas_de_outros);
+        if smd_sai.is_none() && !smd.is_empty() {
+            if let Ok(c) = self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await.map_err(anyhow::Error::from).and_then(|b| pw_data_loader::smd::cabeca(&b).map_err(|x| anyhow::anyhow!("{x}"))) {
+                usados.extend(dependencias_do_smd(&smd, &c).iter().map(|x| norma(x)));
+            }
+        }
+        if smd_sai.is_some() {
+            sair.push(smd.clone());
+        }
+        for dep in deps_do_smd.into_iter().chain(peles.drain(..).collect::<Vec<_>>()) {
+            if sair.iter().any(|x| norma(x) == norma(&dep)) {
+                continue;
+            }
+            if usados.contains(&norma(&dep)) {
+                mantidos.push(json!({ "caminho": dep, "motivo": "outro modelo usa" }));
+            } else if self.bytes_do_cliente(gov, versao, &dep, Some(rascunho)).await.is_ok() {
+                sair.push(dep);
+            }
+        }
+        peles = sair.iter().filter(|x| x.to_lowercase().ends_with(".ski")).cloned().collect();
+        // As texturas das peles que saem.
+        let saindo: HashSet<String> = sair.iter().map(|x| norma(x)).collect();
+        for pele in &peles {
+            let Ok(s) = self.bytes_do_cliente(gov, versao, pele, Some(rascunho)).await.and_then(|b| pw_data_loader::ski::Ski::ler(&b).map_err(|x| anyhow::anyhow!("{x}"))) else { continue };
+            let (pasta, arquivo) = pele.rsplit_once('\\').unwrap_or(("", pele.as_str()));
+            let titulo = arquivo.rsplit_once('.').map_or(arquivo, |x| x.0);
+            let mut vizinhas: Option<Vec<Vec<String>>> = None;
+            for t in &s.texturas {
+                let proprias = format!("{pasta}\\Tex_{titulo}\\{t}");
+                let comum = format!("{pasta}\\Textures\\{t}");
+                if self.bytes_do_cliente(gov, versao, &comum, Some(rascunho)).await.is_ok() {
+                    // `Textures\` é da pasta inteira: só sai se nenhuma outra .ski dela (que não sai junto) cita a textura.
+                    let v = match &vizinhas {
+                        Some(v) => v,
+                        None => {
+                            // As .ski da pasta: as publicadas e as que o rascunho acrescenta (um modelo novo ao lado
+                            // usa as mesmas `Textures\`), lidas com o rascunho.
+                            let da_pasta = |c: &String| c.to_lowercase().ends_with(".ski") && c.rsplit_once('\\').is_some_and(|(p, _)| p.eq_ignore_ascii_case(pasta)) && !saindo.contains(&norma(c));
+                            let mut lista: Vec<String> = gov.buscar(versao, &format!("{pasta}\\"), usize::MAX)?.iter()
+                                .filter_map(|x| x["caminho"].as_str().map(str::to_string))
+                                .filter(da_pasta)
+                                .collect();
+                            for i in gov.repo.itens(rascunho).await? {
+                                let c = nomes::legivel(&i.caminho);
+                                if i.sha256_depois.is_some() && da_pasta(&c) && !lista.iter().any(|x| norma(x) == norma(&c)) {
+                                    lista.push(c);
+                                }
+                            }
+                            let mut lidas = Vec::new();
+                            for c in &lista {
+                                if let Ok(s) = self.bytes_do_cliente(gov, versao, c, Some(rascunho)).await.and_then(|b| pw_data_loader::ski::Ski::ler(&b).map_err(|x| anyhow::anyhow!("{x}"))) {
+                                    lidas.push(s.texturas);
+                                }
+                            }
+                            vizinhas.insert(lidas)
+                        }
+                    };
+                    if v.iter().any(|ts| ts.iter().any(|x| x.eq_ignore_ascii_case(t))) {
+                        mantidos.push(json!({ "caminho": comum, "motivo": "outra pele da pasta usa" }));
+                    } else if !saindo.contains(&norma(&comum)) {
+                        sair.push(comum);
+                    }
+                } else if self.bytes_do_cliente(gov, versao, &proprias, Some(rascunho)).await.is_ok() && !sair.iter().any(|x| norma(x) == norma(&proprias)) {
+                    sair.push(proprias);
+                }
+            }
+        }
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let mut removidos = Vec::new();
+        for c in &sair {
+            if gov.conteudo(versao, c).is_ok() {
+                gov.remover_arquivo(versao, rascunho, c).await?;
+                removidos.push(json!({ "caminho": c, "acao": "remover" }));
+            } else if gov.tirar(versao, rascunho, c).await? {
+                removidos.push(json!({ "caminho": c, "acao": "tirado do rascunho" }));
+            }
+        }
+        Ok(json!({ "removidos": removidos, "mantidos": mantidos }))
     }
 
     /// B292 (S6): grava no rascunho as texturas que o glTF trouxe, em `<pasta da pele>\Textures\<nome>` — o primeiro
@@ -4549,11 +4774,13 @@ impl Estudio {
             if !smds.contains(&smd) {
                 smds.push(smd.clone());
             }
+            indice.filhos.extend(m.filhos.iter().map(|f| f.trim().replace('/', "\\").trim_start_matches('\\').to_lowercase()));
             indice.ecms.push((c.clone(), m.versao, smd, m.acoes.into_iter().map(|a| (a.nome, a.bases)).collect()));
         }
         for (c, lido) in smds.iter().zip(gov.conteudos(versao, &smds)?) {
             let Some(cab) = lido.and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()) else { continue };
             let esqueleto = (!cab.esqueleto.is_empty()).then(|| ao_lado(c, &cab.esqueleto).to_lowercase());
+            indice.dependencias.insert(c.clone(), dependencias_do_smd(c, &cab).into_iter().map(|x| x.to_lowercase()).collect());
             indice.smds.insert(c.clone(), (esqueleto, cab.lista_de_acoes.into_iter().map(|a| a.nome).collect()));
         }
         let indice = Arc::new(indice);
