@@ -4414,20 +4414,30 @@ impl Estudio {
                     bail!("nome de ação inválido: \"{}\"", a.nome);
                 }
                 nomes::gbk_de_unicode(&a.nome).with_context(|| format!("a ação \"{}\" tem caracteres que não existem em GBK", a.nome))?;
+                // B381: a ação que voltou igual (ida e volta pelo Blender sem mexer nela) não é acrescentada — no v5 a
+                // ação nova vai para o fim da trilha e o `.bon` cresceria a cada importação.
+                if pw_data_loader::importar::acao_v5_igual(&bon, &modelo, a) {
+                    feitas.push(json!({ "nome": a.nome, "quadros": a.quadro_final as i32 + 1, "acao": "igual à do cliente (não gravada)" }));
+                    continue;
+                }
                 let existia = modelo.acoes.iter().any(|x| x.nome == a.nome);
                 let (qi, qf) = pw_data_loader::importar::anexar_acao_v5(&mut bon, &mut modelo, a).map_err(anyhow::Error::msg)?;
                 feitas.push(json!({ "nome": a.nome, "quadros": qf - qi + 1, "intervalo": [qi, qf], "trilhas": bon.trilhas.len(), "fps": bon.fps,
                     "acao": if existia { "substituída (as chaves antigas ficam na trilha sem uso)" } else { "adicionada" } }));
             }
+            if feitas.iter().all(|x| x["acao"].as_str().is_some_and(|a| a.starts_with("igual"))) {
+                let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len(), "esqueleto": caminho_bon });
+                return Ok(json!({ "resultado": resumo, "igual_ao_publicado": true }));
+            }
             let novo_bon = bon.escrever();
             pw_data_loader::bon::Bon::ler(&novo_bon).map_err(|x| anyhow::anyhow!("o .bon editado não relê: {x}"))?;
             let novo_smd = modelo.escrever();
             pw_data_loader::smd::Smd::ler(&novo_smd).context("o .smd editado não relê")?;
-            let nomes_feitos: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
+            let nomes_feitos: Vec<String> = feitas.iter().filter(|x| !x["acao"].as_str().is_some_and(|a| a.starts_with("igual"))).filter_map(|x| x["nome"].as_str().map(str::to_string)).collect();
             let m_bon = json!({ "acao": "importar", "tipo": "trilhas", "de": "glTF", "nomes": nomes_feitos });
             self.alterar_item_do_cliente(gov, versao, &caminho_bon, rascunho, move |_| Ok((novo_bon, json!({}), m_bon))).await?;
             let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len(), "esqueleto": caminho_bon });
-            let m_smd = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
+            let m_smd = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": nomes_feitos });
             return self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo_smd, resumo, m_smd))).await;
         }
         let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0).to_string();

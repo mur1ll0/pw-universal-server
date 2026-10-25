@@ -17573,3 +17573,28 @@ comparação lado a lado.
     - Murillo: reinstalar a extensão 1.1.0 e testar com o Blender dele (roteiro no ESTADO §3.3).
     - `.bon` v5: reimportar animações iguais faz o `.bon` crescer (ESTADO §5).
 
+381. **Sessão 2026-10-25: "Só as animações" no `.bon` v5 sem crescer.** Pedido do Murillo: resolver a pendência do B380
+     sem precisar apagar no Blender as ações que não mudou.
+    ### a. O que mudou
+    - `importar::acao_v5_igual` / `diferenca_da_acao_v5`: a ação existente passa pelo mesmo caminho do Estúdio (trilhas
+      embutidas → `do_modelo_com_acoes` → `acoes_do_glb`) e é comparada chave a chave com a importada
+      (`TOLERANCIA_DE_ACAO_IGUAL`: posição 1e-3, quatérnio 5e-3). Comparar direto com a trilha não serve: chaves fora da
+      grade de quadros dão até 1e-2 entre chaves. `importar_acoes` (v5) pula a igual ("igual à do cliente (não gravada)");
+      todas iguais → nada gravado (`igual_ao_publicado`).
+    - Achado na medida: o Blender devolvia 8 de 21 ações com **um quadro a menos**. Duas causas: (1) tempo final do GLB
+      um tico abaixo do quadro (10/15 s × 15 = 9,9999…) — `glb::tempo_na_grade` grava o tempo que cai na grade exatamente
+      nela, conferido em 32 e 64 bits; (2) a chave da trilha em ms truncado (14.933) a 0,005 quadro do fim exato
+      (14.933,33): o Blender junta chaves a menos de 0,01 quadro, a faixa fica 124,995 e o exportador trunca
+      (`int(frame_range[1])`, `io_scene_gltf2/blender/exp/animation/action.py:245-246`) — a extensão (1.1.1) fixa a faixa
+      de cada ação, arredondada, ao importar. (Juntar chaves próximas no exportador foi tentado e desfeito: piorava a
+      fidelidade — há chaves quase juntas de propósito.)
+    ### b. Provas
+    - `pw-data-loader --lib` 127/0: `acoes_ida_e_volta` — 20 de 20 ações v5 reais iguais, uma chave mexida em 0,05 é
+      diferente; fidelidade da ida e volta intacta (posição 1,3e-6, quatérnio na chave 9,6e-5). `pw-recursos` com
+      `TEST_DATABASE_URL` 30/0.
+    - Medida real (`medir_b381`, `#[ignore]`): GLB do registro 12 (`侏儒卫兵.bon` v5, FPS 15, 21 ações) pelo Blender 5.1
+      com a extensão — 21 de 21 com o número certo de quadros; maior diferença 3,0e-4 na posição e 3,2e-3 no quatérnio.
+    - `pw-recursos` publicado; no contêiner, rascunhos de teste **72 e 73 (descartados)**: o GLB do Blender sem mudança →
+      21 iguais, `igual_ao_publicado`; com a rotação de `Bip01` mexida (+0,2) em "Parado" → 20 iguais, 1 gravada.
+    ### c. Falta
+    - Murillo: reinstalar a extensão 1.1.1. Uma edição menor que ~0,6° em todos os quadros de uma ação passa por igual.

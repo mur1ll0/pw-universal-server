@@ -853,6 +853,14 @@ do `.bon` têm os mesmos nomes e cada um a mesma mãe; `Err` lista os que faltam
 `acoes_ida_e_volta`, 40 modelos reais — o GLB exportado confere, com um osso renomeado não). `ecm::Ecm::filhos`: os
 `ChildPath:` (`EC_Model.cpp:152/4777`).
 
+**Ação v5 igual (B381):** `importar::acao_v5_igual(bon, smd, acao)` / `diferenca_da_acao_v5` — a referência é a ação
+existente passada pelo mesmo caminho do Estúdio (trilhas embutidas no intervalo dela → `do_modelo_com_acoes` →
+`acoes_do_glb`), comparada chave a chave com a importada; igual dentro de `TOLERANCIA_DE_ACAO_IGUAL` (posição relativa
+1e-3, quatérnio 5e-3 — medido na ida e volta real pelo Blender: 3,0e-4 e 3,2e-3). Intervalo diferente por junta, outro
+número de quadros ou junta sem trilha = diferente. Comparar direto com a trilha erra entre chaves (chaves fora da grade:
+até 1e-2). Exportador: `glb::tempo_na_grade` grava o tempo que cai na grade de quadros exatamente nela (o `f32` subido
+um passo se ficou abaixo, nas precisões de 32 e 64 bits) — sem isso o Blender pode truncar o último quadro.
+
 **Esqueleto do glTF (B297, S6):** `importar::esqueleto_do_glb(glb)` monta um `.bon` v6 a partir das juntas da 1ª `skin`
 (sem a vaga "esqueleto").
 

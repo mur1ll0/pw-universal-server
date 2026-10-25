@@ -852,7 +852,7 @@ ação.
     `todas`, como antes (pose parada, ou `acao=` para a prévia).
   - Volta: `importar::nome_original` — `extras.angelica.nome`, senão o que vem depois do último `" · "`, senão o nome
     inteiro — vale para todo importador de animação (`acoes_do_glb`: `acoes_glb`, `importar_glb`, `modelos/novo`). O
-    importador glTF do Blender não leva os `extras` da animação para a ação; a extensão PW Estúdio (1.1.0) os grava na
+    importador glTF do Blender não leva os `extras` da animação para a ação; a extensão PW Estúdio (1.1.1) os grava na
     ação ao importar, e o exportador glTF do Blender devolve as propriedades da ação como `extras` (`export_extras`).
   - `POST estudio/modelos/importar_glb?rascunho=&caminho=<.ecm>&modo=modelo|animacoes` (corpo: GLB;
     `Estudio::importar_glb_no_modelo`): antes, `importar::conferir_esqueleto` — os ossos do GLB (`esqueleto_do_glb`) têm
@@ -862,8 +862,9 @@ ação.
     "Tudo" continua sendo `modelos/novo` (B298); o molde preferido (o `.ecm` atual) é lido com o rascunho (pode ser um
     modelo importado antes). `importar_acoes` (B295) agora grava a pasta das trilhas no `.smd` v8 que a tinha vazia — no
     v8 o motor usa a pasta do arquivo (`A3DSkinModelMan.cpp:214-224`), e a `.stck` em `tcks_<título>` não seria achada.
-    Com `.bon` v5, reimportar uma ação emenda as chaves no fim da trilha (as antigas ficam sem uso): o `.bon` cresce a
-    cada ida e volta.
+    Com `.bon` v5, a ação nova é emendada no fim da trilha (as chaves antigas ficam sem uso); desde o B381 a que voltou
+    igual (`importar::acao_v5_igual`) é pulada — "igual à do cliente (não gravada)" — e, todas iguais, nada é gravado
+    (`igual_ao_publicado`): a ida e volta pelo Blender sem mexer não faz o `.bon` crescer.
   - `POST estudio/modelos/sem_uso?rascunho= {caminho: <.ecm antigo>}` (`Estudio::remover_modelo_sem_uso`): nada sai se o
     `.ecm` ainda é citado em algum registro do elements com o rascunho (busca dos bytes GBK do caminho, terminados em
     zero, sem diferenciar maiúsculas — um falso "usado" só deixa arquivo a mais), é filho de outro `.ecm` (`ChildPath:`,

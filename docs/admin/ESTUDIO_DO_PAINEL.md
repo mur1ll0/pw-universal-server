@@ -635,7 +635,7 @@ Animações do esqueleto, Trocar o modelo inteiro, Arquivos e efeitos), sem rola
 **Editar no Blender (B380):** no card Modelo 3D, **Exportar GLB (Blender)** baixa `<título do .ecm>.glb` com malha,
 texturas, esqueleto e **todas** as animações do `.smd` (`modelos/glb?todas=true`), cada uma com o nome legível e o do
 cliente (`"Parado · 站立"`; o original também em `extras.angelica.nome`). No Blender, use a extensão PW Estúdio
-(`tools/blender/pw_estudio`, 1.1.0): "Importar GLB do Estúdio" (guarda o nome do cliente em cada ação) e "Exportar GLB
+(`tools/blender/pw_estudio`, 1.1.1): "Importar GLB do Estúdio" (guarda o nome do cliente em cada ação) e "Exportar GLB
 para o Estúdio" (verifica o GBK pelo nome do cliente). **Importar GLB**, no mesmo card, com três modos:
 - *Só o modelo* — malha e texturas viram a pele `<.ecm>.ski`; esqueleto e animações ficam (`modelos/importar_glb?modo=modelo`);
 - *Só as animações* — substitui as de mesmo nome e acrescenta as novas (`modo=animacoes`);
@@ -644,7 +644,10 @@ para o Estúdio" (verifica o GBK pelo nome do cliente). **Importar GLB**, no mes
   outro `.ecm`, objeto dinâmico; .smd/.bon/peles/.stck/texturas compartilhados ficam).
 Os dois primeiros exigem o mesmo esqueleto (mesmos ossos, mesmas mães) e recusam com a lista do que difere. O card
 "Trocar o modelo inteiro" saiu (virou o modo *Tudo*). A prévia redesenha quando o `.ecm` muda ou o rascunho muda (antes
-só desenhava se nada estivesse desenhado) e pede o GLB com `cache: "no-store"`.
+só desenhava se nada estivesse desenhado) e pede o GLB com `cache: "no-store"`. **B381:** em modelo de `.bon` v5, "Só
+as animações" pula as ações que voltaram iguais (não precisa apagar no Blender as que não mudou); a extensão 1.1.1 fixa
+a faixa de quadros de cada ação ao importar (o Blender juntava a chave do fim com a anterior e o exportador truncava a
+faixa — a ação voltava com um quadro a menos).
 
 **Prévia e abrir item (B373):** ao passar o mouse num item que cai aparece a dica da tela de personagem, de um item
 gerado agora pelo GS como drop (`GET /api/realms/{r}/itens/{id}/exemplo` → consulta `item_de_exemplo` do GS, que não

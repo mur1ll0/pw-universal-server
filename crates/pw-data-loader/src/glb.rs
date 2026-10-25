@@ -137,6 +137,26 @@ fn valor_em<const N: usize>(amostras: &[(f32, [f32; N])], t: f32) -> [f32; N] {
     }
 }
 
+/// B381: o tempo (s) de uma chave, preso à grade de quadros quando cai nela (a menos de 1e-3 quadro): o quadro exato
+/// dividido pelo FPS e, se o `f32` ficou abaixo, subido um passo. O Blender põe a chave no quadro `tempo × fps` e, ao
+/// exportar reamostrando, corta o intervalo no quadro inteiro de baixo — medido num modelo v5 do cliente (FPS 15): 8 de
+/// 21 ações voltavam com um quadro a menos (10/15 s × 15 = 9,9999…).
+fn tempo_na_grade(t: f32, fps: i32) -> f32 {
+    if fps <= 0 {
+        return t;
+    }
+    let quadro = (t as f64 * fps as f64).round();
+    if (t as f64 * fps as f64 - quadro).abs() > 1e-3 {
+        return t;
+    }
+    let mut r = (quadro / fps as f64) as f32;
+    // Nas duas precisões: o Blender guarda o quadro em `float` (32 bits).
+    while ((r as f64) * (fps as f64) < quadro || r * (fps as f32) < (quadro as f32)) && r.is_finite() {
+        r = f32::from_bits(r.to_bits() + 1);
+    }
+    r
+}
+
 /// O GLB do modelo com uma ação animada (canais de translação e rotação por osso, tempos a partir de 0 s).
 pub fn do_modelo_animado(peles: &[PeleDoModelo], esqueleto: &Bon, acao: &AnimacaoDoModelo, nome: &str) -> Vec<u8> {
     do_modelo_com(peles, Some(esqueleto), std::slice::from_ref(acao), nome)
@@ -402,7 +422,7 @@ fn do_modelo_com(peles: &[PeleDoModelo], esqueleto: Option<&Bon>, acoes: &[Anima
             tempos.push(a.fim_ms);
             tempos.sort_by(|x, y| x.partial_cmp(y).unwrap());
             tempos.dedup();
-            let entrada: Vec<f32> = tempos.iter().map(|x| (x - a.inicio_ms) / 1000.0).collect();
+            let entrada: Vec<f32> = tempos.iter().map(|x| tempo_na_grade((x - a.inicio_ms) / 1000.0, b.fps)).collect();
             let bt: Vec<u8> = entrada.iter().flat_map(|x| x.to_le_bytes()).collect();
             let vt = m.view(&bt, 0);
             let maximo = entrada.last().copied().unwrap_or(0.0);

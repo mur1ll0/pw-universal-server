@@ -181,6 +181,15 @@ class PWE_OT_importar(bpy.types.Operator):
         bpy.ops.import_scene.gltf(filepath=self.filepath)
         # B380: o nome do cliente de cada animação vai para a ação (o importador glTF não leva os extras dela).
         novas = [a for a in bpy.data.actions if a not in antes]
+        # B381: o importador põe a chave do fim a 0,005 quadro da anterior, o Blender junta as duas (menos de 0,01
+        # quadro) e a faixa da ação fica em 124,995; o exportador glTF trunca a faixa (`int(frame_range[1])`,
+        # `exp/animation/action.py:245-246`) e a ação voltaria com um quadro a menos. A faixa vira a manual, arredondada
+        # — o último quadro se reamostra com o valor da última chave.
+        for a in novas:
+            ini, fim = a.frame_range
+            a.use_frame_range = True
+            a.frame_end = round(fim)
+            a.frame_start = round(ini)
         guardados = 0
         for nome, orig in nomes_das_animacoes(self.filepath):
             # O Blender corta nome comprido (63 bytes até o 4.x): casa pelo começo.

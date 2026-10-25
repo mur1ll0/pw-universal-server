@@ -382,6 +382,81 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
     Ok((r, relatorio))
 }
 
+/// Tolerâncias de `acao_v5_igual`: posição relativa ao maior módulo da chave (`|Δ| / (1 + max|p|)`) e quatérnio por
+/// componente, com o sinal alinhado. Medido na ida e volta real pelo Blender 5.1 (extensão PW Estúdio, cena a 15/s) de um
+/// modelo v5 do cliente (`侏儒卫兵.bon`, 21 ações, teste `medir_b381`): até 3,0e-4 na posição e 3,2e-3 no quatérnio — o
+/// Blender interpola componente a componente entre as chaves fora da grade. 5e-3 no quatérnio é ~0,6° de rotação: uma
+/// edição menor que isso em todos os quadros passaria por igual; a chave mexida em 0,05 do teste é recusada.
+pub const TOLERANCIA_DE_ACAO_IGUAL: (f32, f32) = (1e-3, 5e-3);
+
+/// B381: a ação importada é a que o modelo v5 já tem com esse nome? A referência é a ação existente passada pelo mesmo
+/// caminho do Estúdio — exportada para glTF como no "Exportar GLB" (`glb::do_modelo_com_acoes`, trilhas embutidas no
+/// intervalo da ação) e importada de volta (`acoes_do_glb`) —, e cada chave importada é comparada com a dela dentro de
+/// `TOLERANCIA_DE_ACAO_IGUAL`. (Comparar direto com a trilha erra entre chaves: muitas trilhas do cliente têm chaves fora
+/// da grade de quadros, e a reamostragem as aproxima — medido: até 1e-2.) Qualquer dúvida — outro número de quadros,
+/// juntas com intervalos diferentes, junta sem trilha de um dos lados, FPS diferente — é "diferente": o erro possível é
+/// acrescentar à toa (como antes), nunca perder a edição. Igual, `anexar_acao_v5` não é chamado e o `.bon` não cresce a
+/// cada ida e volta pelo Blender.
+pub fn acao_v5_igual(bon: &Bon, smd: &crate::smd::Smd, acao: &AcaoImportada) -> bool {
+    diferenca_da_acao_v5(bon, smd, acao).is_some_and(|(p, q)| p <= TOLERANCIA_DE_ACAO_IGUAL.0 && q <= TOLERANCIA_DE_ACAO_IGUAL.1)
+}
+
+/// A maior diferença (posição relativa, componente de quatérnio) entre a ação importada e a existente passada pelo
+/// caminho do Estúdio (ver `acao_v5_igual`); `None` quando não dá para comparar (é "diferente").
+pub fn diferenca_da_acao_v5(bon: &Bon, smd: &crate::smd::Smd, acao: &AcaoImportada) -> Option<(f32, f32)> {
+    let Some(a) = smd.acoes.iter().find(|x| x.nome == acao.nome) else { return None };
+    if bon.fps <= 0 || acao.stck.fps != bon.fps || bon.trilhas.is_empty() {
+        return None;
+    }
+    let f = |o: usize| a.dados.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+    let i = |o: usize| a.dados.get(o..o + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap()));
+    // O intervalo da ação: v5, o de cada junta (`FILEJOINTACTION`) — todos iguais, senão "diferente"; v6, o único.
+    let faixa = if smd.versao < 6 {
+        let n = i(4).unwrap_or(0).max(0) as usize;
+        let faixas: Option<Vec<(f32, f32)>> = (0..n).map(|k| Some((f(12 + 20 * k + 4)?, f(12 + 20 * k + 8)?))).collect();
+        match faixas.as_deref() {
+            Some([p, resto @ ..]) if resto.iter().all(|x| x == p) => *p,
+            _ => return None,
+        }
+    } else {
+        match (f(0), f(4)) {
+            (Some(x), Some(y)) => (x, y),
+            _ => return None,
+        }
+    };
+    let fps = bon.fps as f32;
+    let anim = crate::glb::AnimacaoDoModelo {
+        nome: acao.nome.clone(),
+        trilhas: bon.trilhas.iter().enumerate().map(|(j, t)| (j as i32, t)).collect(),
+        inicio_ms: faixa.0 * 1000.0 / fps,
+        fim_ms: faixa.1 * 1000.0 / fps,
+        nome_original: None,
+    };
+    let glb = crate::glb::do_modelo_com_acoes(&[], bon, std::slice::from_ref(&anim), "referencia");
+    let Ok((lidas, _)) = acoes_do_glb(&glb, bon) else { return None };
+    let Some(referencia) = lidas.first() else { return None };
+    if referencia.quadro_final != acao.quadro_final {
+        return None;
+    }
+    let n = acao.quadro_final as usize + 1;
+    let (mut dp, mut dq) = (0f32, 0f32);
+    for (j, r) in &referencia.stck.trilhas {
+        let Some((_, nova)) = acao.stck.trilhas.iter().find(|x| x.0 == *j) else { return None };
+        if nova.posicao.chaves.len() < n || nova.rotacao.chaves.len() < n || r.posicao.chaves.len() < n || r.rotacao.chaves.len() < n {
+            return None;
+        }
+        for k in 0..n {
+            let (po, pn) = (r.posicao.chaves[k], nova.posicao.chaves[k]);
+            let escala = 1.0 + po.iter().fold(0f32, |m, x| m.max(x.abs()));
+            dp = (0..3).map(|c| (po[c] - pn[c]).abs() / escala).fold(dp, f32::max);
+            let (qo, qn) = (r.rotacao.chaves[k], nova.rotacao.chaves[k]);
+            let sinal = if (0..4).map(|c| qo[c] * qn[c]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+            dq = (0..4).map(|c| (qo[c] * sinal - qn[c]).abs()).fold(dq, f32::max);
+        }
+    }
+    Some((dp, dq))
+}
+
 /// B296 (S6): acrescenta a ação importada a um modelo de esqueleto v5 (todo o 1.2.6), em que não há `.stck`: cada
 /// junta tem **uma trilha embutida no `.bon`** e cada ação do `.smd` v5 é um intervalo de quadros dela
 /// (`FILEJOINTACTION` por junta). Medido em 1.163 ações v5 do cliente: a ação cita todas as juntas do `.bon`, na ordem
@@ -866,6 +941,21 @@ mod testes {
     use super::*;
     use crate::glb::{do_modelo, PeleDoModelo};
 
+    /// B381: mede quanto cada ação de um GLB devolvido pelo Blender difere da existente no modelo v5 (pasta em `PW_B381`
+    /// com `b381.smd`, `b381.bon` e `lobo_blender.glb`). `cargo test -p pw-data-loader --lib medir_b381 -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn medir_b381() {
+        let Ok(pasta) = std::env::var("PW_B381") else { eprintln!("sem PW_B381"); return };
+        let pasta = std::path::Path::new(&pasta);
+        let smd = crate::smd::Smd::ler(&std::fs::read(pasta.join("b381.smd")).unwrap()).unwrap();
+        let bon = Bon::ler(&std::fs::read(pasta.join("b381.bon")).unwrap()).unwrap();
+        let (acoes, _) = acoes_do_glb(&std::fs::read(pasta.join("lobo_blender.glb")).unwrap(), &bon).unwrap();
+        for a in &acoes {
+            eprintln!("MEDIDA {} quadros {} → {:?}", a.nome, a.quadro_final + 1.0, diferenca_da_acao_v5(&bon, &smd, a));
+        }
+    }
+
     /// B380: o nome do cliente de uma animação glTF — extras primeiro, depois o que vem após o último " · ".
     #[test]
     fn nome_original_da_animacao() {
@@ -922,6 +1012,7 @@ mod testes {
         let mut pilha = vec![raiz.to_path_buf()];
         let (mut n, mut v5, mut v6, mut chaves, mut pior_p, mut pior_q) = (0usize, 0usize, 0usize, 0usize, 0f32, 0f32);
         let (mut na_chave, mut pior_entre) = (0usize, 0f32);
+        let (mut v5_iguais, mut v5_diferentes) = (0usize, Vec::<String>::new());
         while let Some(d) = pilha.pop() {
             if v5 >= 20 && v6 >= 20 { break; }
             for e in std::fs::read_dir(&d).unwrap().flatten() {
@@ -972,6 +1063,20 @@ mod testes {
                 let duas = crate::glb::do_modelo_com_acoes(&peles, &b, &[com_extras, sem_extras], "t");
                 let (lidas, _) = acoes_do_glb(&duas, &b).unwrap();
                 assert_eq!(lidas.iter().map(|a| a.nome.as_str()).collect::<Vec<_>>(), [ac.nome.as_str(), ac.nome.as_str()], "{}", p.display());
+                // B381: no v5, a ação que foi e voltou é "igual" (não precisa ser acrescentada); com uma chave de
+                // rotação mexida (0,05), não é.
+                if b.versao < 6 {
+                    let completo = crate::smd::Smd::ler(&std::fs::read(&p).unwrap()).unwrap();
+                    let veredito = acao_v5_igual(&b, &completo, nova);
+                    if veredito { v5_iguais += 1 } else { v5_diferentes.push(format!("{} / {}", p.display(), ac.nome)) }
+                    let mut mexida = AcaoImportada { nome: nova.nome.clone(), stck: nova.stck.clone(), quadro_final: nova.quadro_final };
+                    if let Some((_, t)) = mexida.stck.trilhas.iter_mut().find(|(_, t)| t.rotacao.chaves.len() > 1) {
+                        let meio = t.rotacao.chaves.len() / 2;
+                        let q = &mut t.rotacao.chaves[meio];
+                        q[0] += 0.05;
+                    }
+                    assert!(!acao_v5_igual(&b, &completo, &mexida), "{}: chave mexida passou por igual", p.display());
+                }
                 let w = crate::stck::escrever(&nova.stck);
                 assert!(crate::stck::ler(&w).is_ok_and(|s| crate::stck::escrever(&s) == w));
                 for o in &b.ossos {
@@ -1001,6 +1106,9 @@ mod testes {
         }
         eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
         assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
+        // B381: toda ação v5 que foi e voltou é reconhecida como igual.
+        eprintln!("B381: ações v5 iguais {v5_iguais}, diferentes {}: {:?}", v5_diferentes.len(), v5_diferentes.iter().take(5).collect::<Vec<_>>());
+        assert!(v5_iguais >= 20 && v5_diferentes.is_empty(), "{v5_iguais} {v5_diferentes:?}");
         assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
     }
 
