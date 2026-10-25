@@ -282,6 +282,8 @@ export interface FichaDoModelo {
   combinadas: { nome: string; bases: string[]; bases_ausentes: string[]; filhas: unknown[] }[];
   bases_do_smd: string[] | null;
   diagnostico_de_monstro: { indice: number; pedido: string; estado: string; alternativa: string | null }[] | null;
+  /** B384: nome do cliente → nome legível (a mesma tabela do GLB exportado, `admin.rs::TRADUCOES_DE_ACAO`). */
+  nomes_legiveis?: Record<string, string>;
 }
 export const fichaDoModelo = (caminho: string, extra: Record<string, string> = {}) =>
   api<FichaDoModelo>(rota("modelos/ficha", { caminho, ...extra }));

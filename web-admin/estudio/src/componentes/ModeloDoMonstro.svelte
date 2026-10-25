@@ -31,12 +31,9 @@
   let ocupado = $state(false);
   let parar: (() => void) | null = null;
 
-  /* Nomes do cliente → português (só para ler; o arquivo guarda o original). */
-  const TRADUCOES: [string, string][] = [["站立", "Parado"], ["休闲", "Ocioso"], ["戒备", "Em guarda"], ["慢速移动", "Andando"], ["快速移动", "Correndo"],
-    ["普攻", "Ataque "], ["魔攻", "Ataque mágico "], ["技能", "Habilidade "], ["施放", "lançar "], ["吟唱", "concentrar "], ["死亡", "Morrendo"],
-    ["受伤", "Apanhando"], ["叠加", " (sobreposto)"], ["起", " — início"], ["落", " — golpe"], ["挂点", "Ponto de encaixe"], ["飞行", "Voando"],
-    ["游泳", "Nadando"], ["跳", "Pulo"], ["眩晕", "Atordoado"], ["出生", "Nascendo"]];
-  const traduzir = (n: string) => { let t = n; for (const [a, b] of TRADUCOES) t = t.split(a).join(b); return t.trim(); };
+  /* B384: nomes do cliente → português pela ficha (`nomes_legiveis`, a tabela do servidor que o GLB exportado também usa);
+     sem tradução, o nome do cliente. Só para ler; o arquivo guarda o original. */
+  const traduzir = (n: string) => ficha?.nomes_legiveis?.[n] ?? n;
 
   async function carregar() {
     erro = "";

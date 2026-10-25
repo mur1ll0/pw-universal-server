@@ -734,3 +734,8 @@ evidência na spec 07 §6c (B383) e spec 03; teste `importar::testes::pesos_corr
 **Moda (parte 4 do pedido).** O seletor só mostrava "No chão" porque a moda não tem `file_model`: o card "Vestido no
 personagem" monta a peça pelo `realname`, `gender` e o grupo da classe, no corpo masculino ou feminino de cada classe.
 
+**Nomes das animações (B384).** Pedido do Murillo: as animações do voo apareciam em chinês. A tradução é uma tabela só
+no servidor (spec 07 §6c, B384), com voo, asas e espada voadora; a tela mostra "Voando parado", "Decolando",
+"Descendo de baixa altura"… (o nome do cliente ao passar o mouse), e o GLB exportado leva "Voando parado · 飞行悬停". No
+Blender, pode-se mudar a parte em português; o que vale na volta é o nome depois de " · ".
+

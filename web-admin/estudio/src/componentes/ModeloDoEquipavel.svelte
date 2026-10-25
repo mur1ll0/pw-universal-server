@@ -28,6 +28,8 @@
   const arquivoDoGlb = $derived(`${(caminho.split("\\").pop() ?? "modelo").replace(/\.[^.]*$/, "")}.glb`);
 
   let ficha = $state<FichaDoModelo | null>(null);
+  /** B384: o nome legível que a ficha manda (o mesmo do GLB exportado: "Voando parado · 飞行悬停"). */
+  const traduzir = (n: string) => ficha?.nomes_legiveis?.[n] ?? n;
   let tela = $state<HTMLCanvasElement | null>(null);
   let tocando = $state("");
   let erroDoGlb = $state("");
@@ -67,7 +69,7 @@
     const x = r?.resultado ?? r ?? {};
     const l: string[] = [];
     if (x.malhas != null) l.push(`${x.malhas} malha(s), ${x.vertices ?? "?"} vértices, ${x.ossos ?? "?"} osso(s)${x.ganchos ? ` · ganchos: ${(x.ganchos as string[]).join(", ") || "nenhum"}` : ""}`);
-    if (x.acoes) l.push(`animações: ${(x.acoes as any[]).map((a) => (typeof a === "string" ? a : a.nome)).join(", ") || "nenhuma"}`);
+    if (x.acoes) l.push(`animações: ${(x.acoes as any[]).map((a) => (typeof a === "string" ? a : a.nome)).map((n) => (traduzir(n) !== n ? `${traduzir(n)} (${n})` : n)).join(", ") || "nenhuma"}`);
     if (x.pele) l.push(`pele: ${x.pele}`);
     if (x.ecm) l.push(`modelo novo: ${x.ecm}`);
     if (x.peles_tiradas_do_smd) l.push(`peles tiradas do .smd (as malhas foram para a 1ª): ${(x.peles_tiradas_do_smd as string[]).join(", ")}`);
@@ -124,7 +126,7 @@
     </select>
   {/if}
   <canvas bind:this={tela} width="560" height="420"></canvas>
-  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${tocando}` : "Pose parada")} · {caminho}</p>
+  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada")} · {caminho}</p>
   <p class="mini">Pendura no personagem pelo gancho {ganchos.length ? ganchos.join(" ou ") : "— (não pendura)"}; as peles são as do .smd, como o cliente carrega.</p>
   <div class="linha">
     <a class="botao pequeno" href={rotaDoGlb(caminho, undefined, true, { como: "equipamento" })} download={arquivoDoGlb}><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
@@ -161,10 +163,12 @@
 <section class="caixa">
   <h3>Animações do modelo <span class="mini">{ficha?.bases_do_smd?.length ?? 0}</span></h3>
   {#if ficha?.bases_do_smd?.length}
-    <p class="mini">Clique para ver acima. Exportar GLB leva todas; "Só as animações" traz de volta as do Blender (mesmo esqueleto).</p>
+    <p class="mini">Clique para ver acima (passe o mouse para o nome do cliente). Exportar GLB leva todas com o nome em português e o do
+      cliente depois de " · " ("Voando parado · 飞行悬停"); no Blender pode renomear a parte em português — "Só as animações" usa o nome do
+      cliente, então a animação volta para a mesma ação.</p>
     <div class="chips">
       <button type="button" class:ativo={!tocando} onclick={() => tocar("")}>■ parado</button>
-      {#each ficha.bases_do_smd as b (b)}<button type="button" class:ativo={tocando === b} onclick={() => tocar(b)}>▶ {b}</button>{/each}
+      {#each ficha.bases_do_smd as b (b)}<button type="button" class:ativo={tocando === b} onclick={() => tocar(b)} title={b}>▶ {traduzir(b)}</button>{/each}
     </div>
   {:else}
     <p class="mini">O modelo não tem animação (o .smd não cita ação). Para criar, anime no Blender e importe "Só as animações".</p>

@@ -959,6 +959,14 @@ monstro) e
     `ski_do_glb` contra o esqueleto do corpo de referência (`classe` ou o 1º do grupo); os ossos da pele têm de existir
     no esqueleto de **todas** as classes do grupo (senão 400 com a classe e o osso); grava a mesma pele nos três níveis
     e as texturas em `<pasta>\Textures\`.
+- **Nomes das animações (B384)** — uma tabela só, `admin.rs::TRADUCOES_DE_ACAO` (compostos antes dos simples): o GLB
+  exportado nomeia cada animação "legível · original" e a ficha do `.ecm` manda `nomes_legiveis {original: legível}`
+  (bases, combinadas e pedidos do cliente), que as telas do Monstro e do Equipável mostram. B384 acrescentou voo, asas e
+  espada voadora (medidos em 130 modelos de voo/asa/arma das duas versões: 低空下降/地空下降, 高空下降, 飞行悬停, 飞行前进,
+  飞行落地, 飞行下降, 翅膀收起, 飞剑…, 展开, 收起, 起飞, 滑翔, 前进, 悬停, 落地, 静止); o prefixo do modelo ("天鹅之翼_")
+  sai do legível; 起/落 só viram "— início/— golpe" do ataque quando o fim não é um termo da tabela (收起, 落地). A volta é
+  a de sempre (`importar::nome_original`): o nome do cliente depois de " · ". Medido no publicado: as animações de
+  天鹅之翼 e 机械翼 exportadas e importadas de volta deram "igual à do cliente (não gravada)" em todas.
 - **Pesos da pele (todo importador: `ski_do_glb`)** — decisão com evidência do motor:
   - corrigido sozinho, porque o resultado é o que o jogo faria: peso zero antes de um não nulo (o motor para no 1º
     zero, `A3DSkinMesh.cpp:1040-1041`) → os não nulos vão para a frente; soma ≠ 1 → normalizada (só o 4º peso é

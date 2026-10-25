@@ -465,7 +465,33 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             }
             Some(lista)
         };
+        // B384: o nome legível de cada ação (bases, combinadas e o que o cliente pede) — a tela mostra este, o mesmo do GLB.
+        let mut nomes: std::collections::BTreeSet<String> = bases_do_smd.clone().unwrap_or_default().into_iter().collect();
+        for c in combinadas.iter() {
+            if let Some(n) = c["nome"].as_str() {
+                nomes.insert(n.to_string());
+            }
+            for b in c["bases"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+                nomes.insert(b.to_string());
+            }
+        }
+        let diagnosticados: Vec<&Value> = diagnostico.iter().collect();
+        for d in diagnosticados {
+            for k in ["pedido", "alternativa"] {
+                if let Some(n) = d[k].as_str() {
+                    nomes.insert(n.to_string());
+                }
+            }
+        }
+        let nomes_legiveis: serde_json::Map<String, Value> = nomes
+            .into_iter()
+            .filter_map(|n| {
+                let l = nome_legivel_da_acao(&n);
+                l.split_once(pw_data_loader::importar::SEPARADOR_DO_NOME).map(|(x, _)| (n.clone(), json!(x)))
+            })
+            .collect();
         return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(), "voo": q.voo, "diagnostico_de_voo": de_voo,
+            "nomes_legiveis": nomes_legiveis,
             "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico,
             "habitat": q.habitat, "diagnostico_de_mascote": de_mascote, "diagnostico_de_habilidades": de_habilidades })));
     }
@@ -533,24 +559,43 @@ struct QModelo {
 }
 
 /// B380: o nome legível de uma ação do cliente para o GLB ("站立" → "Parado · 站立"), com o original depois do
-/// separador (`importar::SEPARADOR_DO_NOME`), que o importador recupera. A mesma tabela que a tela mostra
-/// (`web-admin/estudio/src/componentes/ModeloDoMonstro.svelte`, `TRADUCOES`) — só para ler; o arquivo guarda o original.
-const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[("站立", "Parado"), ("休闲", "Ocioso"), ("戒备", "Em guarda"), ("慢速移动", "Andando"), ("快速移动", "Correndo"),
+/// separador (`importar::SEPARADOR_DO_NOME`), que o importador recupera. B384: é a única tabela — a ficha do `.ecm` manda
+/// o legível de cada nome (`nomes_legiveis`) e as telas mostram esse; só para ler, o arquivo guarda o original.
+/// Aplicada em ordem: os compostos antes dos simples. B384: ações de voo, asas e espada voadora (medidas em 130 modelos
+/// de voo/asa/arma do 1.5.5 e do 1.2.6: 低空下降, 高空下降, 展开, 飞行悬停, 飞行前进, 飞剑…, 翅膀收起, 起飞, 滑翔, 收起…;
+/// `地空下降` é grafia do cliente para 低空下降).
+const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[
+    ("低空下降", "descendo de baixa altura"), ("地空下降", "descendo de baixa altura"), ("高空下降", "descendo de grande altura"),
+    ("飞行悬停", "voando parado"), ("飞行前进", "voando para frente"), ("飞行落地", "pousando"), ("飞行下降", "descendo"),
+    ("翅膀收起", "asas recolhidas"), ("飞剑", "espada voadora: "), ("展开", "abrindo"), ("收起", "recolhendo"), ("起飞", "decolando"),
+    ("滑翔", "planando"), ("前进", "para frente"), ("悬停", "parado no ar"), ("落地", "pousando"), ("静止", "parada"),
+    ("站立", "Parado"), ("休闲", "Ocioso"), ("戒备", "Em guarda"), ("慢速移动", "Andando"), ("快速移动", "Correndo"),
     ("普攻", "Ataque "), ("魔攻", "Ataque mágico "), ("技能", "Habilidade "), ("施放", "lançar "), ("吟唱", "concentrar "), ("死亡", "Morrendo"),
     ("受伤", "Apanhando"), ("叠加", " (sobreposto)"), ("起", " — início"), ("落", " — golpe"), ("挂点", "Ponto de encaixe"), ("飞行", "Voando"),
     ("游泳", "Nadando"), ("跳", "Pulo"), ("眩晕", "Atordoado"), ("出生", "Nascendo")];
 
 fn nome_legivel_da_acao(original: &str) -> String {
     // 起/落 (início/golpe do ataque) só como sufixo: no meio são outra palavra (`落石术` = "pedra que cai").
-    let (miolo, sufixo) = match original.strip_suffix('起').map(|m| (m, " — início")).or_else(|| original.strip_suffix('落').map(|m| (m, " — golpe"))) {
+    // B384: um termo da tabela que termina em 起/落 (收起, 翅膀收起, 落地…) não é o início/golpe do ataque.
+    let termo_no_fim = TRADUCOES_DE_ACAO.iter().any(|(a, _)| a.chars().count() > 1 && original.ends_with(a));
+    let (miolo, sufixo) = match original.strip_suffix('起').filter(|_| !termo_no_fim).map(|m| (m, " — início")).or_else(|| original.strip_suffix('落').filter(|_| !termo_no_fim).map(|m| (m, " — golpe"))) {
         Some(x) => x,
         None => (original, ""),
     };
+    // B384: "<modelo>_<ação>" (天鹅之翼_起飞): o prefixo é o nome do modelo — o legível fica só com a ação (o original,
+    // inteiro, vai depois do separador).
+    let miolo = miolo.rsplit_once('_').map_or(miolo, |x| x.1);
     let mut t = miolo.to_string();
     for (a, b) in TRADUCOES_DE_ACAO.iter().filter(|(a, _)| *a != "起" && *a != "落") {
         t = t.replace(a, b);
     }
-    let t = format!("{}{sufixo}", t.split_whitespace().collect::<Vec<_>>().join(" "));
+    if t == miolo && sufixo.is_empty() {
+        return original.to_string(); // nada traduzido (ex.: nome já em português)
+    }
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ").replace(" :", ":");
+    let t = t.strip_suffix(':').unwrap_or(&t).to_string();
+    let mut c = t.chars();
+    let t = format!("{}{sufixo}", c.next().map_or(String::new(), |p| p.to_uppercase().chain(c).collect()));
     // Sobrou ideograma (nome sem tradução na tabela): o legível misturado só confunde — vai o original.
     if t == original || t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
         original.to_string()
@@ -2039,6 +2084,20 @@ mod testes_b380 {
         // Sem tradução de tudo, só o original (antes: "— golpe石术lançar — golpe").
         assert_eq!(super::nome_legivel_da_acao("落石术施放落"), "落石术施放落");
         assert_eq!(super::nome_legivel_da_acao("弓箭站立"), "弓箭站立");
+        // B384: voo, asas e espada voadora; o prefixo do modelo sai do legível e volta pelo original.
+        assert_eq!(super::nome_legivel_da_acao("飞行悬停"), "Voando parado · 飞行悬停");
+        assert_eq!(super::nome_legivel_da_acao("低空下降"), "Descendo de baixa altura · 低空下降");
+        assert_eq!(super::nome_legivel_da_acao("飞剑悬停"), "Espada voadora: parado no ar · 飞剑悬停");
+        assert_eq!(super::nome_legivel_da_acao("天鹅之翼_起飞"), "Decolando · 天鹅之翼_起飞");
+        assert_eq!(super::nome_legivel_da_acao("机械翼_地空下降"), "Descendo de baixa altura · 机械翼_地空下降");
+        assert_eq!(super::nome_legivel_da_acao("翅膀收起"), "Asas recolhidas · 翅膀收起");
+        assert_eq!(super::nome_legivel_da_acao("飞剑挂点"), "Espada voadora: Ponto de encaixe · 飞剑挂点");
+        for n in ["低空下降", "高空下降", "展开", "飞行悬停", "飞行前进", "挂点", "飞剑低空下降", "飞剑高空下降", "飞剑前进", "飞剑悬停",
+            "翅膀收起", "飞剑静止", "起飞", "滑翔", "飞行落地", "收起", "前进", "悬停", "落地", "飞剑滑翔", "飞剑落地", "飞剑起飞", "蝠翼_飞行下降"] {
+            let l = super::nome_legivel_da_acao(n);
+            assert!(l.contains(" · "), "sem tradução: {n} → {l}");
+            assert_eq!(pw_data_loader::importar::nome_original(&serde_json::json!({ "name": l })).as_deref(), Some(n));
+        }
         let v = serde_json::json!({ "name": super::nome_legivel_da_acao("魔攻2落") });
         assert_eq!(pw_data_loader::importar::nome_original(&v).as_deref(), Some("魔攻2落"));
     }

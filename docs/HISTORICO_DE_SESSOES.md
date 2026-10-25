@@ -17677,3 +17677,20 @@ comparação lado a lado.
     ### f. Falta
     - Murillo: Blender (arma, asa, armadura) e em jogo; LOD menor nos níveis 二级/三级; roupa padrão por local na prévia;
       `ChangeArmor` do 1.2.6 não rastreado (mesmas strings).
+
+384. **Sessão 2026-10-25: nomes das animações de voo em português (B384).** Pedido do Murillo: "nos voos as animações
+    estão com nome em chinês" — traduzir e o exportar/importar considerar a tradução, como nos Monstros.
+    - Medido: as ações-base de 130 modelos de voo, asa e arma (1.5.5 e 1.2.6, pela ficha do `pw-recursos`): 低空下降 29,
+      高空下降 27, 展开 26, 飞行悬停/飞行前进 24, 飞剑… 20, 翅膀收起 16, 起飞 14, 滑翔 10, 收起 10, e as com prefixo do modelo
+      (`天鹅之翼_起飞`, `机械翼_地空下降` — 地空 é grafia do cliente).
+    - A tabela existia duas vezes (tela do Monstro e `admin.rs`). Agora só no servidor: `TRADUCOES_DE_ACAO` com os termos
+      de voo (compostos antes), prefixo do modelo fora do legível, 起/落 de ataque só quando o fim não é termo da tabela
+      (`翅膀收起` virava "asas recolh— início"), maiúscula inicial; a ficha do `.ecm` manda `nomes_legiveis` e as duas telas
+      usam esse. A volta é a mesma de antes (`importar::nome_original`, o nome do cliente depois de " · ").
+    - Provas: `admin::testes_b380::nome_legivel_da_acao` com os 23 nomes de voo (todos traduzidos e o original recuperado);
+      `pw-recursos` 30/0; svelte-check 0/0, vitest 43/43. Publicado: 天鹅之翼 e 机械翼 exportados ("Voando parado ·
+      天鹅之翼_飞行悬停"…) e importados de volta num rascunho (110, 111, descartados) — todas "igual à do cliente (não
+      gravada)". Navegador: Voo → registro 3 mostra "Descendo de baixa altura | Pousando | Voando para frente | Voando
+      parado | … | Decolando | Recolhendo | Abrindo".
+    - Falta: o Murillo ver no Blender.
+
