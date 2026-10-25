@@ -1865,6 +1865,16 @@ async fn morrer_pelo_monstro(
     link: &mut pw_bus::transport::BusConnection,
     roleid: i32,
 ) -> Vec<Vec<u8>> {
+    morrer_pelo_monstro_com(mundo, link, roleid, false).await
+}
+
+/// `golpeando`: morre com a sessão de golpe ainda aberta (o WB do relato de 2026-10-25).
+async fn morrer_pelo_monstro_com(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    link: &mut pw_bus::transport::BusConnection,
+    roleid: i32,
+    golpeando: bool,
+) -> Vec<Vec<u8>> {
     {
         let mut m = mundo.write().await;
         m.mover_jogador(roleid, Vector3::new(5.0, 0.0, 5.0));
@@ -1886,7 +1896,9 @@ async fn morrer_pelo_monstro(
     .await
     .unwrap();
     receber(link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    if !golpeando {
+        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    }
     let morreu = tickar_ate(mundo, |m| m.players.get(&(roleid as i64)).is_some_and(|p| p.hp == 0)).await;
     assert!(morreu, "o jogador não chegou a zero");
     let mut vistos = Vec::new();
@@ -1961,6 +1973,38 @@ async fn morrer_voando_ou_montado_pousa_e_desmonta_antes_do_aviso_de_morte() {
     assert!(desmontou < recolheu && recolheu < cmds.len() - 1, "ordem: {cmds:?}");
     assert!(!cmds.contains(&97), "não voava: não há pouso");
     assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none(), "continuou montado morto");
+}
+
+/// B382 — quem morre golpeando recebe `HOST_STOPATTACK` (23, motivo 0) **antes** do `HOST_DIED`:
+/// `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `session_normal_attack::EndSession` →
+/// `stop_attack(_stop_flag = 0)` (`actsession.cpp:383-391`). Sem ele o cliente segue com `m_bMelee`, adia o
+/// `WORK_DEAD` e o `PLAYER_REVIVAL` não o tira da morte (`EC_HostPlayer.cpp:4107-4111`). Depois de
+/// reviver, o golpe não volta sozinho.
+#[tokio::test]
+async fn morrer_golpeando_encerra_o_golpe_antes_do_aviso_de_morte() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let vistos = morrer_pelo_monstro_com(&mundo, &mut link, roleid, true).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    let parou = cmds.iter().rposition(|&c| c == 23).unwrap_or_else(|| panic!("sem HOST_STOPATTACK: {cmds:?}"));
+    assert_eq!(parou, cmds.len() - 2, "o HOST_STOPATTACK vem logo antes do HOST_DIED: {cmds:?}");
+    assert_eq!(vistos[parou].len(), 6, "cmd_host_stop_attack: 2 + 4 B");
+    assert_eq!(i32_em(&vistos[parou], 2), 0, "o _stop_flag de quem morreu é 0");
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none());
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::REVIVE_VILLAGE, &0i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    let _ = esperar_comando(&mut link, 29).await;
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none(), "o golpe voltou depois de reviver");
+
+    // Sem golpe aberto, nenhum HOST_STOPATTACK de sobra.
+    let vistos = morrer_pelo_monstro(&mundo, &mut link, roleid).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    assert_ne!(cmds[cmds.len() - 2], 23, "HOST_STOPATTACK sem golpe aberto: {cmds:?}");
 }
 
 #[tokio::test]

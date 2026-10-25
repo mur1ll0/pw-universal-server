@@ -36,6 +36,11 @@ pub enum EventoDoMundo {
         roleid: RoleId,
         matador: i64,
         pos: pw_core::Vector3,
+        /// Havia sessão de golpe / de habilidade, encerrada pela morte. O `OnDeath` chama
+        /// `ClearSession` (`gs/player.cpp:7131`) e o `EndSession` de cada uma avisa o cliente
+        /// (`HOST_STOPATTACK`/`SELF_STOP_SKILL`, `actsession.cpp:383-391`, `:557-570`) — B382.
+        golpeava: bool,
+        conjurava: bool,
     },
     /// Um monstro andou. O cliente interpola até `destino`; sem este aviso o monstro
     /// perseguia em silêncio, e na tela ficava parado.
@@ -1720,9 +1725,10 @@ impl WorldInstance {
                 }
             }
             let (role, pos) = (p.role_id, p.position);
+            let (mut golpeava, mut conjurava) = (false, false);
             if morto_por.is_some() {
-                p.ataque = None;
-                p.conjuracao = None;
+                golpeava = p.ataque.take().is_some();
+                conjurava = p.conjuracao.take().is_some();
                 p.efeitos.ao_morrer();
             }
             for (atacante, dano) in danos_no_tempo {
@@ -1743,6 +1749,8 @@ impl WorldInstance {
                     roleid: role,
                     matador,
                     pos,
+                    golpeava,
+                    conjurava,
                 });
                 continue;
             }
@@ -2720,10 +2728,10 @@ impl WorldInstance {
         if let Some((m, ai)) = self.monsters.get_mut(&atacante) {
             ai.ao_matar_o_alvo(m, &self.players);
         }
-        let mut tinha_efeitos = false;
+        let (mut tinha_efeitos, mut golpeava, mut conjurava) = (false, false, false);
         if let Some(p) = self.players.get_mut(&alvo) {
-            p.ataque = None;
-            p.conjuracao = None;
+            golpeava = p.ataque.take().is_some();
+            conjurava = p.conjuracao.take().is_some();
             tinha_efeitos = !p.efeitos.filtros.is_empty();
             p.efeitos.ao_morrer();
         }
@@ -2738,6 +2746,8 @@ impl WorldInstance {
             roleid: role_id,
             matador: atacante,
             pos,
+            golpeava,
+            conjurava,
         });
         // `OnDeath` recolhe o mascote (`player.cpp:7204`).
         self.recolher_mascote(alvo, 0);

@@ -17598,3 +17598,28 @@ comparação lado a lado.
       21 iguais, `igual_ao_publicado`; com a rotação de `Bip01` mexida (+0,2) em "Parado" → 20 iguais, 1 gravada.
     ### c. Falta
     - Murillo: reinstalar a extensão 1.1.1. Uma edição menor que ~0,6° em todos os quadros de uma ação passa por igual.
+
+382. **Sessão 2026-10-25: morrer golpeando prendia o cliente na morte (1.2.6).** Relato do Murillo: WB (bárbaro, 1.2.6)
+    morto pelo "Dino Full Putasso"; a morte não "subiu" direito, clicou "Reviver na cidade mais próxima", e depois de
+    renascer o botão continuava lá e não fazia nada.
+    ### a. Log do `pw-world-126`
+    - 16:04:31.65 `Jogador #11458 morreu` com a sessão de golpe aberta (golpes de 31.15); 31.68 um `CANCEL_ACTION`;
+      35.72 `renasceu na cidade` + teleporte (o servidor fez tudo); de 36.25 a 16:07:34, 828 `CANCEL_ACTION` a ~200 ms
+      e `pediu para renascer na cidade sem estar morto` a cada clique.
+    ### b. Causa (evidência)
+    - Original: `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `TerminateSession` (`actsession.h:109-115`) →
+      `session_normal_attack::EndSession` → `stop_attack(_stop_flag)`, 0 (`actsession.cpp:383-391`, `actsession.h:261`);
+      a de habilidade `stop_skill` (`:557-570`). O nosso `world.rs` zerava `ataque`/`conjuracao` em silêncio.
+    - Cliente: `m_bMelee` só desliga no `OnMsgHstStopAttack` (`EC_HostMsg.cpp:4076-4080`); com ele ligado o `WORK_DEAD`
+      do `Killed` (`EC_HostPlayer.cpp:7641-7642`) é adiado por `DelayWork`, que manda `CANCEL_ACTION` e espera
+      (`EC_HPWork.cpp:361-364`) — o das 31.68; o `PLAYER_REVIVAL` chega e o `Revive` sai em `!m_pWorkMan->IsDead()`
+      sem fechar a janela (`EC_HostPlayer.cpp:4107-4111`). Cada trabalho novo repete o `CANCEL_ACTION`. Vale para as
+      duas versões (o B155 testou o reviver sem golpe aberto).
+    ### c. Correção
+    - `EventoDoMundo::JogadorMorreu { golpeava, conjurava }` nos dois lugares de morte (`world.rs`); o barramento manda
+      `HOST_STOPATTACK` (23, motivo 0, 6 B) e/ou `SELF_STOP_SKILL` (123) antes do `HOST_DIED`. Codificadores já
+      existentes e usados nas duas versões — nenhum layout novo.
+    - Teste `morrer_golpeando_encerra_o_golpe_antes_do_aviso_de_morte` (23 logo antes do 28, motivo 0; reviver não
+      reabre o golpe; sem golpe aberto, nenhum 23 de sobra).
+    ### d. Falta
+    - Murillo: ver em jogo (roteiro no ESTADO §3.3). Não commitado nem publicado.

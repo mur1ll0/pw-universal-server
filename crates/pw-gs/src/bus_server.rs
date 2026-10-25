@@ -909,6 +909,8 @@ impl BusServer {
                 roleid,
                 matador,
                 pos,
+                golpeava,
+                conjurava,
             } => {
                 // Morrer cancela golpe e conjuração (`world.rs`), e com eles o golpe que
                 // esperava a vez (B57).
@@ -962,6 +964,21 @@ impl BusServer {
                     if let Some(envio) = self.envio_de(roleid).await {
                         self.desmontar(roleid, m, &envio).await;
                     }
+                }
+                // B382 — `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `TerminateSession` →
+                // `EndSession` (`actsession.h:109-115`): a sessão de golpe manda `stop_attack(_stop_flag)`
+                // com o 0 de quem não mexeu na flag (`actsession.cpp:383-391`, `actsession.h:261`), e a de
+                // habilidade `stop_skill` (`:557-570`) — **antes** do aviso de morte. Sem o
+                // `HOST_STOPATTACK` o cliente fica com `m_bMelee` ligado (só o desliga em
+                // `OnMsgHstStopAttack`, `EC_HostMsg.cpp:4076-4080`): o `WORK_DEAD` do `Killed` é adiado
+                // (`CECHPWorkMan::DelayWork` manda `CANCEL_ACTION` e espera, `EC_HPWork.cpp:361-364`), o
+                // `Revive` sai em `!m_pWorkMan->IsDead()` sem fechar a janela (`EC_HostPlayer.cpp:4107-4111`)
+                // e o personagem fica preso, mandando `CANCEL_ACTION` a cada 200 ms (WB no 1.2.6).
+                if golpeava {
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::host_stop_attack(0).data).await;
+                }
+                if conjurava {
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::self_stop_skill().data).await;
                 }
                 self.enviar_ao_jogador(
                     roleid,

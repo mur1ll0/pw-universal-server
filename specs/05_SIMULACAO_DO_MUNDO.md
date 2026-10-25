@@ -570,6 +570,16 @@ desmonta — `DeactiveMountState` → `RecallPet`, `STATE_MOUNT` desligado e `pl
 do recolher (227 com 0, velocidade refeita, `RECALL_PET` 234). Antes, o personagem renascia
 voando/montado para o servidor e o botão de voo/montaria pedia dois cliques.
 
+**Morrer golpeando ou conjurando (B382, `testado`; falta ver em jogo):** `OnDeath` chama `ClearSession`
+(`gs/player.cpp:7131`) antes do aviso de morte; o `EndSession` da sessão de golpe manda
+`stop_attack(_stop_flag)` — 0 na morte (`actsession.cpp:383-391`, `actsession.h:261`) — e o da habilidade
+`stop_skill` (`:557-570`). No servidor: `JogadorMorreu { golpeava, conjurava }` e, antes do `HOST_DIED`,
+`HOST_STOPATTACK` (23, motivo 0) e/ou `SELF_STOP_SKILL` (123). Sem o 23 o cliente segue com `m_bMelee`
+(só o `OnMsgHstStopAttack` o desliga, `EC_HostMsg.cpp:4076-4080`), o `WORK_DEAD` do `Killed` fica adiado
+(`DelayWork` manda `CANCEL_ACTION` e espera, `EC_HPWork.cpp:361-364`) e o `Revive` sai em
+`!m_pWorkMan->IsDead()` sem fechar a janela (`EC_HostPlayer.cpp:4107-4111`): o personagem renasce no
+servidor e fica preso de morto na tela, mandando `CANCEL_ACTION` a cada 200 ms (WB no 1.2.6, 2026-10-25).
+
 **Trava de PvP (B146, `testado`):** o mundo é PvE (`PVP_MODE(0)` na entrada, o `pve_mode` que o
 servidor de entrega liga, `serverstat.cpp:113`) e cada jogador tem a chave: `ENABLE_PVP_STATE` (82)
 liga acima do nível 29 (`PVP_PROTECT_LEVEL`) e arma 36000 s de espera (`HOST_PVP_COOLDOWN` 185);
