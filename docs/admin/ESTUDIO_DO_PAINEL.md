@@ -525,8 +525,9 @@ tinham.
   (`pw-data-loader/src/glb.rs`, o mesmo dos Editores) não monta o modelo de arma inteiro; a conferir num bloco próprio.
 - ~~Os nomes do `EQUIPMENT_ADDON` são internos (`A_MD00`)~~ — B367: cartões e seletor mostram o texto do cliente com
   o valor, pela rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209): quem calcula o valor é o
-  GS do realm, então vale o `elements` **publicado** (efeito criado só no rascunho aparece pelo nome interno). O
-  refino (`levelup_addon`, ex.: 1712) não tem texto no `item_ext_prop.txt`: o cartão mostra os parâmetros (7, 0).
+  GS do realm, então vale o `elements` **publicado** (efeito criado só no rascunho aparece pelo nome interno). ~~O
+  refino (`levelup_addon`, ex.: 1712) não tem texto no `item_ext_prop.txt`: o cartão mostra os parâmetros (7, 0).~~
+  B383: o refino é explicado pelo servidor (§9.10).
 
 ### 9.5 Ajustes do B367 (pedido do Murillo, 2026-10-23)
 
@@ -692,3 +693,44 @@ Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstro
 Gold com o arquivo e o preço da 1ª opção) e **Forjado por** (NPC → forja e página → receita, com a chance). Rota e
 regra na spec 07 §6c. Cada monstro, NPC, loja, forja e receita abre nos Editores em outra aba. Não cobre: drop pelo
 `npcgen` (os monstros só citam a própria essência), drops do GS fora do `elements` e as listas de "item especial".
+
+### 9.10 Refino explicado e Equipáveis ↔ Blender (B383, 2026-10-25)
+
+**Efeito do refino.** O cartão "Efeito do refino (levelup_addon)" diz o que o refino faz — "Refino: +7 de ataque
+físico no +1; em +12 soma 262" —, o nome interno, o tratador, o parâmetro, quantas peças de cada família usam o efeito
+e a tabela +1…+12. O valor de cada nível é `(int)(param × fator + 0,1)` com o fator `1; 2; 3,05; 4,3; 5,75; 7,55; 9,95;
+13; 17,05; 22,3; 29; 37,5` (`equip_item.cpp:208-223`) e **substitui** o do nível anterior (`:319, 330`) — não é "+N por
+nível" linear. O seletor lista só os efeitos de refino (tratador `refine_*` no GS), cada um descrito, com a tabela dos
+níveis e o selo "serve em armas/armaduras/acessórios" (alguma peça da família usa no rascunho; o GS não restringe a
+família, `itemdataman.cpp:205-228`). O que cada tipo soma, com a evidência: spec 07 §6c (B383). Efeito que não é de
+refino no servidor aparece em vermelho (o refino falharia com o erro 92).
+
+**Como o cliente monta cada equipamento** (evidência no fonte do cliente e no binário 1.5.5 BR):
+
+| tipo | campos | como vai no personagem |
+| :--- | :--- | :--- |
+| arma (e arma de moda, v156) | `file_model_right`, `file_model_left` | `.ecm` próprio com as peles do `.smd` (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`), pendurado pelo gancho `CC_weapon` (orbe: `CC_qiu`) no `HH_righthandweapon`/`HH_lefthandweapon`/`HH_qiu` do corpo (`:9930-9993`) |
+| asa (`WINGMANWING`, voo com `fly_mode` 1) | `file_model` | `.ecm` no gancho `CC_chibang` → `HH_chibang` (`:1940-1950`) |
+| espada voadora (`fly_mode` 0) / rodas de fogo (2) | `file_model` / `file_model2` | `CC_feijian` → `HH_feijian`; nas rodas, um em cada pé (`:1951-1966`) |
+| armadura e moda | `realname`, `equip_location`, `gender` (moda) | **pele** sobre o esqueleto do corpo: `Models\Players\装备\{男 ou 女}\<realname>\<grupo><realname>{一级,二级,三级}.ski` (`LoadPlayerSkin`, `:1720-1740`); grupo `男通用`/`女通用`, menos Bárbaro (`妖兽`) e Feiticeira (`妖精`) — tabela do binário (spec 07 §6c) |
+| ornamento | `file_model` (vazio nos dados) | não aparece no personagem |
+
+**Telas.** Na coluna da direita da edição:
+- **Modelo 3D no personagem** (`componentes/ModeloDoEquipavel.svelte`, quando a tabela tem modelo próprio): prévia montada
+  como o cliente (peles do `.smd`), **Exportar GLB (Blender)** com todas as animações, **Importar GLB** em três modos (só
+  o modelo → 1ª pele do `.smd`; só as animações; tudo → modelo novo com o gancho exigido, o campo passa a citá-lo e o
+  antigo sem uso sai no rascunho), **Conferir sem gravar** e o **relatório** na tela.
+- **Animações do modelo**: as ações do `.smd` (asas, montarias, armas animadas) para ver; exportar vai no GLB e "Só as
+  animações" traz de volta.
+- **Vestido no personagem** (`componentes/PeleDoEquipavel.svelte`, armadura e moda): gênero (na moda, o da peça), grupo de
+  pele, corpo de uma classe e "com o corpo"; aviso quando falta um nível da pele ou quando outros registros usam o mesmo
+  `realname`; exportar a peça com o esqueleto do corpo; importar os três níveis com os ossos conferidos em todas as
+  classes do grupo.
+- O Visual 3D ficou com o modelo "No chão" (`file_matter`).
+
+**Pesos.** Decisão (pedido do Murillo): corrige sozinho o que tem resultado igual ao do jogo e recusa o resto — regra e
+evidência na spec 07 §6c (B383) e spec 03; teste `importar::testes::pesos_corrigidos_como_o_motor_le`.
+
+**Moda (parte 4 do pedido).** O seletor só mostrava "No chão" porque a moda não tem `file_model`: o card "Vestido no
+personagem" monta a peça pelo `realname`, `gender` e o grupo da classe, no corpo masculino ou feminino de cada classe.
+

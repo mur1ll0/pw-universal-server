@@ -265,6 +265,19 @@ pub struct TabelaDeAddons {
 
 /// `set_equip_addon<N, BASE>` (`item_addon.cpp:1194-1232`): `(N, tratador base)` de um tratador
 /// `SET_ADDON_MACRO(N,BASE)`.
+/// O tratador do `INSERT_ADDON(id, …)` do GS (`specs/addons_155/addons.json`, o mesmo mapa que
+/// [`TabelaDeAddons::carregar`] usa nos dois realms), sem precisar carregar o `elements`.
+pub fn tratador_do_id(id: u32) -> Option<&'static str> {
+    static T: OnceLock<HashMap<u32, String>> = OnceLock::new();
+    T.get_or_init(|| {
+        serde_json::from_str::<Arquivo>(ADDONS_155_JSON)
+            .map(|a| a.tratadores.into_iter().filter_map(|(k, v)| Some((k.parse().ok()?, v))).collect())
+            .unwrap_or_default()
+    })
+    .get(&id)
+    .map(String::as_str)
+}
+
 pub fn conjunto_de(tratador: &str) -> Option<(i32, &str)> {
     let resto = tratador.strip_prefix("SET_ADDON_MACRO(")?.strip_suffix(')')?;
     let (n, base) = resto.split_once(',')?;

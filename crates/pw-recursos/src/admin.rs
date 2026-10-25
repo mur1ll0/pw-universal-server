@@ -524,6 +524,12 @@ struct QModelo {
     rascunho: Option<i64>,
     /// B380: todas as ações-base do `.smd` (o GLB que vai para o Blender).
     todas: Option<bool>,
+    /// B383: "equipamento" = monta o `.ecm` como o `CECModel::Load` da arma/asa/voo (peles do `.smd` + `AddiSkinPath`),
+    /// não como o NPC (`<.ecm>.ski`).
+    como: Option<String>,
+    /// B383: as peles (`.ski`, separadas por `|`) a vestir no esqueleto do `.ecm` — a armadura/moda sobre o corpo do
+    /// jogador (`Models\Players\形象\<classe>\躯干\<classe>.ecm`), como o `ChangeArmor` do cliente.
+    peles: Option<String>,
 }
 
 /// B380: o nome legível de uma ação do cliente para o GLB ("站立" → "Parado · 站立"), com o original depois do
@@ -573,6 +579,26 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
             let ler_pele = |c: &str| conteudo_de(&e, &v, rr, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
             let irma = format!("{}.ski", nome_ecm.rsplit_once('.').map_or(nome_ecm.as_str(), |x| x.0));
             let mut peles: Vec<(String, Result<pw_data_loader::ski::Ski, String>)> = Vec::new();
+            if let Some(lista) = q.peles.as_deref().filter(|x| !x.trim().is_empty()) {
+                // B383: peles escolhidas (armadura/moda e, se pedido, o corpo) no esqueleto deste .ecm.
+                for c in lista.split('|').map(str::trim).filter(|c| !c.is_empty()).take(16) {
+                    match ler_pele(c) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((c.to_string(), Err(x))),
+                    }
+                }
+            } else if q.como.as_deref() == Some("equipamento") {
+                // B383: equipamento — as peles do .smd e as adicionais do .ecm (`CECModel::Load(…, LSF_UNIQUESKIN)`,
+                // `EC_Player.cpp:4547-4583`; `AddiSkinPath`, `EC_Model.cpp:678-689`).
+                peles.extend(peles_do_smd);
+                for a in &m.peles_adicionais {
+                    let c = format!("Models\\{a}");
+                    match ler_pele(&c) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((c, Err(x))),
+                    }
+                }
+            } else {
             match ler_pele(&irma) {
                 Ok((n, s)) => peles.push((n, Ok(s))),
                 Err(_) => {
@@ -587,6 +613,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
                         peles.extend(peles_do_smd);
                     }
                 }
+            }
             }
             (nome_ecm, cabeca, peles, esqueleto)
         } else {
@@ -870,6 +897,10 @@ struct QImportarGlb {
     rascunho: Option<i64>,
     caminho: String,
     modo: String,
+    /// B383: "equipamento" = o GLB vai para a 1ª pele do `.smd` (arma, asa, voo), não para a `<.ecm>.ski` do NPC.
+    como: Option<String>,
+    /// B383: só conferir (relatório), sem gravar.
+    validar: Option<bool>,
 }
 
 /// B380: GLB no modelo (`.ecm`) do monstro — só o modelo ou só as animações, com o mesmo esqueleto
@@ -877,7 +908,7 @@ struct QImportarGlb {
 async fn estudio_importar_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImportarGlb>, corpo: Bytes) -> R<Json<Value>> {
     validar(&v)?;
     let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
-    Ok(Json(e.estudio.importar_glb_no_modelo(&e.gov, &v, r, &q.caminho, &q.modo, corpo.to_vec()).await?))
+    Ok(Json(e.estudio.importar_glb_no_modelo(&e.gov, &v, r, &q.caminho, &q.modo, q.como.as_deref(), q.validar == Some(true), corpo.to_vec()).await?))
 }
 
 #[derive(Deserialize)]
@@ -899,13 +930,17 @@ struct QModeloNovo {
     titulo: String,
     /// B299: o `.ecm` do cliente a usar como molde do `.ecm` novo (opcional).
     molde: Option<String>,
+    /// B383: ganchos exigidos no esqueleto (um basta), separados por vírgula.
+    ganchos: Option<String>,
+    /// B383: só conferir (relatório), sem gravar.
+    validar: Option<bool>,
 }
 
 /// B298 (S6): um modelo inteiro (.bon, .ski, .smd, texturas e ações) a partir do GLB do corpo — `Estudio::modelo_novo`.
 async fn estudio_modelo_novo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModeloNovo>, corpo: Bytes) -> R<Json<Value>> {
     validar(&v)?;
     let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
-    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec(), q.molde.as_deref()).await?))
+    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec(), q.molde.as_deref(), q.ganchos.as_deref(), q.validar == Some(true)).await?))
 }
 
 /// B290 (S6): substitui uma pele (`.ski`) pelo glTF (GLB) do corpo, com os ossos do esqueleto do `.smd`.
@@ -1083,6 +1118,42 @@ async fn estudio_origens(State(e): State<Arc<Estado>>, Path((v, id)): Path<(Stri
         return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
     }
     Ok(Json(e.estudio.origens_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
+#[derive(Deserialize)]
+struct QPeleDoEquipamento {
+    rascunho: Option<i64>,
+    realname: String,
+    genero: u8,
+    grupo: Option<String>,
+    classe: Option<usize>,
+    validar: Option<bool>,
+}
+
+/// B383: a pele de armadura/moda (`realname`) de um gênero — grupos, arquivos, corpos, quem usa (`Estudio::pele_do_equipamento`).
+async fn estudio_pele_do_equipamento(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QPeleDoEquipamento>) -> R<Json<Value>> {
+    validar(&v)?;
+    if q.genero > 1 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "gênero 0 ou 1".into()));
+    }
+    Ok(Json(e.estudio.pele_do_equipamento(&e.gov, &v, q.rascunho, &q.realname, q.genero).await?))
+}
+
+/// B383: GLB → os três `.ski` da pele de armadura/moda (`Estudio::importar_pele_do_equipamento`); `validar` só confere.
+async fn estudio_importar_pele_do_equipamento(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QPeleDoEquipamento>, corpo: Bytes) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    let grupo = q.grupo.as_deref().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "falta o grupo da pele".into()))?;
+    if q.genero > 1 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "gênero 0 ou 1".into()));
+    }
+    Ok(Json(e.estudio.importar_pele_do_equipamento(&e.gov, &v, r, &q.realname, q.genero, grupo, q.classe, q.validar == Some(true), corpo.to_vec()).await?))
+}
+
+/// Os efeitos de refino do rascunho, com o valor por nível e o uso por família — `Estudio::refinos`.
+async fn estudio_refinos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.refinos(&e.gov, &v, q.rascunho).await?))
 }
 
 async fn estudio_tela(
@@ -1887,6 +1958,8 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/telas/{tabela}/{indice}", get(estudio_tela))
         .route("/admin/{v}/estudio/origens/{id}", get(estudio_origens))
+        .route("/admin/{v}/estudio/refinos", get(estudio_refinos))
+        .route("/admin/{v}/estudio/equipamentos/pele", get(estudio_pele_do_equipamento).post(estudio_importar_pele_do_equipamento))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))

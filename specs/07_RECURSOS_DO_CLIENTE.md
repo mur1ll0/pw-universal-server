@@ -911,6 +911,69 @@ as origens pelo caminho inverso das telas — item da loja → loja, item da rec
 monstro) e
 `aipolicy_editavel::testes_b365` (os dois realms).
 
+### Equipáveis: refino explicado, modelo ↔ Blender e peças vestidas (B383)
+
+- **Refino** — `GET estudio/refinos?rascunho=` (`Estudio::refinos`; painel `GET /api/realms/{r}/estudio/refinos`): os
+  `EQUIPMENT_ADDON` cujo tratador no GS é `refine_*` (`pw_data_loader::addons::tratador_do_id`), cada um com `param`
+  (`param1`), `soma` (o que soma, `refino::EFEITOS_DE_REFINO`), `niveis` (+1…+12 = `(int)(param × refine_factor[n] +
+  0.1)`, `refino::valor_do_refino`; o valor do nível **substitui** o anterior, `equip_item.cpp:319, 330`) e `usado_por
+  {arma, armadura, acessorio}` (quantos `levelup_addon` do rascunho o citam — o GS não restringe a família,
+  `itemdataman.cpp:205-228`). `fator` = `refine_factor[1..12]` (`equip_item.cpp:208-223`, agora em
+  `pw_data_loader::refino::FATOR_DE_REFINO`, que o GS reexporta).
+
+  | tratador | soma | evidência (`item_addon.cpp`) |
+  | :--- | :--- | :--- |
+  | `refine_damage` | ataque físico (mín. e máx. da peça) | `:1510`, `:503-522` |
+  | `refine_magic_damage` | ataque mágico **e** físico (o `UpdateItem` chama os dois) | `:1509`, `:1265-1283` |
+  | `refine_max_hp` | HP máximo | `:1508`, `:1428` |
+  | `refine_defense` | defesa física da peça | `:1507`, `:1486` |
+  | `refine_armor` | esquiva (`armor` = 闪避率加值, `equip_item.h:203`) | `:1506`, `:1482` |
+  | `refine_resistance` | as 5 resistências (`EnhanceAllResistance`, `actobject.h:1243-1250`) | `:1505`, `:609-635` |
+  | `refine_defense_resistance` | defesa do personagem e as 5 resistências | `:1511`, `:1434`, `:1300-1312` |
+
+  Ex.: param 7 → 7, 14, 21, 30, 40, 52, 69, 91, 119, 156, 203, 262.
+- **GLB do equipamento** — `GET estudio/modelos/glb?caminho=<.ecm>&como=equipamento`: as peles do `.smd` mais as
+  `AddiSkinPath` do `.ecm`, como o `CECModel::Load(…, LSF_UNIQUESKIN)` da arma/asa/voo (`EC_Player.cpp:4547-4583`) —
+  não a `<.ecm>.ski` do NPC. `peles=<a.ski>|<b.ski>` (até 16): essas peles no esqueleto do `.ecm` — a armadura/moda sobre
+  o corpo do jogador.
+- **Importar no equipamento** — `POST estudio/modelos/importar_glb?…&como=equipamento&modo=modelo`: o GLB vai para a
+  1ª pele do `.smd` (`importar_pele`); se o `.smd` tinha mais peles, saem da lista (`peles_tiradas_do_smd`; o GLB
+  exportado traz as malhas de todas); `.ecm` com `AddiSkinPath` é recusado ("tudo"). `validar=true` (qualquer modo):
+  roda a importação e devolve `{validacao: true, resultado: {malhas, vertices, ossos, ganchos, relatorio}}` (ou as
+  ações) **sem gravar**.
+- **Modelo novo** — `POST estudio/modelos/novo?…&ganchos=CC_weapon,CC_qiu&validar=`: o esqueleto do GLB tem de ter um
+  dos ganchos (arma `CC_weapon`/`CC_qiu`, `EC_Player.cpp:9972-9993`; asa `CC_chibang`, voo e rodas `CC_feijian`,
+  `:1940-1966`), senão 400 com o que criar no Blender; `validar` só o relatório.
+- **Pele de armadura/moda** — o cliente veste `Models\Players\装备\{男|女}\<realname>\<grupo><realname>{一级,二级,三级}.ski`
+  (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: falta um nível → a peça não aparece) sobre o esqueleto de
+  `Models\Players\形象\<classe>\躯干\<classe>.ecm`. O grupo sai da tabela do **binário** (`elementclient.exe` 1.5.5 BR:
+  função 0x4e1ff0, ponteiros 0xdd83f0, chamada pelo `ChangeArmor` em 0x4e28f7 com `realname` em +0x4c e
+  `equip_location` 1–8 em +0x16c): `男通用`/`女通用` para todas as classes, menos `妖兽` (Bárbaro) e `妖精` (Feiticeira).
+  O fonte (`EC_Player.cpp:282-313`) diz "Evolved\" — vale o binário ("Models\"); a tabela por classe do binário
+  (0xdd8450) é só a roupa padrão. 1.2.6: as mesmas strings (0x4b104c-0x4b10b8), código não rastreado.
+  `Estudio::GRUPOS_DE_PELE`, `CORPOS`.
+  - `GET estudio/equipamentos/pele?realname=&genero=&rascunho=` → `{grupos: [{grupo, arquivos: [{caminho, existe}],
+    corpos: [{classe, nome, ecm}]}], usado_por: [{tabela, indice, id, nome}]}` (armaduras e modas com o mesmo
+    `realname`: trocar a pele muda todas).
+  - `POST estudio/equipamentos/pele?rascunho=&realname=&genero=&grupo=&classe=&validar=` (corpo: GLB, até 64 MB):
+    `ski_do_glb` contra o esqueleto do corpo de referência (`classe` ou o 1º do grupo); os ossos da pele têm de existir
+    no esqueleto de **todas** as classes do grupo (senão 400 com a classe e o osso); grava a mesma pele nos três níveis
+    e as texturas em `<pasta>\Textures\`.
+- **Pesos da pele (todo importador: `ski_do_glb`)** — decisão com evidência do motor:
+  - corrigido sozinho, porque o resultado é o que o jogo faria: peso zero antes de um não nulo (o motor para no 1º
+    zero, `A3DSkinMesh.cpp:1040-1041`) → os não nulos vão para a frente; soma ≠ 1 → normalizada (só o 4º peso é
+    implícito, `1 − soma`, e só com os 3 primeiros não nulos, `:1053-1066`); mais de 4 influências (`JOINTS_0` +
+    `JOINTS_1`; o `A3DBVERTEX3` tem 4, `A3DVertex.h:184-191`) → as 4 maiores; vértice sem peso → a vaga do esqueleto;
+    osso do glTF que o `.bon` não tem → os pesos vão para o ancestral mais próximo que existe (o `BindSkeleton` recusaria
+    a pele inteira, `A3DSkin.cpp:851-856`, e no jogo o osso extra não se move: andaria preso ao ancestral); pose de
+    repouso do glTF diferente da do `.bon` (o motor usa a do `.bon`, `A3DSkinModel.cpp:1341`) → cada vértice é reposto
+    (`v' = Σ wᵢ · (repouso do .bon)ᵢ · IBMᵢ · v`);
+  - recusado: osso sem ancestral no esqueleto, mais de 255 ossos na pele (índice de 1 byte), osso que falta no corpo de
+    outra classe do grupo;
+  - sem limite de ossos por malha: o motor divide a malha sozinho pelas constantes do D3D9
+    (`A3DSkinMesh::CreateVertexShaderSubMeshes`, `:500-640`).
+  - Tudo vai para o `relatorio` (texto em português, com o que fazer no Blender).
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,

@@ -1300,6 +1300,37 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         // Só o modelo: a pele <.ecm>.ski (caixa.ski, a que o jogo põe no monstro) com a malha do GLB; as ações ficam.
         let im = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo").send_bytes(&gt).unwrap());
         assert_eq!((im["resultado"]["malhas"].as_u64(), im["resultado"]["esqueleto"].as_str().map(|x| x.to_lowercase())), (Some(1), Some("models\\teste\\caixa.bon".into())), "{im}");
+        // B383: equipamento — conferir sem gravar (relatório, ganchos do esqueleto) e importar na 1ª pele do .smd.
+        let cv = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo")
+            .query("como", "equipamento").query("validar", "true").send_bytes(&gt).unwrap());
+        assert!(cv["validacao"] == true && cv["resultado"]["malhas"] == 1 && cv["resultado"]["relatorio"].is_array() && cv["resultado"]["ganchos"].is_array(), "{cv}");
+        let ie = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo")
+            .query("como", "equipamento").send_bytes(&gt).unwrap());
+        let pele_do_smd = ie["pele"].as_str().unwrap_or("").to_lowercase();
+        assert!(pele_do_smd.starts_with("models\\teste\\") && pele_do_smd.ends_with(".ski"), "{ie}");
+        let (sv, mv) = erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes")
+            .query("validar", "true").send_bytes(&outro_esq));
+        assert_eq!(sv, 400, "conferir também exige o esqueleto: {mv}");
+        // O GLB do equipamento (peles do .smd) e o das peles escolhidas sobre o esqueleto do .ecm.
+        let ge = doc_de(&ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("como", "equipamento").query("rascunho", &rs)));
+        assert!(ge["meshes"].as_array().is_some_and(|m| !m.is_empty()), "{ge}");
+        let gp = doc_de(&ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("peles", &pele_do_smd).query("rascunho", &rs)));
+        assert_eq!(gp["meshes"].as_array().map(|m| m.len()), Some(1), "{gp}");
+        // "Tudo" de arma: o GLB sem o gancho CC_weapon é recusado com o que fazer no Blender; conferir não grava nada.
+        let (sg, mg) = erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_arma").query("titulo", "espada")
+            .query("ganchos", "CC_weapon,CC_qiu").send_bytes(&gm));
+        assert!(sg == 400 && mg.contains("CC_weapon ou CC_qiu") && mg.contains("Blender"), "{sg} {mg}");
+        let nv = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_arma").query("titulo", "espada")
+            .query("validar", "true").send_bytes(&gm).unwrap());
+        assert!(nv["validacao"] == true && nv["resultado"]["ossos"] == 1, "{nv}");
+        assert_eq!(erro_de(pedir("GET", "estudio/modelos/ficha").query("caminho", "models\\teste_arma\\espada.ecm").query("rascunho", &rs).call()).0 / 100, 4, "conferir não grava");
+        // A pele de armadura/moda: grupos do binário (masculino: comum e Bárbaro) e realname inválido.
+        let pe = json_de(pedir("GET", "estudio/equipamentos/pele").query("realname", "紫金胸甲").query("genero", "0").call().unwrap());
+        let grupos: Vec<&str> = pe["grupos"].as_array().unwrap().iter().filter_map(|g| g["grupo"].as_str()).collect();
+        assert_eq!(grupos, ["男通用", "妖兽"], "{pe}");
+        assert_eq!(pe["grupos"][0]["arquivos"][0]["caminho"].as_str(), Some("Models\\Players\\装备\\男\\紫金胸甲\\男通用紫金胸甲一级.ski"), "{pe}");
+        assert_eq!(erro_de(pedir("GET", "estudio/equipamentos/pele").query("realname", "a\\b").query("genero", "0").call()).0, 400);
+        assert_eq!(erro_de(pedir("POST", "estudio/equipamentos/pele").query("rascunho", &rs).query("realname", "x").query("genero", "1").query("grupo", "妖兽").send_bytes(&gm)).0, 400, "Bárbaro só masculino");
         // Sem uso: caixa.ecm sai (nenhum registro o cita); o .smd fica (doador.ecm usa), e com ele caixa.ski e o .bon.
         // (No rascunho r16, que já tem o caixa.ecm: um caminho só fica em um rascunho aberto — 409 em outro.)
         let su = json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={r16}")).send_json(json!({"caminho": ecm_cam})).unwrap());

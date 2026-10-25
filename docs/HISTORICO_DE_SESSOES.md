@@ -17623,3 +17623,57 @@ comparação lado a lado.
       reabre o golpe; sem golpe aberto, nenhum 23 de sobra).
     ### d. Falta
     - Murillo: ver em jogo (roteiro no ESTADO §3.3). Commitado (`34c0922`); `pw-world-126` e `pw-world-155` publicados.
+
+
+383. **Sessão 2026-10-25: Equipáveis — refino explicado e modelo ↔ Blender (B383).** Pedido do Murillo em quatro partes:
+    o cartão do refino só mostrava `W_PB01` e "parâmetros 7, 0"; exportar/importar o modelo dos Equipáveis pelo Blender
+    como nos Monstros; animações de itens; e a Moda só tinha "No chão" no 3D.
+    ### a. Refino (evidência)
+    - `get_item_refine_addon` (`itemdataman.cpp:205-228`) devolve o `levelup_addon` da arma/armadura/acessório como está
+      (sem filtro de família). `RefineAddon` grava `(int)(arg0 × refine_factor[nível] + 0.1f)` (`equip_item.cpp:319, 330`;
+      fator `:208-223`) — o valor do nível **substitui** o anterior. `arg0` = `param1` (`refine_addon_template`,
+      `item_addon.cpp:1235-1244`). Os sete modelos (`:1505-1511`): dano físico; mágico **e** físico (`template2` chama os
+      dois `UpdateItem`, `:1277-1283`); HP; defesa da peça; esquiva (`armor` = 闪避率加值, `equip_item.h:203`); as 5
+      resistências (`actobject.h:1243-1250`); defesa do personagem + resistências.
+    - Código: `pw_data_loader::refino::{FATOR_DE_REFINO, valor_do_refino, EFEITOS_DE_REFINO}` (o GS reexporta o fator);
+      `addons::tratador_do_id`; `Estudio::refinos` → `GET estudio/refinos` (uso por família no rascunho); tela
+      `lib/refino.ts`, `SeletorDeRefino.svelte`. 1.5.5: 210 efeitos de refino, 75 usados por armas; o 1712 da Espada de
+      Bronze: 7…262.
+    ### b. Como o cliente monta o equipamento
+    - Arma: `.ecm` carregado com as peles do `.smd` (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`) —
+      não a `<.ecm>.ski` do NPC (o "Só o modelo" do Monstro gravaria na pele errada) —, pendurado por `CC_weapon`/`CC_qiu`
+      (`:9930-9993`). Asa `CC_chibang`, voo e rodas `CC_feijian` (`:1940-1966`).
+    - Armadura e moda: pele `…\装备\{男|女}\<realname>\<grupo><realname>{一级,二级,三级}.ski` (`LoadPlayerSkin`,
+      `:1720-1740`). O **binário** BR difere do fonte: "Models\" no lugar de "Evolved\" e duas tabelas — a genérica
+      (0xdd83f0, função 0x4e1ff0, chamada pelo `ChangeArmor` em 0x4e28f7: `男通用`/`女通用`, `妖兽` e `妖精`) e uma por
+      classe (0xdd8450, função 0x4e2020, só a roupa padrão). Corpos: `…\形象\<classe>\躯干\<classe>.ecm` (0x9cdc04-0x9ce4b8).
+    ### c. Pesos (decisão com evidência)
+    - Motor: 3 pesos + 4 índices; para no 1º peso zero; o 4º é `1 − soma` só com os 3 primeiros não nulos
+      (`A3DSkinMesh.cpp:1036-1066`); osso da pele ausente no esqueleto → `BindSkeleton` recusa a pele (`A3DSkin.cpp:851-856`);
+      a pose de repouso vem do `.bon` (`A3DSkinModel.cpp:1341`); malha com muitos ossos é dividida sozinha (`:500-640`).
+    - `ski_do_glb` agora: não nulos na frente, 4 maiores de `JOINTS_0`+`JOINTS_1`, soma 1, sem peso → vaga do esqueleto,
+      osso inexistente → ancestral que existe (sem ancestral: recusa com o que fazer no Blender), pose de repouso
+      diferente → vértices repostos (`v' = Σ wᵢ · inversa(matBoneInit)ᵢ · IBMᵢ · v`); tudo no relatório. Primeira versão
+      reordenava pesos quase iguais e quebrava a ida e volta de 848 modelos do cliente (0,45 × 0,45000002) — a ordem
+      entre não nulos não importa ao motor, ficou a do glTF. Segunda: a 紫金胸甲 relatava 26 "zeros no meio" — o 4º peso
+      `1 − soma` ≈ 6e-8 do exportador; só se relata quando o peso de depois passa de 1e-5 (descartar pesos pequenos
+      quebrava a ida e volta: o cliente tem pesos legítimos de 3e-6).
+    ### d. Rotas e telas
+    - `modelos/glb?como=equipamento|peles=a|b`; `modelos/importar_glb?como=equipamento&validar=`; `modelos/novo?ganchos=
+      &validar=`; `GET/POST estudio/equipamentos/pele` (spec 07 §6c B383). Painel repassa; limite de 64 MB na rota nova.
+    - `ModeloDoEquipavel.svelte` (prévia, exportar, três modos, conferir, relatório, animações), `PeleDoEquipavel.svelte`
+      (gênero, grupo, corpo da classe, com/sem corpo, aviso de nível faltando e de `realname` compartilhado).
+    ### e. Provas
+    - `pw-data-loader`+`pw-gs` (lib, com `TEST_DATABASE_URL`): 298/0; `importar` 7/0 com a ida e volta de 848 `.smd`
+      do cliente; teste novo `pesos_corrigidos_como_o_motor_le`; `refino::testes_do_valor` 2/0. `pw-recursos`: 30/0
+      (asserções novas em `tests/estudio.rs`). `pw-data-loader` integração: 274/2 — as duas leem dados publicados do realm
+      (foice 15964 do 1.2.6 e `a61/precinct.sev`), nada desta mudança. Estúdio: svelte-check 0/0, vitest 43/43.
+    - Ida e volta no `pw-recursos` publicado (rascunhos 107–109, descartados; depois do ajuste do 1e-5 o relatório das duas sai vazio): Espada de Bronze — exportado 87 vértices, 1 malha,
+      ganchos `CC_weapon/HH_base/HH_tip`; importado na `青铜剑.ski`; o GLB do rascunho **igual**. Armadura Azul (`紫金胸甲`,
+      masculino comum, corpo do Guerreiro) — 636 vértices, 12 ossos, conferida em 10 classes; os três níveis gravados,
+      textura "igual à do cliente (não gravada)"; GLB do rascunho **igual**.
+    - Navegador (localhost:8000, aba recarregada com `?v=`): cartão do refino e tabela; seletor "75 de 210"; armadura
+      vestida no Guerreiro (com e sem corpo); Luvas de Fada no corpo feminino, aviso "usada por 2 registros".
+    ### f. Falta
+    - Murillo: Blender (arma, asa, armadura) e em jogo; LOD menor nos níveis 二级/三级; roupa padrão por local na prévia;
+      `ChangeArmor` do 1.2.6 não rastreado (mesmas strings).

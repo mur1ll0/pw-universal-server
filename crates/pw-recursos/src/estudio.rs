@@ -4294,7 +4294,11 @@ impl Estudio {
     /// resto, vazia: sem ações). O esqueleto vem de `importar::esqueleto_do_glb`, a pele de `ski_do_glb` (com as
     /// texturas em `Textures\`), as ações de `acoes_do_glb` (`<ação>.stck`, quadros 0 a n−1). Tudo é montado e conferido
     /// antes de gravar; recusa pasta fora de `models\`, nome fora do GBK e arquivo que já existe no cliente.
-    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>, molde: Option<&str>) -> Result<Value> {
+    /// B383: `ganchos` = os ganchos que o esqueleto do GLB tem de ter (um deles basta): arma `CC_weapon` ou `CC_qiu`
+    /// (`EC_Player.cpp:9972-9993`), asa `CC_chibang`, voo e rodas `CC_feijian` (`:1940-1966`) — sem ele o cliente não
+    /// pendura o modelo no personagem. `validar` só confere e devolve o relatório, sem gravar.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>, molde: Option<&str>, ganchos: Option<&str>, validar: bool) -> Result<Value> {
         let pasta = pasta.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
         let titulo = titulo.trim();
         if !pasta.to_lowercase().starts_with("models\\") || pasta.split('\\').any(|p| p.is_empty() || p == "." || p == "..") {
@@ -4314,10 +4318,22 @@ impl Estudio {
             }
         }
         let (bon, mut relatorio) = pw_data_loader::importar::esqueleto_do_glb(&glb).map_err(anyhow::Error::msg)?;
+        let tem: Vec<String> = bon.ganchos.iter().map(|g| g.nome.clone()).collect();
+        if let Some(exigidos) = ganchos.map(|g| g.split(',').map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>()).filter(|g| !g.is_empty()) {
+            if !exigidos.iter().any(|g| tem.iter().any(|t| t.eq_ignore_ascii_case(g))) {
+                bail!("o esqueleto do GLB não tem o gancho {} — sem ele o cliente não pendura o modelo no personagem. No Blender, crie um Empty com esse nome filho do osso onde o personagem segura a peça (ganchos do GLB: {})",
+                    exigidos.join(" ou "), if tem.is_empty() { "nenhum".to_string() } else { tem.join(", ") });
+            }
+        }
         let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         relatorio.extend(imp.relatorio.iter().cloned());
         let (acoes, rel_acoes) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         relatorio.extend(rel_acoes);
+        if validar {
+            return Ok(json!({ "validacao": true, "resultado": { "ossos": bon.ossos.len(), "ganchos": tem,
+                "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+                "acoes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>(), "relatorio": relatorio } }));
+        }
         let pasta_trilhas = if acoes.is_empty() { String::new() } else { format!("tcks_{titulo}") };
         let mut entradas = Vec::new();
         let mut stcks = Vec::new();
@@ -4498,10 +4514,12 @@ impl Estudio {
     /// - `animacoes`: só as animações, como ações do `.smd` (`importar_acoes`; o nome volta ao do cliente por
     ///   `importar::nome_original`).
     /// O "tudo" (modelo + texturas + esqueleto + animações) é o `modelo_novo`, com `remover_modelo_sem_uso` depois.
-    pub async fn importar_glb_no_modelo(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str, modo: &str, glb: Vec<u8>) -> Result<Value> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn importar_glb_no_modelo(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str, modo: &str, como: Option<&str>, validar: bool, glb: Vec<u8>) -> Result<Value> {
         if !caminho.to_lowercase().ends_with(".ecm") {
-            bail!("o modelo do monstro é um .ecm");
+            bail!("o modelo é um .ecm");
         }
+        let equipamento = como == Some("equipamento");
         let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
         let smd = ecm.smd.trim().replace('/', "\\");
         let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
@@ -4511,8 +4529,52 @@ impl Estudio {
         let caminho_bon = ao_lado(&smd, &c.esqueleto);
         let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
         pw_data_loader::importar::conferir_esqueleto(&glb, &bon).map_err(|x| anyhow::anyhow!("{x}. Para trocar o esqueleto, importe com \"tudo\"."))?;
+        // B383: só conferir — o que a importação faria, sem gravar.
+        if validar {
+            return Ok(match modo {
+                "animacoes" => {
+                    let (acoes, relatorio) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                    json!({ "validacao": true, "resultado": { "acoes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>(), "relatorio": relatorio, "esqueleto": caminho_bon } })
+                }
+                "modelo" => {
+                    let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                    json!({ "validacao": true, "resultado": { "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+                        "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>() + imp.ski.malhas_rigidas.iter().map(|m| m.vertices.len()).sum::<usize>(),
+                        "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon,
+                        "ganchos": bon.ganchos.iter().map(|g| g.nome.clone()).collect::<Vec<_>>(), "relatorio": imp.relatorio } })
+                }
+                _ => bail!("modo de importação: modelo ou animacoes (o \"tudo\" é modelos/novo)"),
+            });
+        }
         match modo {
             "animacoes" => self.importar_acoes(gov, versao, rascunho, &smd, glb).await,
+            // B383: equipamento (arma, asa, voo): o cliente carrega o .ecm com as peles do próprio .smd
+            // (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`), não a `<.ecm>.ski` do NPC — o GLB vai para a
+            // 1ª pele do .smd, e as outras saem da lista (o GLB exportado trouxe as malhas de todas).
+            "modelo" if equipamento => {
+                let ecm_lido = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+                if !ecm_lido.peles_adicionais.is_empty() {
+                    bail!("o .ecm tem {} pele(s) adicional(is) além das do .smd: importe com \"tudo\"", ecm_lido.peles_adicionais.len());
+                }
+                let bytes_smd = self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?;
+                let mut modelo = pw_data_loader::smd::Smd::ler(&bytes_smd).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+                let primeira = modelo.peles.first().cloned().with_context(|| format!("{smd} não cita pele: importe com \"tudo\""))?;
+                let destino = ao_lado(&smd, &primeira);
+                let mut r = self.importar_pele(gov, versao, rascunho, &smd, &destino, glb).await?;
+                if modelo.peles.len() > 1 {
+                    let tiradas: Vec<String> = modelo.peles.drain(1..).collect();
+                    let novo = modelo.escrever();
+                    pw_data_loader::smd::Smd::ler(&novo).context("o .smd editado não relê")?;
+                    {
+                        let trava = self.trava(rascunho);
+                        let _guarda = trava.lock().await;
+                        gov.gravar_arquivo(versao, rascunho, &smd, novo, "cliente").await?;
+                    }
+                    r["peles_tiradas_do_smd"] = json!(tiradas);
+                }
+                r["pele"] = json!(destino);
+                Ok(r)
+            }
             "modelo" => {
                 let destino = format!("{}.ski", caminho.rsplit_once('.').map_or(caminho, |x| x.0));
                 if self.bytes_do_cliente(gov, versao, &destino, Some(rascunho)).await.is_ok() {
@@ -5199,4 +5261,197 @@ impl Estudio {
         Ok(json!({ "id": id, "dropado_de": dropado_de, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
             "loja_gold": loja_gold, "forjado_por": forjado_por }))
     }
+
+    /// Os efeitos de refino do `EQUIPMENT_ADDON` do rascunho (os de tratador `refine_*` no GS,
+    /// `pw_data_loader::addons::tratador_do_id`), cada um com o que soma, o valor de +1 a +12
+    /// (`refino::valor_do_refino`, `refine_factor` de `equip_item.cpp:208-223`) e quantas armas,
+    /// armaduras e acessórios do rascunho o usam no `levelup_addon` (o GS não restringe a família:
+    /// `get_item_refine_addon`, `itemdataman.cpp:205-228`, devolve o campo da peça como está).
+    pub async fn refinos(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Value> {
+        use pw_data_loader::refino::{efeito_de_refino, valor_do_refino, FATOR_DE_REFINO};
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        // Uso por família: id do efeito → [arma, armadura, acessório].
+        let mut uso: HashMap<i32, [u32; 3]> = HashMap::new();
+        for (k, tabela) in ["WEAPON_ESSENCE", "ARMOR_ESSENCE", "DECORATION_ESSENCE"].into_iter().enumerate() {
+            let Ok(t) = e.tabela(tabela) else { continue };
+            let Some((o, _)) = campos_que(t, |n| n == "levelup_addon").into_iter().next() else { continue };
+            for b in &t.registros {
+                let id = i32_em(b, o);
+                if id > 0 {
+                    uso.entry(id).or_default()[k] += 1;
+                }
+            }
+        }
+        let t = e.tabela("EQUIPMENT_ADDON")?;
+        let param = campos_que(t, |n| n == "param1").into_iter().next().map(|(o, _)| o);
+        let mut efeitos = Vec::new();
+        for (i, b) in t.registros.iter().enumerate() {
+            let Some(id) = t.id(i) else { continue };
+            let Some(tratador) = pw_data_loader::addons::tratador_do_id(id as u32) else { continue };
+            let Some(m) = efeito_de_refino(tratador) else { continue };
+            let p = param.map_or(0, |o| i32_em(b, o));
+            let u = uso.get(&id).copied().unwrap_or_default();
+            efeitos.push(json!({
+                "id": id, "indice": i, "nome": nome_do_registro(t, i), "tratador": tratador, "param": p,
+                "soma": m.soma, "evidencia": m.evidencia,
+                "niveis": (1..=12).map(|n| valor_do_refino(p, n)).collect::<Vec<_>>(),
+                "usado_por": { "arma": u[0], "armadura": u[1], "acessorio": u[2] },
+            }));
+        }
+        Ok(json!({ "fator": FATOR_DE_REFINO[1..].to_vec(), "efeitos": efeitos }))
+    }
+    /// B383: o que há da pele de armadura/moda `realname` para um gênero — os grupos de pele do binário
+    /// ([`GRUPOS_DE_PELE`]), os três `.ski` de cada um (publicado ou rascunho), os corpos de cada grupo e quantos
+    /// registros de armadura e moda usam o mesmo `realname` (trocar a pele muda todos).
+    pub async fn pele_do_equipamento(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, realname: &str, genero: u8) -> Result<Value> {
+        let realname = nome_de_pele(realname)?;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let mut grupos = Vec::new();
+        for g in grupos_do_genero(genero) {
+            let mut arquivos = Vec::new();
+            for c in caminhos_da_pele(&realname, genero, g) {
+                let existe = self.bytes_do_cliente(gov, versao, &c, rascunho).await.is_ok();
+                arquivos.push(json!({ "caminho": c, "existe": existe }));
+            }
+            let corpos: Vec<Value> = corpos_do_grupo(genero, g).into_iter().map(|(k, nome, ecm)| json!({ "classe": k, "nome": nome, "ecm": ecm })).collect();
+            grupos.push(json!({ "grupo": g, "arquivos": arquivos, "corpos": corpos }));
+        }
+        let mut usado_por = Vec::new();
+        for tabela in ["ARMOR_ESSENCE", "FASHION_ESSENCE"] {
+            let Ok(t) = e.tabela(tabela) else { continue };
+            for i in 0..t.registros.len() {
+                let Ok(r) = t.ler(i) else { continue };
+                if texto_do_campo(&r, "realname") == realname {
+                    usado_por.push(json!({ "tabela": tabela, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i) }));
+                }
+            }
+        }
+        Ok(json!({ "realname": realname, "genero": genero, "grupos": grupos, "usado_por": usado_por }))
+    }
+
+    /// B383: importa um GLB como a pele de armadura/moda `realname` do grupo `grupo` (gênero `genero`): os três `.ski`
+    /// que o cliente carrega (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: `一级`, `二级`, `三级`; falta um → a peça não
+    /// aparece) recebem a mesma malha. Os ossos casam pelo nome com o esqueleto do corpo de referência (`classe`, ou o
+    /// 1º do grupo) e têm de existir no de todas as classes do grupo (a mesma pele serve a todas — `BindSkeleton`
+    /// recusa a pele com osso que falta, `A3DSkin.cpp:851-856`). `validar` só confere e devolve o relatório.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn importar_pele_do_equipamento(
+        &self, gov: &Governanca, versao: &str, rascunho: i64, realname: &str, genero: u8, grupo: &str, classe: Option<usize>, validar: bool, glb: Vec<u8>,
+    ) -> Result<Value> {
+        let realname = nome_de_pele(realname)?;
+        if !grupos_do_genero(genero).contains(&grupo) {
+            bail!("grupo de pele \"{grupo}\" não existe para o gênero {genero} (grupos: {})", grupos_do_genero(genero).join(", "));
+        }
+        let corpos = corpos_do_grupo(genero, grupo);
+        let referencia = match classe {
+            Some(k) => corpos.iter().find(|c| c.0 == k).with_context(|| format!("a classe {k} não usa o grupo {grupo}"))?,
+            None => corpos.first().context("grupo sem corpo")?,
+        };
+        let (bon_ref, _) = self.esqueleto_do_corpo(gov, versao, Some(rascunho), &referencia.2).await?;
+        let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon_ref).map_err(anyhow::Error::msg)?;
+        let mut relatorio = imp.relatorio.clone();
+        // A pele vale para todas as classes do grupo: cada osso dela tem de existir no esqueleto de cada corpo.
+        let mut faltas = Vec::new();
+        for (k, nome, ecm) in &corpos {
+            match self.esqueleto_do_corpo(gov, versao, Some(rascunho), ecm).await {
+                Ok((b, _)) => {
+                    let falta: Vec<&String> = imp.ski.ossos.iter().filter(|o| !b.ossos.iter().any(|x| &x.nome == *o)).collect();
+                    if !falta.is_empty() {
+                        faltas.push(format!("{nome} (classe {k}): {}", falta.iter().map(|x| x.as_str()).collect::<Vec<_>>().join(", ")));
+                    }
+                }
+                Err(x) => relatorio.push(format!("corpo de {nome} não lido ({x}) — não conferido")),
+            }
+        }
+        if !faltas.is_empty() {
+            bail!("ossos da pele que faltam no esqueleto de outra classe do grupo {grupo} (o cliente recusaria a pele nela): {}", faltas.join("; "));
+        }
+        let destinos = caminhos_da_pele(&realname, genero, grupo);
+        let bytes = imp.ski.escrever();
+        pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
+        let resumo = json!({ "arquivos": destinos, "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+            "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(), "ossos": imp.ski.ossos.len(),
+            "texturas": imp.ski.texturas, "esqueleto": referencia.2, "corpos_conferidos": corpos.len(), "relatorio": relatorio });
+        if validar {
+            return Ok(json!({ "validacao": true, "resultado": resumo }));
+        }
+        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &destinos[0], imp.texturas_novas).await?;
+        {
+            let trava = self.trava(rascunho);
+            let _guarda = trava.lock().await;
+            for d in &destinos {
+                gov.gravar_arquivo(versao, rascunho, d, bytes.clone(), "cliente").await?;
+            }
+        }
+        let mut r = resumo;
+        r["texturas_gravadas"] = json!(texturas_gravadas);
+        r["niveis"] = json!("a mesma malha nos três níveis de detalhe (一级, 二级, 三级)");
+        Ok(json!({ "resultado": r }))
+    }
+
+    /// O esqueleto do corpo do jogador (`<corpo>.ecm` → `.smd` → `.bon`), com o rascunho.
+    pub async fn esqueleto_do_corpo(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, ecm: &str) -> Result<(pw_data_loader::bon::Bon, String)> {
+        let m = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, ecm, rascunho).await?).with_context(|| format!("{ecm}: .ecm ilegível"))?;
+        let smd = m.smd.trim().replace('/', "\\");
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, rascunho).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        let caminho_bon = ao_lado(&smd, &c.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, rascunho).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        Ok((bon, caminho_bon))
+    }
+}
+
+/// B383: o grupo de pele de armadura e moda por `classe × 2 + gênero` — a tabela que o `ChangeArmor` do cliente usa
+/// (`elementclient.exe` 1.5.5 BR: função 0x4e1ff0, ponteiros em 0xdd83f0, chamada em 0x4e28f7 com o `realname` em
+/// +0x4c e o `equip_location` 1–8 em +0x16c): `Models\Players\装备\{男|女}\<realname>\<grupo><realname>`. O fonte
+/// (`EC_Player.cpp:282-313`) tem "Evolved\" no lugar de "Models\" — vale o binário. A outra tabela do binário, por classe
+/// (0xdd8450, função 0x4e2020), só serve à pele padrão (sem equipamento). Vazio = combinação que não existe (Feiticeira
+/// só feminina, Bárbaro só masculino). O 1.2.6 tem as mesmas strings (`elementclient.exe` 1.2.6, 0x4b104c-0x4b10b8).
+pub const GRUPOS_DE_PELE: [&str; 24] = [
+    "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "", "妖精", "妖兽", "", "男通用", "女通用",
+    "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用",
+];
+
+/// B383: o corpo de cada `classe × 2 + gênero` (`elementclient.exe` 1.5.5 BR, 0x9cdc04-0x9ce4b8:
+/// `Models\Players\形象\<nome>\躯干\<nome>.ecm`; `EC_Player.cpp:210-237`).
+pub const CORPOS: [&str; 24] = [
+    "武侠男", "武侠女", "法师男", "法师女", "巫师男", "巫师女", "", "妖精", "妖兽男", "", "刺客男", "刺客女",
+    "羽芒男", "羽芒女", "羽灵男", "羽灵女", "剑灵男", "剑灵女", "魅灵男", "魅灵女", "夜影男", "夜影女", "月仙男", "月仙女",
+];
+
+/// Os grupos de pele que existem para um gênero (0 masculino, 1 feminino), na ordem da tabela.
+pub fn grupos_do_genero(genero: u8) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    for (i, g) in GRUPOS_DE_PELE.iter().enumerate() {
+        if i % 2 == genero as usize && !g.is_empty() && !v.contains(g) {
+            v.push(g);
+        }
+    }
+    v
+}
+
+/// As classes (índice, nome do corpo, `.ecm`) que usam o grupo `grupo` no gênero `genero`.
+pub fn corpos_do_grupo(genero: u8, grupo: &str) -> Vec<(usize, &'static str, String)> {
+    (0..12)
+        .filter(|k| GRUPOS_DE_PELE[k * 2 + genero as usize] == grupo && !CORPOS[k * 2 + genero as usize].is_empty())
+        .map(|k| {
+            let n = CORPOS[k * 2 + genero as usize];
+            (k, n, format!("Models\\Players\\形象\\{n}\\躯干\\{n}.ecm"))
+        })
+        .collect()
+}
+
+/// Os três `.ski` de uma peça (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: sufixos 一级/二级/三级 fora do corpo e da cabeça).
+pub fn caminhos_da_pele(realname: &str, genero: u8, grupo: &str) -> [String; 3] {
+    let g = if genero == 0 { "男" } else { "女" };
+    ["一级", "二级", "三级"].map(|n| format!("Models\\Players\\装备\\{g}\\{realname}\\{grupo}{realname}{n}.ski"))
+}
+
+/// O `realname` vira pasta e nome de arquivo: sem barra, sem ponto inicial, em GBK.
+fn nome_de_pele(realname: &str) -> Result<String> {
+    let r = realname.trim();
+    if r.is_empty() || r.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) || r.starts_with('.') {
+        bail!("realname inválido para nome de pasta: \"{realname}\"");
+    }
+    nomes::gbk_de_unicode(r).context("o realname tem caracteres que não existem em GBK")?;
+    Ok(r.to_string())
 }

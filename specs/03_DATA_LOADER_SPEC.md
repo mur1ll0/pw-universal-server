@@ -753,10 +753,15 @@ formatos do modelo (`.ski`, `.bon`, `.stck`, `.smd`) têm escritor conferido no 
 
 **Importar glTF → `.ski` (B289, S6):** `importar::ski_do_glb(glb, esqueleto)` desfaz `glb::do_modelo`:
 - **eixos:** `z` negado em posição e normal, e a ordem de cada triângulo invertida;
-- **pele:** cada primitiva com `JOINTS_0`/`WEIGHTS_0` vira uma malha de pele, com pesos normalizados (3 gravados e o
-  4º implícito). `JOINTS_1` é relatado e ignorado;
+- **pele:** cada primitiva com `JOINTS_0`/`WEIGHTS_0` vira uma malha de pele (3 pesos gravados e o 4º implícito).
+  B383: os pesos saem como o motor lê (`A3DSkinMesh.cpp:1036-1066`) — não nulos na frente (o motor para no 1º zero),
+  no máximo 4 (as maiores de `JOINTS_0` + `JOINTS_1`), soma 1; sem peso → a vaga do esqueleto; tudo no relatório
+  (`importar::RelatorioDePesos`). A ordem entre não nulos fica a do glTF (a ida e volta dos modelos do cliente segue
+  exata);
 - **ossos:** casados pelo nome no `.bon` e gravados como `.ski` v9 (nomes). O nó "esqueleto" é a vaga que
-  `BindSkeleton` reserva (índice = número de nomes);
+  `BindSkeleton` reserva (índice = número de nomes). B383: osso que o `.bon` não tem passa os pesos ao ancestral mais
+  próximo (no glTF) que existe — sem ancestral, recusa; pose de repouso do glTF (IBM) diferente da do `.bon` → os vértices
+  são repostos na do `.bon` (`v' = Σ wᵢ · inversa(matBoneInit)ᵢ · IBMᵢ · v`, `importar::destino_das_juntas`);
 - **material:** com `extras.angelica` (agora gravado pelo exportador) os valores voltam exatos. Sem ele valem os
   padrões medidos (`ski::testes::medir_padroes`): em 83% dos 28.421 materiais do 1.5.5, ambiente = difusa, emissiva e
   especular (0,0,0,1) e brilho 10. O `fMinWeight` é 0 em todos os 24.165 `.ski`, e o motor só o lê e regrava;

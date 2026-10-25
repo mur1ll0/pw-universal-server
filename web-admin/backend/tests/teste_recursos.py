@@ -157,6 +157,27 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
                                     params={"rascunho": 3, "caminho": "models\\a.ecm", "modo": "tudo"}, content=glb,
                                     headers={**csrf, "content-type": "application/octet-stream"})
         self.assertEqual(r.status_code, 422)
+        # B383: equipamento (1ª pele do .smd) e só conferir; a pele de armadura/moda (GLB grande passa).
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/importar_glb",
+                                    params={"rascunho": 3, "caminho": "models\\a.ecm", "modo": "modelo", "como": "equipamento", "validar": "true"},
+                                    content=glb, headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"], {"rascunho": ["3"], "caminho": ["models\\a.ecm"], "modo": ["modelo"],
+                                                                 "como": ["equipamento"], "validar": ["true"]})
+        r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/importar_glb",
+                                    params={"rascunho": 3, "caminho": "models\\a.ecm", "modo": "modelo", "como": "npc"}, content=glb,
+                                    headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 422)
+        grande = b"glTF" + bytes(20000)
+        r = await self.cliente.post("/api/realms/realm_155/estudio/equipamentos/pele",
+                                    params={"rascunho": 3, "realname": "紫金胸甲", "genero": 0, "grupo": "男通用", "validar": "true"},
+                                    content=grande, headers={**csrf, "content-type": "application/octet-stream"})
+        self.assertEqual(r.status_code, 200)
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"], len(p["corpo"])), ("/admin/1.5.5/estudio/equipamentos/pele",
+                         {"rascunho": ["3"], "realname": ["紫金胸甲"], "genero": ["0"], "grupo": ["男通用"], "validar": ["true"]}, len(grande)))
+        r = await self.cliente.get("/api/realms/realm_155/estudio/equipamentos/pele", params={"realname": "紫金胸甲", "genero": 2})
+        self.assertEqual(r.status_code, 422)
         r = await self.cliente.post("/api/realms/realm_155/estudio/modelos/sem_uso", params={"rascunho": 3},
                                     json={"caminho": "models\\a.ecm"}, headers=csrf)
         self.assertEqual(r.status_code, 200)

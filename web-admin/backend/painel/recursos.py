@@ -349,6 +349,12 @@ def registrar_estudio(app):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/origens/{id_item}", {"rascunho": rascunho})
 
+    # Efeitos de refino (tratador refine_* do GS): o que somam, valor de +1 a +12 e uso por família.
+    @app.get("/api/realms/{realm}/estudio/refinos")
+    async def estudio_refinos(realm: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/refinos", {"rascunho": rascunho})
+
     @app.put("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_editar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
@@ -920,13 +926,17 @@ def registrar_reinicio(app):
 
     # B298: um modelo inteiro (.bon, .ski, .smd, texturas, ações) a partir de um GLB.
     @app.post("/api/realms/{realm}/estudio/modelos/novo")
-    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request, molde: str | None = None):
+    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request, molde: str | None = None,
+                                  ganchos: str | None = None, validar: bool = False):
         v = await _versao_do_realm(requisicao, realm)
         corpo = await requisicao.body()
         if not corpo:
             raise HTTPException(422, "Arquivo vazio.")
+        # B383: `ganchos` = o esqueleto tem de ter um deles (arma CC_weapon/CC_qiu, asa CC_chibang, voo CC_feijian);
+        # `validar` = só o relatório, sem gravar.
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/novo",
-                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100], "molde": molde[:500] if molde else None}, corpo=corpo,
+                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100], "molde": molde[:500] if molde else None,
+                                "ganchos": ganchos[:200] if ganchos else None, "validar": "true" if validar else None}, corpo=corpo,
                                tipo="application/octet-stream")
 
     # B295: as animações de um GLB como ações do .smd.
@@ -941,15 +951,43 @@ def registrar_reinicio(app):
 
     # B380: GLB no modelo do monstro — só o modelo (malha e texturas) ou só as animações, com o mesmo esqueleto.
     @app.post("/api/realms/{realm}/estudio/modelos/importar_glb")
-    async def estudio_importar_glb(realm: str, rascunho: int, caminho: str, modo: str, requisicao: Request):
+    async def estudio_importar_glb(realm: str, rascunho: int, caminho: str, modo: str, requisicao: Request,
+                                   como: str | None = None, validar: bool = False):
         v = await _versao_do_realm(requisicao, realm)
         if modo not in ("modelo", "animacoes"):
             raise HTTPException(422, "Modo inválido.")
+        if como not in (None, "equipamento"):
+            raise HTTPException(422, "Parâmetro como inválido.")
         corpo = await requisicao.body()
         if not corpo:
             raise HTTPException(422, "Arquivo vazio.")
+        # B383: como=equipamento → a 1ª pele do .smd (arma, asa, voo); validar → só o relatório.
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/importar_glb",
-                               {"rascunho": rascunho, "caminho": caminho[:500], "modo": modo}, corpo=corpo,
+                               {"rascunho": rascunho, "caminho": caminho[:500], "modo": modo, "como": como,
+                                "validar": "true" if validar else None}, corpo=corpo,
+                               tipo="application/octet-stream")
+
+    # B383: a pele de armadura/moda (realname): grupos, arquivos, corpos e quem usa; e o GLB → os três .ski.
+    @app.get("/api/realms/{realm}/estudio/equipamentos/pele")
+    async def estudio_pele_do_equipamento(realm: str, realname: str, genero: int, requisicao: Request, rascunho: int | None = None):
+        if genero not in (0, 1):
+            raise HTTPException(422, "Gênero inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/equipamentos/pele",
+                               {"realname": realname[:100], "genero": genero, "rascunho": rascunho})
+
+    @app.post("/api/realms/{realm}/estudio/equipamentos/pele")
+    async def estudio_importar_pele_do_equipamento(realm: str, rascunho: int, realname: str, genero: int, grupo: str, requisicao: Request,
+                                                   classe: int | None = None, validar: bool = False):
+        if genero not in (0, 1):
+            raise HTTPException(422, "Gênero inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if not corpo:
+            raise HTTPException(422, "Arquivo vazio.")
+        return await _repassar("POST", f"/admin/{v}/estudio/equipamentos/pele",
+                               {"rascunho": rascunho, "realname": realname[:100], "genero": genero, "grupo": grupo[:20],
+                                "classe": classe, "validar": "true" if validar else None}, corpo=corpo,
                                tipo="application/octet-stream")
 
     # B380: depois de trocar o modelo inteiro, os arquivos do antigo que nada mais usa saem no rascunho.
@@ -981,13 +1019,16 @@ def registrar_reinicio(app):
 
     @app.get("/api/realms/{realm}/estudio/modelos/glb")
     async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None,
-                                 rascunho: int | None = None, todas: bool = False):
+                                 rascunho: int | None = None, todas: bool = False, como: str | None = None, peles: str | None = None):
         v = await _versao_do_realm(requisicao, realm)
+        if como not in (None, "equipamento"):
+            raise HTTPException(422, "Parâmetro como inválido.")
         # B374: com o rascunho, o GLB mostra os arquivos de modelo dele (ex.: o modelo importado de um GLB).
         # B380: `todas` = todas as ações-base do .smd (o GLB que vai para o Blender).
+        # B383: `como=equipamento` (peles do .smd) e `peles` (armadura/moda sobre o corpo, separadas por |).
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb",
                                {"caminho": caminho[:500], "acao": acao[:200] if acao else None, "rascunho": rascunho,
-                                "todas": "true" if todas else None})
+                                "todas": "true" if todas else None, "como": como, "peles": peles[:4000] if peles else None})
 
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")

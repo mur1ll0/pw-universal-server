@@ -44,8 +44,9 @@ pub const TABELA_DE_REFINO: [[f32; 4]; 12] = [
     [0.05, 0.0, 0.0, 1.0],
 ];
 
-/// `refine_factor[]` (`equip_item.cpp:208-223`): o multiplicador do parâmetro por nível.
-pub const FATOR_DE_REFINO: [f32; 13] = [0.0, 1.0, 2.0, 3.05, 4.3, 5.75, 7.55, 9.95, 13.0, 17.05, 22.3, 29.0, 37.5];
+/// `refine_factor[]` (`equip_item.cpp:208-223`): o multiplicador do parâmetro por nível (um só
+/// lugar, no `pw_data_loader::refino`, que o Estúdio também usa).
+pub use pw_data_loader::refino::FATOR_DE_REFINO;
 
 /// `weapon_slot_material_count[2][20]` (`equip_item.cpp:1385-1386`).
 const MATERIAL_DO_FURO_NA_ARMA: [[i32; 20]; 2] = [

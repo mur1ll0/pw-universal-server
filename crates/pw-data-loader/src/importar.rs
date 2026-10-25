@@ -648,6 +648,172 @@ pub fn esqueleto_do_glb(glb: &[u8]) -> Result<(Bon, Vec<String>), String> {
 }
 
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
+/// B383: para onde vai uma junta da skin do glTF no esqueleto do jogo.
+struct DestinoDaJunta {
+    /// O osso do `.bon` (o da junta, ou o ancestral mais próximo que existe); `None` = a vaga do esqueleto.
+    osso: Option<String>,
+    /// `C = (pose de repouso do osso no .bon) × IBM do glTF`, em glTF: leva o vértice da pose de repouso do glTF à do
+    /// `.bon`. `None` quando é a identidade (o caso do GLB exportado pelo Estúdio).
+    correcao: Option<[f32; 16]>,
+}
+
+/// B383: o que a correção dos pesos fez num GLB (relatório da importação).
+#[derive(Default)]
+pub struct RelatorioDePesos {
+    /// Vértices com peso zero antes de um não nulo — o motor para no 1º peso zero (`A3DSkinMesh.cpp:1040-1041`) e
+    /// perderia os seguintes; os não nulos vão para a frente.
+    pub reordenados: usize,
+    /// Vértices com soma dos pesos diferente de 1 (mais de 0,001): o motor não completa a soma — só o 4º peso é
+    /// implícito (`1 − soma`, e só quando os 3 primeiros são não nulos, `A3DSkinMesh.cpp:1053-1066`); o vértice encolheria.
+    pub renormalizados: usize,
+    /// Vértices com mais de 4 influências (o `A3DBVERTEX3` tem 4 ossos, `A3DVertex.h:184-191`): ficam as 4 maiores.
+    pub cortados: usize,
+    pub maior_peso_cortado: f32,
+    /// Vértices sem peso nenhum: presos à vaga do esqueleto (andam com o modelo inteiro; sem peso o motor os poria na origem).
+    pub sem_peso: usize,
+    /// Ossos do glTF que não existem no `.bon` → ancestral que existe (o `BindSkeleton` recusaria a pele inteira,
+    /// `A3DSkin.cpp:851-856`; no jogo só os ossos do `.bon` se movem, então o osso extra andaria preso ao ancestral).
+    pub reatribuidos: Vec<(String, String)>,
+    /// Ossos cuja pose de repouso no glTF difere da do `.bon` (o motor usa a do `.bon`, `A3DSkinModel.cpp:1341`).
+    pub poses_corrigidas: Vec<String>,
+    pub reposicionados: usize,
+}
+
+impl RelatorioDePesos {
+    fn linhas(&self) -> Vec<String> {
+        let mut l = Vec::new();
+        if self.reordenados > 0 {
+            l.push(format!("pesos: {} vértice(s) com peso zero antes de um não nulo — os não nulos foram para a frente (o motor para no 1º zero)", self.reordenados));
+        }
+        if self.renormalizados > 0 {
+            l.push(format!("pesos: {} vértice(s) com soma diferente de 1 — normalizados (no jogo o vértice encolheria)", self.renormalizados));
+        }
+        if self.cortados > 0 {
+            l.push(format!(
+                "pesos: {} vértice(s) com mais de 4 ossos — ficaram os 4 maiores (maior peso cortado {:.3}); no Blender: Weights → Limit Total 4",
+                self.cortados, self.maior_peso_cortado
+            ));
+        }
+        if self.sem_peso > 0 {
+            l.push(format!("pesos: {} vértice(s) sem peso — presos ao modelo inteiro; no Blender, dê peso a eles", self.sem_peso));
+        }
+        for (de, para) in &self.reatribuidos {
+            l.push(format!(
+                "ossos: \"{de}\" não existe no esqueleto do jogo — os pesos dele foram para \"{para}\", o ancestral que existe (no jogo ele andaria preso a esse osso)"
+            ));
+        }
+        if !self.poses_corrigidas.is_empty() {
+            l.push(format!(
+                "pose de repouso diferente da do jogo em {} osso(s) ({}) — {} vértice(s) repostos na pose do esqueleto do jogo; no Blender, não mude a pose de repouso (Rest Position) do esqueleto exportado",
+                self.poses_corrigidas.len(),
+                self.poses_corrigidas.iter().take(8).cloned().collect::<Vec<_>>().join(", "),
+                self.reposicionados
+            ));
+        }
+        l
+    }
+}
+
+/// B383: o destino de cada junta da skin (na ordem de `joints`). Um osso que não existe no `.bon` vai para o ancestral
+/// mais próximo (no glTF) que existe; sem nenhum, a importação é recusada com o nome. A correção da pose usa a pose de
+/// repouso do `.bon` (`inversa(matBoneInit)`, como o exportador, `glb::do_modelo`) e a IBM do glTF da junta — ou, se o
+/// osso foi reatribuído, a do ancestral (o osso extra anda preso a ele).
+fn destino_das_juntas(g: &Glb, skin: &Value, nos: &[Value], pais: &[Option<usize>], esqueleto: &Bon, rel: &mut RelatorioDePesos) -> Result<Vec<DestinoDaJunta>, String> {
+    let nome_do_no = |i: usize| nos.get(i).and_then(|n| n["name"].as_str()).unwrap_or("").to_string();
+    let juntas: Vec<usize> = skin["joints"].as_array().ok_or("skin sem joints")?.iter().map(|x| x.as_u64().unwrap_or(u64::MAX) as usize).collect();
+    let ibm: Vec<Vec<f32>> = match skin["inverseBindMatrices"].as_u64() {
+        Some(a) => g.acessor(a as usize)?,
+        None => Vec::new(),
+    };
+    // A IBM de um nó: a da skin, se ele é junta; senão, a inversa da matriz dele no mundo.
+    let ibm_do_no = |no: usize| -> Option<[f32; 16]> {
+        if let Some(k) = juntas.iter().position(|x| *x == no) {
+            if let Some(m) = ibm.get(k).filter(|m| m.len() == 16) {
+                return Some(std::array::from_fn(|i| m[i]));
+            }
+        }
+        crate::glb::inversa(&mundo(no, nos, pais))
+    };
+    let mut r = Vec::with_capacity(juntas.len());
+    for &no in &juntas {
+        let nome = nome_do_no(no);
+        if nome == "esqueleto" {
+            r.push(DestinoDaJunta { osso: None, correcao: None });
+            continue;
+        }
+        let mut atual = Some(no);
+        let mut achado = None;
+        while let Some(k) = atual {
+            if let Some(o) = esqueleto.ossos.iter().position(|o| o.nome == nome_do_no(k)) {
+                achado = Some((k, o));
+                break;
+            }
+            atual = pais.get(k).copied().flatten();
+        }
+        let Some((no_osso, o)) = achado else {
+            return Err(format!(
+                "o osso \"{nome}\" não existe no esqueleto do jogo e não tem ancestral que exista — no Blender, renomeie o grupo de vértices para um osso do esqueleto exportado ou passe os pesos para um deles"
+            ));
+        };
+        let osso = esqueleto.ossos[o].nome.clone();
+        if no_osso != no && !rel.reatribuidos.iter().any(|x| x.0 == nome) {
+            rel.reatribuidos.push((nome.clone(), osso.clone()));
+        }
+        let repouso = crate::glb::inversa(&crate::glb::matriz_gltf(&esqueleto.ossos[o].inicial));
+        let correcao = match (repouso, ibm_do_no(no_osso)) {
+            (Some(rp), Some(ib)) => {
+                let c = multiplicar_cc(&rp, &ib);
+                let identidade = c.iter().enumerate().all(|(i, x)| (x - if i % 5 == 0 { 1.0 } else { 0.0 }).abs() < 1e-3);
+                if identidade {
+                    None
+                } else {
+                    if !rel.poses_corrigidas.contains(&osso) {
+                        rel.poses_corrigidas.push(osso.clone());
+                    }
+                    Some(c)
+                }
+            }
+            _ => None,
+        };
+        r.push(DestinoDaJunta { osso: Some(osso), correcao });
+    }
+    Ok(r)
+}
+
+/// B383: os pesos de um vértice como o motor lê (`A3DSkinMesh.cpp:1036-1066`): do maior para o menor, zeros no fim, no
+/// máximo 4, somando 1 (os 3 primeiros gravados, o 4º implícito). Sem peso → a vaga do esqueleto (255) com peso 1.
+/// Devolve os 3 pesos gravados e os 4 índices; `alvos` fica com a lista final (para a correção da pose).
+fn ajustar_pesos(alvos: &mut Vec<(u8, f32, Option<&[f32; 16]>)>, rel: &mut RelatorioDePesos) -> ([f32; 3], [u8; 4]) {
+    // Os zeros já saíram (só entram pesos > 0), então os não nulos ficam na frente — é o que o motor exige; a ordem
+    // entre eles não importa. Só com mais de 4 se ordena, para ficar com os 4 maiores.
+    alvos.retain(|x| x.1 > 0.0);
+    if alvos.is_empty() {
+        rel.sem_peso += 1;
+        alvos.push((255, 1.0, None));
+    }
+    // A soma que veio do glTF (antes do corte): diferente de 1 é peso faltando ou sobrando no Blender.
+    if (alvos.iter().map(|x| x.1).sum::<f32>() - 1.0).abs() > 1e-3 {
+        rel.renormalizados += 1;
+    }
+    if alvos.len() > 4 {
+        alvos.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        rel.cortados += 1;
+        rel.maior_peso_cortado = rel.maior_peso_cortado.max(alvos[4].1);
+        alvos.truncate(4);
+    }
+    let soma: f32 = alvos.iter().map(|x| x.1).sum();
+    alvos.iter_mut().for_each(|x| x.1 /= soma);
+    let mut w = [0f32; 3];
+    let mut o = [alvos[0].0; 4];
+    for (i, x) in alvos.iter().enumerate() {
+        o[i] = x.0;
+        if i < 3 {
+            w[i] = x.1;
+        }
+    }
+    (w, o)
+}
+
 pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let g = abrir(glb)?;
     let j = &g.json;
@@ -661,6 +827,8 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let mut texturas_novas: Vec<TexturaNova> = Vec::new();
     let mut malhas = Vec::new();
     let mut rigidas: Vec<MalhaRigida> = Vec::new();
+    // B383: o que a correção dos pesos fez, para o relatório.
+    let mut pesos = RelatorioDePesos::default();
     // A mãe de cada nó (pelos `children`), para a matriz no mundo e para achar o osso acima de uma malha sem pele.
     let mut pais: Vec<Option<usize>> = vec![None; nos.len()];
     for (i, n) in nos.iter().enumerate() {
@@ -711,6 +879,11 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                 })
                 .collect(),
         };
+        // B383: o destino de cada junta da skin no esqueleto do jogo e a correção da pose de repouso (ver `destino_das_juntas`).
+        let destinos: Vec<DestinoDaJunta> = match no["skin"].as_u64() {
+            None => Vec::new(),
+            Some(si) => destino_das_juntas(&g, &j["skins"][si as usize], &nos, &pais, esqueleto, &mut pesos)?,
+        };
         for (pi, prim) in malha["primitives"].as_array().cloned().unwrap_or_default().iter().enumerate() {
             let nome = if pi == 0 { nome_malha.clone() } else { format!("{nome_malha}_{pi}") };
             if prim["mode"].as_u64().unwrap_or(4) != 4 {
@@ -727,9 +900,8 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                 relatorio.push(format!("{nome}: sem JOINTS_0/WEIGHTS_0 — deixada de fora"));
                 continue;
             }
-            if at.get("JOINTS_1").is_some() {
-                relatorio.push(format!("{nome}: mais de 4 ossos por vértice (JOINTS_1) — o formato tem 4; os extras foram ignorados e os pesos renormalizados"));
-            }
+            // B383: o 2º grupo de influências (JOINTS_1/WEIGHTS_1) entra na escolha das 4 maiores.
+            let (js1, ws1) = (pega("JOINTS_1")?.unwrap_or_default(), pega("WEIGHTS_1")?.unwrap_or_default());
             if nor.is_none() {
                 relatorio.push(format!("{nome}: sem NORMAL — normais zeradas"));
             }
@@ -773,52 +945,79 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
             };
             let mut vertices = Vec::with_capacity(pos.len());
             for k in 0..if rigida.is_some() { 0 } else { pos.len() } {
-                let mut ossos_v = [0u8; 4];
-                let mut w = [0f32; 4];
-                for c in 0..4 {
-                    let peso = ws[k].get(c).copied().unwrap_or(0.0);
-                    if peso <= 0.0 {
-                        continue;
+                // As influências do vértice (junta, peso) dos dois grupos, no destino de cada junta.
+                let mut inf: Vec<(usize, f32)> = Vec::with_capacity(8);
+                let (mut viu_zero, mut zero_no_meio) = (false, false);
+                for (jj, ww) in [(&js, &ws), (&js1, &ws1)] {
+                    let (Some(jv), Some(wv)) = (jj.get(k), ww.get(k)) else { continue };
+                    for c in 0..4 {
+                        let peso = wv.get(c).copied().unwrap_or(0.0);
+                        if peso > 0.0 {
+                            // Só se relata o zero no meio quando o peso de depois conta: o 4º peso que o exportador grava é
+                            // `1 − soma`, e o arredondamento do `f32` deixa ~6e-8 depois de um zero (medido: 26 vértices
+                            // da 紫金胸甲 do cliente) — invisível no jogo.
+                            zero_no_meio |= viu_zero && peso > 1e-5;
+                            inf.push((jv.get(c).copied().unwrap_or(0.0) as usize, peso));
+                        } else {
+                            viu_zero = true;
+                        }
                     }
-                    let junta = js[k].get(c).copied().unwrap_or(0.0) as usize;
-                    let alvo = match juntas.get(junta) {
-                        None => return Err(format!("{nome}: junta {junta} fora da skin")),
-                        Some(None) => None,
-                        Some(Some(n)) => {
-                            if !esqueleto.ossos.iter().any(|o| &o.nome == n) {
-                                return Err(format!("{nome}: o osso \"{n}\" não existe no esqueleto"));
+                }
+                if zero_no_meio {
+                    pesos.reordenados += 1;
+                }
+                let mut alvos: Vec<(u8, f32, Option<&[f32; 16]>)> = Vec::with_capacity(inf.len());
+                for (junta, peso) in inf {
+                    let d = destinos.get(junta).ok_or(format!("{nome}: junta {junta} fora da skin"))?;
+                    let indice = match &d.osso {
+                        None => 255u8, // a vaga do esqueleto: resolvida no fim, quando o número de nomes é conhecido
+                        Some(n) => {
+                            let p = match ossos.iter().position(|x| x == n) {
+                                Some(p) => p,
+                                None => {
+                                    ossos.push(n.clone());
+                                    ossos.len() - 1
+                                }
+                            };
+                            if p > 254 {
+                                return Err(format!("{nome}: mais de 255 ossos na pele (o índice do vértice é um byte)"));
                             }
-                            Some(n.clone())
+                            p as u8
                         }
                     };
-                    let indice = match alvo {
-                        Some(n) => match ossos.iter().position(|x| *x == n) {
-                            Some(p) => p,
-                            None => {
-                                ossos.push(n);
-                                ossos.len() - 1
-                            }
-                        },
-                        None => usize::MAX, // a vaga do esqueleto: resolvida no fim, quando o número de nomes é conhecido
-                    };
-                    if indice != usize::MAX && indice > 254 {
-                        return Err(format!("{nome}: mais de 255 ossos na pele"));
+                    match alvos.iter_mut().find(|x| x.0 == indice) {
+                        Some(x) => x.1 += peso, // duas juntas que caíram no mesmo osso (ancestral) somam
+                        None => alvos.push((indice, peso, d.correcao.as_ref())),
                     }
-                    ossos_v[c] = if indice == usize::MAX { 255 } else { indice as u8 };
-                    w[c] = peso;
                 }
-                let soma: f32 = w.iter().sum();
-                if soma > 0.0 {
-                    w.iter_mut().for_each(|x| *x /= soma);
-                }
+                let ajuste = ajustar_pesos(&mut alvos, &mut pesos);
+                let (w, ossos_v) = ajuste;
                 let p = &pos[k];
                 let n = nor.as_ref().map_or(vec![0.0; 3], |x| x[k].clone());
                 let t = uv.as_ref().map_or(vec![0.0; 2], |x| x[k].clone());
+                // Pose de repouso diferente da do `.bon`: v' = Σ wᵢ · Cᵢ · v (a malha posta na pose do esqueleto do jogo).
+                let (mut pm, mut nm) = ([p[0], p[1], p[2]], [n[0], n[1], n[2]]);
+                if alvos.iter().any(|x| x.2.is_some()) {
+                    let (mut ps, mut ns) = ([0f32; 3], [0f32; 3]);
+                    for (_, peso, c) in &alvos {
+                        let (a, b) = match c {
+                            Some(m) => (aplicar(m, pm, 1.0), aplicar(m, nm, 0.0)),
+                            None => (pm, nm),
+                        };
+                        for e in 0..3 {
+                            ps[e] += a[e] * peso;
+                            ns[e] += b[e] * peso;
+                        }
+                    }
+                    pesos.reposicionados += 1;
+                    pm = ps;
+                    nm = normalizar(ns);
+                }
                 vertices.push(VerticeComPeso {
-                    posicao: [p[0], p[1], -p[2]],
+                    posicao: [pm[0], pm[1], -pm[2]],
                     pesos: [w[0], w[1], w[2]],
                     ossos: ossos_v,
-                    normal: [n[0], n[1], -n[2]],
+                    normal: [nm[0], nm[1], -nm[2]],
                     uv: [t[0], t[1]],
                 });
             }
@@ -933,6 +1132,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
         ossos_no_cabecalho: ossos.len() as i32,
         reservado: vec![0; 52],
     };
+    relatorio.extend(pesos.linhas());
     Ok(Importacao { ski, texturas_novas, relatorio })
 }
 
@@ -940,6 +1140,111 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
 mod testes {
     use super::*;
     use crate::glb::{do_modelo, PeleDoModelo};
+
+    /// B383: os pesos saem como o motor lê (`A3DSkinMesh.cpp:1036-1066`) e o osso que o esqueleto não tem vai para o
+    /// ancestral; a malha modelada noutra pose de repouso volta à pose do `.bon`.
+    fn glb_de_pesos(x_do_braco: f32) -> Vec<u8> {
+        let mut bin: Vec<u8> = Vec::new();
+        let mut vistas = Vec::new();
+        let mut acessores = Vec::new();
+        let mut por = |bytes: Vec<u8>, tipo: &str, comp: u32, n: usize| {
+            vistas.push(serde_json::json!({ "buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len() }));
+            bin.extend_from_slice(&bytes);
+            while bin.len() % 4 != 0 { bin.push(0); }
+            acessores.push(serde_json::json!({ "bufferView": vistas.len() - 1, "componentType": comp, "count": n, "type": tipo }));
+            acessores.len() - 1
+        };
+        let f = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let pos = f(&[0., 0., 0., 1., 0., 0., 0., 1., 0., 1., 1., 0., 0., 0., 1., 2., 0., 0.]);
+        let j0: Vec<u8> = vec![0, 3, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 3, 4, 1, 0, 0, 0];
+        let w0 = f(&[0.5, 0., 0.5, 0., 0.2, 0.2, 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.3, 0.25, 0.2, 0.15, 1., 0., 0., 0.]);
+        let j1: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 6, 0, 0, 0, 0, 0, 0];
+        let w1 = f(&[0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.06, 0.04, 0., 0., 0., 0., 0., 0.]);
+        let t = |x: f32| -> Vec<f32> { vec![1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, 0., 0., 1.] };
+        let ibm: Vec<f32> = [t(0.), t(-x_do_braco), t(-x_do_braco - 0.5), t(0.), t(0.), t(0.), t(0.)].concat();
+        let a_pos = por(pos, "VEC3", 5126, 6);
+        let a_j0 = por(j0, "VEC4", 5121, 6);
+        let a_w0 = por(w0, "VEC4", 5126, 6);
+        let a_j1 = por(j1, "VEC4", 5121, 6);
+        let a_w1 = por(w1, "VEC4", 5126, 6);
+        let a_ibm = por(f(&ibm), "MAT4", 5126, 7);
+        let j = serde_json::json!({
+            "asset": { "version": "2.0" },
+            "nodes": [
+                { "name": "raiz", "children": [1, 3, 4, 5, 6] },
+                { "name": "braco", "translation": [x_do_braco, 0.0, 0.0], "children": [2] },
+                { "name": "extra", "translation": [0.5, 0.0, 0.0] },
+                { "name": "o2" }, { "name": "o3" }, { "name": "o4" }, { "name": "o5" },
+                { "name": "peca", "mesh": 0, "skin": 0 },
+            ],
+            "skins": [{ "joints": [0, 1, 2, 3, 4, 5, 6], "inverseBindMatrices": a_ibm }],
+            "meshes": [{ "name": "peca", "primitives": [{ "attributes": { "POSITION": a_pos, "JOINTS_0": a_j0, "WEIGHTS_0": a_w0, "JOINTS_1": a_j1, "WEIGHTS_1": a_w1 } }] }],
+            "accessors": acessores, "bufferViews": vistas, "buffers": [{ "byteLength": bin.len() }],
+        });
+        let mut tj = serde_json::to_vec(&j).unwrap();
+        while tj.len() % 4 != 0 { tj.push(b' '); }
+        let mut g = b"glTF".to_vec();
+        g.extend_from_slice(&2u32.to_le_bytes());
+        g.extend_from_slice(&((12 + 8 + tj.len() + 8 + bin.len()) as u32).to_le_bytes());
+        g.extend_from_slice(&(tj.len() as u32).to_le_bytes());
+        g.extend_from_slice(b"JSON");
+        g.extend_from_slice(&tj);
+        g.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        g.extend_from_slice(b"BIN\0");
+        g.extend_from_slice(&bin);
+        g
+    }
+
+    fn esqueleto_de_pesos() -> Bon {
+        let t = |x: f32| -> crate::bon::Matriz { [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, 0., 0., 1.] };
+        let osso = |nome: &str, mae: i32, x: f32| crate::bon::Osso { nome: nome.into(), flags: 0, mae, primeira_junta: -1, relativa: t(x), inicial: t(-x), filhas: vec![], enchimento: [0; 3] };
+        // O `.bon` tem o braço em x = 1 e não tem o osso "extra".
+        let ossos = vec![osso("raiz", -1, 0.), osso("braco", 0, 1.), osso("o2", 0, 0.), osso("o3", 0, 0.), osso("o4", 0, 0.), osso("o5", 0, 0.)];
+        Bon { versao: 6, quadro_inicial: 0, quadro_final: 0, fps: 30, ossos, juntas: vec![], trilhas: vec![], ganchos: vec![], marca: true, reservado: vec![] }
+    }
+
+    #[test]
+    fn pesos_corrigidos_como_o_motor_le() {
+        let bon = esqueleto_de_pesos();
+        let i = ski_do_glb(&glb_de_pesos(1.0), &bon).unwrap();
+        let m = &i.ski.malhas_de_pele[0];
+        let nome = |k: u8| i.ski.ossos.get(k as usize).cloned().unwrap_or_else(|| "esqueleto".into());
+        let infl = |v: usize| influencias(m.vertices[v].pesos, m.vertices[v].ossos, &nome);
+        let perto = |a: &[(String, f32)], b: &[(&str, f32)]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0 == y.0 && (x.1 - y.1).abs() < 1e-5);
+        // Zero no meio: os não nulos vão para a frente (o motor pararia no zero e perderia o braço).
+        assert!(perto(&infl(0), &[("raiz", 0.5), ("braco", 0.5)]), "{:?}", infl(0));
+        assert_eq!(m.vertices[0].pesos[1], 0.5);
+        // Soma 0,4 → normalizada.
+        assert!(perto(&infl(1), &[("raiz", 0.5), ("braco", 0.5)]), "{:?}", infl(1));
+        // Sem peso → a vaga do esqueleto, peso 1.
+        assert!(perto(&infl(2), &[("esqueleto", 1.0)]), "{:?}", infl(2));
+        // "extra" não existe no .bon → o ancestral "braco".
+        assert!(perto(&infl(3), &[("braco", 1.0)]), "{:?}", infl(3));
+        // 6 influências (JOINTS_0 + JOINTS_1) → as 4 maiores, somando 1.
+        assert!(perto(&infl(4), &[("raiz", 0.3 / 0.9), ("braco", 0.25 / 0.9), ("o2", 0.2 / 0.9), ("o3", 0.15 / 0.9)]), "{:?}", infl(4));
+        // Mesma pose de repouso: o vértice fica onde estava (z negado).
+        assert_eq!(m.vertices[5].posicao, [2.0, 0.0, -0.0]);
+        let r = i.relatorio.join("\n");
+        for esperado in ["1 vértice(s) com peso zero antes", "1 vértice(s) com soma diferente de 1", "1 vértice(s) com mais de 4 ossos", "maior peso cortado 0.060",
+            "1 vértice(s) sem peso", "\"extra\" não existe no esqueleto do jogo — os pesos dele foram para \"braco\""] {
+            assert!(r.contains(esperado), "falta \"{esperado}\" em:\n{r}");
+        }
+        assert!(!r.contains("pose de repouso"), "{r}");
+        let w = i.ski.escrever();
+        assert!(Ski::ler(&w).is_ok_and(|x| x.escrever() == w));
+
+        // Braço modelado em x = 2 (no .bon está em x = 1): o vértice preso a ele volta 1 para trás.
+        let i = ski_do_glb(&glb_de_pesos(2.0), &bon).unwrap();
+        let v = i.ski.malhas_de_pele[0].vertices[5].posicao;
+        assert!((v[0] - 1.0).abs() < 1e-5 && v[1].abs() < 1e-5 && v[2].abs() < 1e-5, "{v:?}");
+        assert!(i.relatorio.iter().any(|l| l.contains("pose de repouso diferente da do jogo em 1 osso(s) (braco)")), "{:?}", i.relatorio);
+
+        // Osso sem ancestral no esqueleto: recusa, dizendo o que fazer no Blender.
+        let mut so_braco = esqueleto_de_pesos();
+        so_braco.ossos.retain(|o| o.nome != "raiz");
+        let e = ski_do_glb(&glb_de_pesos(1.0), &so_braco).err().unwrap();
+        assert!(e.contains("\"raiz\" não existe no esqueleto do jogo e não tem ancestral") && e.contains("Blender"), "{e}");
+    }
 
     /// B381: mede quanto cada ação de um GLB devolvido pelo Blender difere da existente no modelo v5 (pasta em `PW_B381`
     /// com `b381.smd`, `b381.bon` e `lobo_blender.glb`). `cargo test -p pw-data-loader --lib medir_b381 -- --ignored --nocapture`

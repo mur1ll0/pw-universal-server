@@ -19,7 +19,12 @@
   import Origens from "../componentes/Origens.svelte";
   import Modal from "../componentes/Modal.svelte";
   import SeletorDeEspaco from "../componentes/SeletorDeEspaco.svelte";
+  import SeletorDeRefino from "../componentes/SeletorDeRefino.svelte";
+  import { descreverRefino, familiaDaTabela, refinos, usoDoRefino, type EfeitoDeRefino } from "../lib/refino";
   import Visual3D from "../componentes/Visual3D.svelte";
+  import ModeloDoEquipavel from "../componentes/ModeloDoEquipavel.svelte";
+  import PeleDoEquipavel from "../componentes/PeleDoEquipavel.svelte";
+  import { camposDeModelo, ehPeleNoCorpo } from "../lib/equipavel3d";
 
   let { tabela, indice }: { tabela: string; indice: number } = $props();
   const sub = subcategoriaPorTabela(tabela);
@@ -52,9 +57,9 @@
       nomes = n;
       iconeHex = x.icone;
       // O `levelup_addon` não está no índice de referências (`specs/estudio/referencias.json`): o nome sai do espaço ADDON.
-      const refino = Number(originais.levelup_addon ?? 0);
-      if (refino) buscarNoEspaco("ADDON", String(refino), 5)
-        .then((r) => { const a = r.find((y) => y.id === refino); if (a) nomes.levelup_addon = a.nome; }).catch(() => {});
+      const idDoRefino = Number(originais.levelup_addon ?? 0);
+      if (idDoRefino) buscarNoEspaco("ADDON", String(idDoRefino), 5)
+        .then((r) => { const a = r.find((y) => y.id === idDoRefino); if (a) nomes.levelup_addon = a.nome; }).catch(() => {});
       f = x;
       await carregarDescricao(x.id ?? 0);
       if (rota.params.get("novo")) {
@@ -88,6 +93,13 @@
       .then((d) => { for (const e of d) efeitosTexto[e.id] = { texto: e.texto, args: e.args }; })
       .catch(() => ids.forEach((id) => pedidos.delete(id)));
   });
+
+  /* ---- B383: efeito do refino explicado (o que soma, +1 a +12) — `lib/refino.ts`, `Estudio::refinos` ---- */
+  const familia = familiaDaTabela(tabela);
+  let efeitosDeRefino = $state<EfeitoDeRefino[]>([]);
+  let erroDoRefino = $state("");
+  if (familia) refinos().then((r) => (efeitosDeRefino = r.efeitos)).catch((e) => (erroDoRefino = (e as Error).message));
+  const refino = $derived(efeitosDeRefino.find((e) => e.id === num("levelup_addon")) ?? null);
 
   /* ---- tipo de munição exigido: `require_projectile` escolhe um `PROJECTILE_TYPE` (`ExpTypes.h:185`) ---- */
   let tiposDeMunicao = $state<{ id: number; nome: string }[]>([]);
@@ -236,8 +248,17 @@
     return sim.length === classes.length ? "Todas as classes" : sim.length ? sim.join(", ") : "Nenhuma classe";
   });
   const resumoDeRegras = $derived(REGRAS_DO_ITEM.filter(([b]) => num("proc_type") & b).map(([, n]) => n));
-  const modelos = $derived([["Mão direita", "file_model_right"], ["Mão esquerda", "file_model_left"], ["Modelo", "file_model"], ["Modelo 2", "file_model2"], ["No chão", "file_matter"]]
+  /* B383: o modelo no personagem tem card próprio (ModeloDoEquipavel / PeleDoEquipavel); o Visual 3D fica com o "No chão". */
+  const camposNoPersonagem = $derived(camposDeModelo(tabela, existe));
+  const caminhosDosModelos = $derived(Object.fromEntries(camposNoPersonagem.map((c) => [c.campo, String(originais[c.campo] ?? "")])));
+  const modelos = $derived([["No chão", "file_matter"]]
     .filter(([, c]) => existe(c)).map(([rotulo, c]) => ({ rotulo, caminho: String(valores[c] ?? "") })));
+  async function trocarModelo(campo: string, ecm: string) {
+    await salvar(tabela, indice, { [campo]: ecm });
+    originais = { ...originais, [campo]: ecm };
+    valores[campo] = ecm;
+    avisar("ok", `${campo} agora cita ${ecm} (gravado no rascunho).`);
+  }
   const alterado = (n: string) => valores[n] !== originais[n];
 </script>
 
@@ -371,16 +392,25 @@
             </div>
           {/each}
           {#if existe("levelup_addon")}
-            <div class="ligado">
+            <div class="ligado refino">
               <span class="mini">Efeito do refino (levelup_addon)</span>
               <button class="cartao-item" type="button" class:alterado={alterado("levelup_addon")} onclick={() => (modal = "refino")}>
                 <Icone nome="refino" />
-                <span>{num("levelup_addon") ? (efeitosTexto[num("levelup_addon")]?.texto || nomes.levelup_addon || `efeito ${num("levelup_addon")}`) : "nenhum"}</span>
-                {#if num("levelup_addon") && !efeitosTexto[num("levelup_addon")]?.texto && efeitosTexto[num("levelup_addon")]?.args?.length}
-                  <span class="mini">sem texto no cliente · parâmetros {efeitosTexto[num("levelup_addon")]?.args?.join(", ")}</span>
-                {/if}
+                <span class="texto-refino">
+                  {#if !num("levelup_addon")}nenhum (a peça não refina)
+                  {:else if refino}<strong>{descreverRefino(refino)}</strong>
+                  {:else}efeito {num("levelup_addon")} <span class="erro mini">{erroDoRefino || (efeitosDeRefino.length ? "não é efeito de refino no servidor: o refino falharia (erro 92)" : "carregando…")}</span>{/if}
+                </span>
                 {#if num("levelup_addon")}<span class="mini">id {num("levelup_addon")}</span>{/if}
               </button>
+              {#if refino}
+                <span class="mini">{refino.nome} · {refino.tratador} · param {refino.param} · {usoDoRefino(refino)} · {refino.evidencia}</span>
+                <table class="niveis">
+                  <thead><tr><th>nível</th>{#each refino.niveis as _, k (k)}<th>+{k + 1}</th>{/each}</tr></thead>
+                  <tbody><tr><td>soma</td>{#each refino.niveis as v, k (k)}<td>{v}</td>{/each}</tr></tbody>
+                </table>
+                <span class="mini">O valor do nível substitui o do anterior: (int)(param × fator + 0,1), fator de equip_item.cpp:208-223.</span>
+              {/if}
               {#if existe("material_need")}
                 <label class="mini">pedras por nível <input class="campo qtd" class:alterado={alterado("material_need")} type="number" step="1" min="0" disabled={!editavel}
                   value={valores.material_need} oninput={(e) => (valores.material_need = Number((e.target as HTMLInputElement).value))} /></label>
@@ -401,7 +431,15 @@
     </div>
 
     <!-- 6. Visual 3D -->
-    <aside class="lateral"><Visual3D {modelos} /></aside>
+    <aside class="lateral">
+      {#if ehPeleNoCorpo(tabela) && existe("realname")}
+        <PeleDoEquipavel realname={String(originais.realname ?? "")} generoFixo={existe("gender") ? num("gender") : null} local={num("equip_location")} />
+      {/if}
+      {#if camposNoPersonagem.length}
+        <ModeloDoEquipavel {tabela} campos={camposNoPersonagem} caminhos={caminhosDosModelos} modoDeVoo={num("fly_mode")} idDoItem={f.id ?? 0} aoTrocarModelo={trocarModelo} />
+      {/if}
+      <Visual3D {modelos} />
+    </aside>
   </div>
 
   <!-- 7. Listas de efeitos -->
@@ -454,8 +492,8 @@
     {#if !editavel}<p class="mini">Escolha um rascunho no alto para mudar.</p>{/if}
   </Modal>
 {:else if f && modal === "refino"}
-  <SeletorDeEspaco titulo="Efeito do refino" espaco="ADDON" aoFechar={() => (modal = "")}
-    aoEscolher={(r: Registro) => { valores.levelup_addon = r.id ?? 0; nomes.levelup_addon = r.nome; }} />
+  <SeletorDeRefino {familia} atual={num("levelup_addon")} aoFechar={() => (modal = "")}
+    aoEscolher={(r) => { if (editavel) { valores.levelup_addon = r.id; nomes.levelup_addon = r.nome; } else avisar("aviso", "Escolha um rascunho no alto para mudar."); }} />
 {:else if f && modal.startsWith("item:")}
   {@const c = modal.slice(5)}
   <SeletorDeEspaco titulo={ITENS_LIGADOS.find((x) => x.campo === c)?.titulo ?? "Item"} espaco="ESSENCE" aoFechar={() => (modal = "")}
@@ -468,7 +506,7 @@
   .espaco { flex: 1; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 14px; align-items: start; }
   .coluna { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-  .lateral { position: sticky; top: 70px; }
+  .lateral { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .principal { display: flex; gap: 16px; align-items: flex-start; }
   .icone-grande { padding: 6px; border-radius: 12px; border: 1px solid var(--borda-forte); background: var(--fundo-2); cursor: pointer; }
   .icone-grande:hover { border-color: var(--ouro); }
@@ -483,6 +521,11 @@
     color: var(--texto); font: inherit; cursor: pointer; text-align: left; }
   .cartao-item:hover { border-color: var(--ouro); }
   .qtd { width: 100px; height: 28px; }
+  .refino { grid-column: 1 / -1; }
+  .texto-refino { flex: 1; }
+  .niveis { border-collapse: collapse; font-size: 12px; width: 100%; }
+  .niveis th, .niveis td { border: 1px solid var(--borda); padding: 2px 4px; text-align: center; }
+  .niveis th:first-child, .niveis td:first-child { text-align: left; color: var(--texto-2, inherit); }
   .escolha { text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .escolhas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow: auto; }
   .escolhas button { width: 100%; text-align: left; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--borda); background: var(--fundo-2);
