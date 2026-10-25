@@ -2,7 +2,8 @@
   /* Estúdio (B366, fase 1: Equipáveis/Armas). Rotas por hash:
      #/                               tela principal (categorias)
      #/equipaveis/<tabela>/<indice>   edição (Armas: tela própria)
-     #/itens/novo?retorno=<código>    item novo para a aba de origem (BroadcastChannel) */
+     #/itens/novo?retorno=<código>    item novo para a aba de origem (BroadcastChannel)
+     #/gshop?loja=<arquivo>            G-Shop: a Loja Gold (gshop*.data) */
   import { onMount } from "svelte";
   import { contexto, sessao, versaoDoRealm } from "./lib/api";
   import { avisos, definirRascunho, estudio, rota } from "./lib/estado.svelte";
@@ -12,6 +13,7 @@
   import EdicaoEquipavel from "./telas/EdicaoEquipavel.svelte";
   import EdicaoMonstro from "./telas/EdicaoMonstro.svelte";
   import NovoItem from "./telas/NovoItem.svelte";
+  import GShop from "./telas/GShop.svelte";
 
   let pronto = $state(false);
 
@@ -52,6 +54,8 @@
     {/key}
   {:else if rota.caminho[0] === "itens" && rota.caminho[1] === "novo"}
     <NovoItem />
+  {:else if rota.caminho[0] === "gshop"}
+    <GShop />
   {:else}
     <Principal />
   {/if}

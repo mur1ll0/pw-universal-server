@@ -1558,7 +1558,73 @@ async fn estudio_clonar_oferta(
 ) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
-    Ok(Json(e.estudio.clonar_oferta(&e.gov, &v, &arquivo, r, p.base).await?))
+    Ok(Json(e.estudio.clonar_oferta(&e.gov, &v, &arquivo, r, p.base, p.campos).await?))
+}
+
+// ------------------------------------------------------------------ Estúdio G-Shop (abas, imagens, conferência)
+
+async fn estudio_abas_da_loja(State(e): State<Arc<Estado>>, Path((v, arquivo)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.abas_da_loja(&e.gov, &v, &arquivo, q.rascunho).await?))
+}
+
+#[derive(Deserialize)]
+struct QImagemDaAba {
+    rascunho: Option<i64>,
+    tema: Option<u8>,
+    estado: String,
+}
+
+async fn estudio_imagem_da_aba(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, aba)): Path<(String, String, usize)>,
+    Query(q): Query<QImagemDaAba>,
+    corpo: Bytes,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    Ok(Json(e.estudio.trocar_imagem_da_aba(&e.gov, &v, &arquivo, r, aba, q.tema.unwrap_or(0), &q.estado, &corpo).await?))
+}
+
+async fn estudio_imagem_da_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    corpo: Bytes,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.trocar_imagem_da_oferta(&e.gov, &v, &arquivo, r, indice, &corpo).await?))
+}
+
+async fn estudio_conferir_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.conferir_oferta(&e.gov, &v, &arquivo, q.rascunho, indice, p.campos).await?))
+}
+
+#[derive(Deserialize)]
+struct QImagemDoCliente {
+    caminho: String,
+    rascunho: Option<i64>,
+}
+
+/// Uma imagem de interface do cliente (`surfaces\…`, TGA/DDS) em PNG — as abas e as imagens das ofertas da loja.
+async fn estudio_imagem_do_cliente(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImagemDoCliente>) -> R<Response> {
+    validar(&v)?;
+    let png = e
+        .estudio
+        .imagem_do_cliente_em_png(&e.gov, &v, &q.caminho, q.rascunho)
+        .await
+        .map_err(|err| Erro(StatusCode::NOT_FOUND, format!("{err:#}")))?;
+    let mut h = HeaderMap::new();
+    h.insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+    h.insert(header::CACHE_CONTROL, "private, no-cache".parse().unwrap());
+    Ok((h, png).into_response())
 }
 
 async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, indice)): Path<(String, String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
@@ -2054,6 +2120,11 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/missoes/{id}/clonar", post(estudio_clonar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))
+        .route("/admin/{v}/estudio/loja/{arquivo}/abas", get(estudio_abas_da_loja))
+        .route("/admin/{v}/estudio/loja/{arquivo}/abas/{aba}/imagem", post(estudio_imagem_da_aba))
+        .route("/admin/{v}/estudio/loja/{arquivo}/{indice}/imagem", post(estudio_imagem_da_oferta))
+        .route("/admin/{v}/estudio/loja/{arquivo}/{indice}/conferir", post(estudio_conferir_oferta))
+        .route("/admin/{v}/estudio/imagem", get(estudio_imagem_do_cliente))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))

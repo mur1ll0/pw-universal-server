@@ -49,6 +49,13 @@ impl Governanca {
     }
 
     /// `versao.json` e manifesto publicados, lidos do volume.
+    /// Só o `versao.json` publicado (sem ler o manifesto, que no 1.5.5 tem 327 mil arquivos) — para conferir caches
+    /// pelo `manifesto_sha256` (B385).
+    pub fn versao_publicada(&self, versao: &str) -> Result<Versao> {
+        let base = pasta_da_versao(&self.dados, versao).join("atualizacao");
+        Ok(serde_json::from_slice(&std::fs::read(base.join("versao.json")).with_context(|| format!("a versão {versao} não foi importada"))?)?)
+    }
+
     pub fn publicado(&self, versao: &str) -> Result<(Versao, Manifesto)> {
         let base = pasta_da_versao(&self.dados, versao).join("atualizacao");
         let v: Versao = serde_json::from_slice(

@@ -376,3 +376,303 @@ mod testes_das_categorias {
         }
     }
 }
+
+// ------------------------------------------------------------------ conferência da oferta (Estúdio G-Shop)
+
+/// O que impede o GS de carregar a loja (`erros`) e o que só fica sem efeito ou não foi conferido (`avisos`).
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Conferencia {
+    pub erros: Vec<String>,
+    pub avisos: Vec<String>,
+}
+
+impl Conferencia {
+    pub fn vazia(&self) -> bool {
+        self.erros.is_empty() && self.avisos.is_empty()
+    }
+}
+
+/// Aviso da oferta sem nenhum preço (o cliente a esconde; zerar os preços é como "tirar" uma oferta sem mudar o
+/// `goods_index` das seguintes).
+pub const DESATIVADA: &str = "oferta desativada: nenhuma opção tem preço, o cliente não a mostra e o GS não a vende";
+
+/// Uma opção de compra lida da oferta (`buy[k]`).
+#[derive(Debug, Clone, Copy)]
+struct Opcao {
+    preco: u32,
+    fim: u32,
+    validade: u32,
+    inicio: u32,
+    tipo: i32,
+    dias: u32,
+    status: u32,
+    grupo: u32,
+}
+
+/// Janela de venda como o GS a guarda (`sale_time`, `playermall.h:24-29`): 0 sem limite, 1 intervalo, 2 semanal,
+/// 3 mensal, com os parâmetros que o `load_malldata` monta (`template/globaldataman.cpp:148-170`).
+fn janela(o: &Opcao) -> (i32, i32, i32) {
+    match o.tipo {
+        0 => (1, o.inicio as i32, o.fim as i32),
+        1 => (2, (o.dias & 0x7F) as i32, 0),
+        2 => (3, ((o.dias & 0x7FFF_FFFF) << 1) as i32, 0),
+        _ => (0, 0, 0),
+    }
+}
+
+/// `CheckSaleTimeConflictNotExpired` (`playermall.cpp:117-149`), sem o ajuste de fuso (que soma o mesmo valor aos dois).
+fn janelas_conflitam(a: (i32, i32, i32), b: (i32, i32, i32)) -> bool {
+    if a.0 != b.0 {
+        return a.0 != 0 && b.0 != 0;
+    }
+    match a.0 {
+        0 => true,
+        1 => {
+            let fim_a = if a.2 != 0 { a.2 } else { i32::MAX };
+            let fim_b = if b.2 != 0 { b.2 } else { i32::MAX };
+            b.1 < fim_a && fim_b > a.1
+        }
+        2 => (a.1 & 0x7F) & (b.1 & 0x7F) != 0,
+        3 => (a.1 & !1) & (b.1 & !1) != 0,
+        _ => true,
+    }
+}
+
+/// Confere uma oferta pelas regras que o GS aplica ao carregar a loja — `load_malldata`
+/// (`cgame/gs/template/globaldataman.cpp:135-200`) e `InitMall` (`cgame/gs/playermall.cpp:155-380`), 1.5.5. Qualquer
+/// uma delas faz o GS recusar a loja inteira (`throw -3` / `return false`), então são **erros**. `pilha(id)` é o
+/// `get_item_pile_limit` do `elements` (`template/itemdataman.cpp:815`): `None` = o item não existe.
+///
+/// No 1.2.6 (`buy` de 12 B: preço, data, validade) as regras de opção do 1.5.5 não se aplicam; as de item, quantidade
+/// e brinde valem como **aviso** (o `InitMall` do `gs` 1.2.6 não foi conferido no binário), salvo o preço da 1ª opção
+/// e a existência do item, que o cliente exige para mostrar a oferta.
+pub fn conferir_oferta(g: &GshopEditavel, o: &[u8], pilha: &dyn Fn(u32) -> Option<u32>) -> Conferencia {
+    let mut c = Conferencia::default();
+    let campos = ler_oferta(g, o);
+    let n = |k: &str| campos.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+    let v126 = g.formato == FormatoDoGshop::V126;
+    let regra_do_155 = |c: &mut Conferencia, m: String| if v126 { c.avisos.push(format!("{m} (regra do GS 1.5.5)")) } else { c.erros.push(m) };
+
+    // Aba e subaba: índices na lista de categorias (`globaldataman.h:103-104`).
+    let (principal, sub) = (n("main_type"), n("sub_type"));
+    match g.categorias.get(principal.max(0) as usize).filter(|_| principal >= 0) {
+        None => c.erros.push(format!("aba {principal} não existe (são {} abas)", g.categorias.len())),
+        Some(cat) if sub < 0 || sub as usize >= cat.subcategorias.len() => c.erros.push(if cat.subcategorias.is_empty() {
+            format!("a aba {principal} não tem subaba: crie uma antes")
+        } else {
+            format!("subaba {sub} não existe na aba {principal} (são {})", cat.subcategorias.len())
+        }),
+        _ => {}
+    }
+
+    // Item e quantidade (`InitMall`, `playermall.cpp:160-167`).
+    let (id, num) = (n("id") as u32, n("num") as u32);
+    let pilha_do_item = if id == 0 { None } else { pilha(id) };
+    match pilha_do_item {
+        None => c.erros.push(format!("o item {id} não existe no elements")),
+        Some(p) if num == 0 || num > p.max(1) => regra_do_155(&mut c, format!("quantidade {num} fora da pilha do item (1 a {})", p.max(1))),
+        _ => {}
+    }
+
+    // Opções de compra.
+    if v126 {
+        if (0..4).all(|k| n(&format!("buy_{k}_price")) == 0) {
+            c.avisos.push(DESATIVADA.into());
+        } else if n("buy_0_price") <= 0 {
+            c.avisos.push("a 1ª opção não tem preço: o GS para na primeira opção sem preço e não vende nenhuma".into());
+        }
+        for k in 0..4 {
+            if n(&format!("buy_{k}_time")) > i32::MAX as i64 {
+                c.avisos.push(format!("opção {}: validade negativa como int (regra do GS 1.5.5)", k + 1));
+            }
+        }
+        return c;
+    }
+    let opcoes: Vec<Opcao> = (0..4)
+        .map(|k| {
+            let f = |x: &str| n(&format!("buy_{k}_{x}"));
+            Opcao {
+                preco: f("price") as u32,
+                fim: f("end_time") as u32,
+                validade: f("time") as u32,
+                inicio: f("start_time") as u32,
+                tipo: f("type") as i32,
+                dias: f("day") as u32,
+                status: f("status") as u32,
+                grupo: f("flag") as u32,
+            }
+        })
+        .collect();
+    // `load_malldata` lê as 4 opções, com preço ou sem: tipo fora de -1..2 = `throw -3` (`globaldataman.cpp:148-176`).
+    for (k, x) in opcoes.iter().enumerate() {
+        if !(-1..=2).contains(&x.tipo) {
+            c.erros.push(format!("opção {}: tipo de período {} inválido (o GS só aceita -1, 0, 1 e 2)", k + 1, x.tipo));
+        }
+    }
+    // O `InitMall` para na primeira opção sem preço (`playermall.cpp:198`); o nosso GS também só vende a opção se as
+    // anteriores têm preço (`pw-gs/src/bus_server/jogo.rs`, `comprar_na_loja_gold`). Oferta sem nenhum preço é a
+    // oferta **desativada**: o cliente não a mostra (`CalcBuyType`, `EC_Shop.cpp:172-197`) — 751 das 1726 do
+    // `gshop.data` BR estão assim, por isso é aviso e não erro.
+    let ativas = opcoes.iter().take_while(|x| x.preco > 0).count();
+    if opcoes.iter().all(|x| x.preco == 0) {
+        c.avisos.push(DESATIVADA.into());
+    } else if ativas == 0 {
+        c.avisos.push("a 1ª opção não tem preço: o cliente mostra as outras, mas o GS para na primeira opção sem preço e não vende nenhuma".into());
+    }
+    for k in ativas.max(1)..4 {
+        if opcoes[k].preco > 0 && ativas > 0 {
+            c.avisos.push(format!("opção {}: tem preço mas vem depois de uma opção sem preço — o GS a ignora", k + 1));
+        }
+    }
+    let mut com_validade = false;
+    let mut com_janela = false;
+    for (k, x) in opcoes.iter().take(ativas).enumerate() {
+        let r = format!("opção {}", k + 1);
+        if (x.validade as i32) < 0 {
+            c.erros.push(format!("{r}: validade acima de 2147483647 segundos"));
+        }
+        if x.validade > 0 {
+            com_validade = true;
+        }
+        let j = janela(x);
+        if j.0 != 0 {
+            com_janela = true;
+        }
+        // `sale_time::CheckParam` (`playermall.cpp:97-115`).
+        let valida = match j.0 {
+            1 => j.1 >= 0 && j.2 >= 0 && (j.1 != 0 || j.2 != 0) && (j.1 == 0 || j.2 == 0 || j.1 < j.2),
+            2 => j.1 & 0x7F != 0,
+            3 => j.1 & !1 != 0,
+            _ => true,
+        };
+        if !valida {
+            c.erros.push(match x.tipo {
+                0 => format!("{r}: período por datas precisa de início ou fim, e o início antes do fim"),
+                1 => format!("{r}: período semanal sem nenhum dia marcado"),
+                _ => format!("{r}: período mensal sem nenhum dia marcado"),
+            });
+        }
+        if (x.grupo as i32) < 0 {
+            c.erros.push(format!("{r}: grupo (flag) negativo"));
+        }
+        if (x.status as i32) < 0 {
+            c.erros.push(format!("{r}: selo negativo"));
+        }
+    }
+    if com_validade && pilha_do_item.is_some_and(|p| p != 1) {
+        c.erros.push("opção com validade só serve para item que não empilha (pilha 1)".into());
+    }
+    if com_validade && com_janela {
+        c.erros.push("opção com validade não pode ter período de venda (só \"sempre\")".into());
+    }
+    // Opções do mesmo grupo não podem se sobrepor (`playermall.cpp:266-320`).
+    for a in 0..ativas {
+        for b in a + 1..ativas {
+            let (x, y) = (&opcoes[a], &opcoes[b]);
+            if x.grupo != y.grupo {
+                continue;
+            }
+            let conflito = if com_validade { x.validade == y.validade } else { janelas_conflitam(janela(x), janela(y)) };
+            if conflito {
+                c.erros.push(format!(
+                    "opções {} e {} do mesmo grupo {} se sobrepõem ({})",
+                    a + 1,
+                    b + 1,
+                    x.grupo,
+                    if com_validade { "mesma validade" } else { "mesmo período de venda" }
+                ));
+            }
+        }
+    }
+
+    // Brinde (`playermall.cpp:340-372`).
+    let gift = n("idGift") as u32;
+    if gift > 0 {
+        let (qtd, validade, registro) = (n("iGiftNum"), n("iGiftTime"), n("iLogPrice"));
+        match pilha(gift) {
+            None => c.erros.push(format!("o brinde {gift} não existe no elements")),
+            Some(p) => {
+                if qtd <= 0 || qtd > p.max(1) as i64 || qtd > i32::MAX as i64 {
+                    c.erros.push(format!("quantidade do brinde {qtd} fora da pilha (1 a {})", p.max(1)));
+                }
+                if validade > 0 && validade <= i32::MAX as i64 && p != 1 {
+                    c.erros.push("brinde com validade só serve para item que não empilha (pilha 1)".into());
+                }
+            }
+        }
+        if validade > i32::MAX as i64 {
+            c.erros.push("validade do brinde acima de 2147483647 segundos".into());
+        }
+        if registro > i32::MAX as i64 {
+            c.erros.push("preço de registro do brinde negativo".into());
+        }
+    }
+    if g.formato == FormatoDoGshop::V155Vip && n("buy_times_limit_mode") > 0 && n("buy_times_limit") <= 0 {
+        c.avisos.push("modo de limite de compras sem quantidade: o cliente não mostra o limite (`DlgQShopItem.cpp:464`)".into());
+    }
+    c
+}
+
+#[cfg(test)]
+mod testes_da_conferencia {
+    use super::*;
+
+    fn loja(realm: &str, arquivo: &str) -> GshopEditavel {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config").join(arquivo);
+        GshopEditavel::ler(&std::fs::read(p).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn regras_do_gs_na_oferta() {
+        let g = loja("realm_155", "gshop.data");
+        let pilha_1 = |_: u32| Some(1u32);
+        let mut o = g.ofertas.iter().find(|o| ler_oferta(&g, o)["buy_0_price"].as_u64() > Some(0)).unwrap().clone();
+        let d = |o: &mut Vec<u8>, k: &str, v: serde_json::Value| definir_campo(&g, o, k, &v).unwrap();
+        d(&mut o, "num", serde_json::json!(1));
+        for k in 1..4 {
+            d(&mut o, &format!("buy_{k}_price"), serde_json::json!(0));
+        }
+        let base = conferir_oferta(&g, &o, &pilha_1);
+        assert!(base.vazia(), "{base:?}");
+        // Sem preço nenhum: desativada (aviso, não erro); preço só depois de um buraco: aviso.
+        let mut x = o.clone();
+        d(&mut x, "buy_0_price", serde_json::json!(0));
+        let r = conferir_oferta(&g, &x, &pilha_1);
+        assert!(r.erros.is_empty() && r.avisos == vec![DESATIVADA.to_string()], "{r:?}");
+        d(&mut x, "buy_2_price", serde_json::json!(100));
+        assert!(conferir_oferta(&g, &x, &pilha_1).avisos.iter().any(|e| e.contains("1ª opção")));
+        // Tipo 3 derruba o load_malldata mesmo sem preço.
+        let mut x = o.clone();
+        d(&mut x, "buy_3_type", serde_json::json!(3));
+        assert!(conferir_oferta(&g, &x, &pilha_1).erros.iter().any(|e| e.contains("tipo de período 3")));
+        // Semanal sem dia, datas invertidas.
+        let mut x = o.clone();
+        d(&mut x, "buy_0_type", serde_json::json!(1));
+        d(&mut x, "buy_0_day", serde_json::json!(0));
+        assert!(conferir_oferta(&g, &x, &pilha_1).erros.iter().any(|e| e.contains("semanal")));
+        let mut x = o.clone();
+        d(&mut x, "buy_0_type", serde_json::json!(0));
+        d(&mut x, "buy_0_start_time", serde_json::json!(2000));
+        d(&mut x, "buy_0_end_time", serde_json::json!(1000));
+        assert!(conferir_oferta(&g, &x, &pilha_1).erros.iter().any(|e| e.contains("datas")));
+        // Item inexistente, quantidade acima da pilha, aba inexistente.
+        assert!(conferir_oferta(&g, &o, &|_| None).erros.iter().any(|e| e.contains("não existe no elements")));
+        let mut x = o.clone();
+        d(&mut x, "num", serde_json::json!(5));
+        assert!(conferir_oferta(&g, &x, &pilha_1).erros.iter().any(|e| e.contains("pilha")));
+        let mut x = o.clone();
+        d(&mut x, "main_type", serde_json::json!(8));
+        assert!(conferir_oferta(&g, &x, &pilha_1).erros.iter().any(|e| e.contains("aba 8")));
+    }
+
+    /// As lojas reais dos dois realms passam (com pilha folgada): as regras não acusam o que o GS aceita.
+    #[test]
+    fn lojas_reais_sem_erro_de_opcao() {
+        for (realm, arquivo) in [("realm_126", "gshop.data"), ("realm_155", "gshop.data"), ("realm_155", "gshop1.data"), ("realm_155", "gshop2.data")] {
+            let g = loja(realm, arquivo);
+            let pilha = |_: u32| Some(1u32);
+            let erros: usize = g.ofertas.iter().map(|o| conferir_oferta(&g, o, &pilha).erros.iter().filter(|e| !e.contains("pilha")).count()).sum();
+            assert_eq!(erros, 0, "{realm}/{arquivo}");
+        }
+    }
+}

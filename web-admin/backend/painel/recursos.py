@@ -685,11 +685,60 @@ def registrar_reinicio(app):
 
     @app.post("/api/realms/{realm}/estudio/loja/{arquivo}")
     async def estudio_clonar_oferta(realm: str, arquivo: str, rascunho: int, requisicao: Request):
+        """Oferta nova no fim (cópia de `base`); o Estúdio G-Shop manda junto os `campos` da nova (item, aba, subaba)."""
         v = await _versao_do_realm(requisicao, realm)
-        base = (await requisicao.json()).get("base")
-        if arquivo not in LOJA or not isinstance(base, int) or base < 0:
+        dados = await requisicao.json()
+        base, campos = dados.get("base"), dados.get("campos") or {}
+        if arquivo not in LOJA or not isinstance(base, int) or base < 0 or not isinstance(campos, dict):
             raise HTTPException(422, "Pedido inválido.")
-        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho}, dados={"base": base})
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho},
+                               dados={"base": base, "campos": campos})
+
+    # Estúdio G-Shop: as abas como o diálogo da loja do cliente as desenha (botões, texto e imagens por tema).
+    @app.get("/api/realms/{realm}/estudio/loja/{arquivo}/abas")
+    async def estudio_abas_da_loja(realm: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if arquivo not in LOJA:
+            raise HTTPException(404, "Loja inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/loja/{arquivo}/abas", {"rascunho": rascunho})
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/abas/{aba}/imagem")
+    async def estudio_imagem_da_aba(realm: str, arquivo: str, aba: int, rascunho: int, estado: str, requisicao: Request,
+                                    tema: int = 0):
+        """PNG do mesmo tamanho → a imagem do botão da aba (TGA/DDS do cliente)."""
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if arquivo not in LOJA or estado not in ("normal", "selecionada") or not corpo or aba < 0 or tema not in (0, 1):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/abas/{aba}/imagem",
+                               {"rascunho": rascunho, "estado": estado, "tema": tema}, corpo=corpo,
+                               tipo="application/octet-stream")
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}/imagem")
+    async def estudio_imagem_da_oferta(realm: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
+        """PNG de 128×128 → imagem própria da oferta (DDS novo em surfaces\\百宝阁\\ e o `icon` apontando para ele)."""
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if arquivo not in LOJA or not corpo:
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}/imagem", {"rascunho": rascunho},
+                               corpo=corpo, tipo="application/octet-stream")
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}/conferir")
+    async def estudio_conferir_oferta(realm: str, arquivo: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        """Confere a oferta com os campos aplicados pelas regras de carga do GS, sem gravar."""
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos") or {}
+        if arquivo not in LOJA or not isinstance(campos, dict):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}/conferir", {"rascunho": rascunho},
+                               dados={"campos": campos})
+
+    @app.get("/api/realms/{realm}/estudio/imagem")
+    async def estudio_imagem_do_cliente(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None):
+        """Imagem de interface do cliente (surfaces\\…, TGA/DDS) em PNG."""
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/imagem", {"caminho": caminho[:300], "rascunho": rascunho})
 
     @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/categorias")
     async def estudio_categoria_da_loja(realm: str, arquivo: str, rascunho: int, requisicao: Request):

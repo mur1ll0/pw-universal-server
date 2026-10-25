@@ -463,6 +463,21 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 422)
         self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/loja/elements.data")).status_code, 404)
         self.assertEqual(len(RecursosFalso.pedidos), antes3)
+        # Estúdio G-Shop: abas (antes da rota da oferta), nova oferta com campos, conferência e imagens.
+        await self.cliente.get("/api/realms/realm_155/estudio/loja/gshop.data/abas", params={"rascunho": 5})
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.5.5/estudio/loja/gshop.data/abas")
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data", params={"rascunho": 5}, headers=csrf,
+                                    json={"base": 3, "campos": {"main_type": 2, "sub_type": 0, "id": 12}})
+        self.assertEqual((r.status_code, json.loads(RecursosFalso.pedidos[-1]["corpo"])["campos"]["main_type"]), (200, 2))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data/7/conferir", headers=csrf,
+                                    json={"campos": {"main_type": 9}})
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["caminho"]), (200, "/admin/1.5.5/estudio/loja/gshop.data/7/conferir"))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data/7/imagem", params={"rascunho": 5},
+                                    headers={**csrf, "Content-Type": "application/octet-stream"}, content=b"\x89PNG")
+        self.assertEqual((r.status_code, RecursosFalso.pedidos[-1]["corpo"]), (200, b"\x89PNG"))
+        r = await self.cliente.post("/api/realms/realm_155/estudio/loja/gshop.data/abas/2/imagem",
+                                    params={"rascunho": 5, "estado": "pressionada"}, headers=csrf, content=b"x")
+        self.assertEqual(r.status_code, 422)
         # Alinhamento e alinhar (B253).
         await self.cliente.get("/api/realms/realm_126/estudio/alinhamento", params={"rascunho": 5})
         self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/alinhamento")

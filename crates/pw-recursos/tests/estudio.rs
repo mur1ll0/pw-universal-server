@@ -126,6 +126,21 @@ impl FonteDePacote for Pacotes {
         receber(b"maps\\world\\world_targets.txt".to_vec(), txt.gravar())?;
         // A Loja Gold real do 1.2.6 (B254): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\gshop.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data")).unwrap())?;
+        // Estúdio G-Shop: o diálogo da loja como o do cliente 1.5.5 BR (`qshop.xml` em UTF-16, 8 abas com imagem
+        // própria e 8 botões de subaba) e a imagem solta da aba 0 (TGA de 32 bits 4×2).
+        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<DIALOG Name=\"Win_QShop\">\r\n");
+        for i in 0..8 {
+            xml += &format!("<STILLIMAGEBUTTON Name=\"Btn_MainType{i}\" Command=\"maintype{i}\">\r\n<Text String=\"Aba{i}\"/>\r\n<Resource>\r\n<FrameUpImage FileName=\"loja\\aba{i}n.tga\"/>\r\n<FrameDownImage FileName=\"loja\\aba{i}s.tga\"/>\r\n</Resource>\r\n</STILLIMAGEBUTTON>\r\n");
+        }
+        for i in -1..8 {
+            xml += &format!("<STILLIMAGEBUTTON Name=\"Btn_SubType{i}\" Command=\"subtype{i}\"></STILLIMAGEBUTTON>\r\n");
+        }
+        xml += "</DIALOG>\r\n";
+        let mut b = vec![0xFFu8, 0xFE];
+        xml.encode_utf16().for_each(|c| b.extend_from_slice(&c.to_le_bytes()));
+        receber(b"interfaces\\qshop.xml".to_vec(), b)?;
+        let aba = pw_data_loader::imagem::Imagem { largura: 4, altura: 2, rgba: (0..32).map(|x| x as u8 * 7).collect() };
+        receber(b"surfaces\\loja\\aba0n.tga".to_vec(), pw_data_loader::imagem::tga_32(&aba))?;
         // tasks.data (B255/B256): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\tasks.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/tasks.data")).unwrap())?;
         // Tabelas de texto (B260): uma indexada e uma sequencial, no formato do cliente.
@@ -1425,6 +1440,58 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!((g.ofertas.len(), g.carimbo as u64), (668, carimbo0));
         let loja_do_gs = pw_data_loader::gshop::GShopData::load_from_bytes(&no_realm).unwrap();
         assert_eq!(loja_do_gs.ofertas[0].opcoes[0].preco, 777, "o leitor do GS vê o preço novo");
+
+        // Estúdio G-Shop: colunas da vitrine, abas do diálogo, imagens, conferência, adicionar/mover/remover.
+        let lj3 = json_de(pedir("GET", "estudio/loja/gshop.data").call().unwrap());
+        assert_eq!((lj3["colunas"].as_array().unwrap().len(), lj3["ofertas"][0].as_array().unwrap().len()), (15, 15));
+        assert!(lj3["conferencias"].is_object());
+        let abas = json_de(pedir("GET", "estudio/loja/gshop.data/abas").call().unwrap());
+        let t0 = &abas["temas"][0];
+        assert_eq!((t0["botoes_de_aba"].as_u64(), t0["botoes_de_subaba"].as_u64(), t0["imagem_compartilhada"].as_bool()), (Some(8), Some(8), Some(false)), "{abas}");
+        assert_eq!(t0["abas"][0]["imagens"]["normal"]["medida"], json!({"largura": 4, "altura": 2}));
+        assert_eq!((t0["abas"][0]["texto_do_dialogo"].as_str(), t0["abas"][1]["imagens"]["normal"]["existe"].as_bool()), (Some("Aba0"), Some(false)));
+        let mut png0 = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", "loja\\aba0n.tga").call().unwrap().into_reader(), &mut png0).unwrap();
+        assert!(png0.starts_with(b"\x89PNG"), "imagem da aba em PNG");
+        let r15 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "gshop", "operacao_id": "t_p4_gshop"})).unwrap())["id"].as_i64().unwrap();
+        let em15 = |rel: &str| format!("{rel}?rascunho={r15}");
+        // Adicionar no fim (cópia da 0 com aba/subaba novas), mover de aba e remover: o arquivo volta byte a byte.
+        let id0 = of0["campos"]["id"].clone();
+        let nova = match pedir("POST", &em15("estudio/loja/gshop.data")).send_json(json!({"base": 0, "campos": {"main_type": 1, "sub_type": 0, "id": id0}})) {
+            Ok(r) => json_de(r),
+            Err(e) => panic!("nova oferta recusada: {:?}", erro_de(Err(e))),
+        };
+        assert_eq!(nova["resultado"]["indice"], 668);
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data")).send_json(json!({"base": 0, "campos": {"main_type": 9}}))).0, 400, "aba inexistente");
+        pedir("PUT", &em15("estudio/loja/gshop.data/668")).send_json(json!({"campos": {"main_type": 2, "sub_type": 1}})).unwrap();
+        let movida = json_de(pedir("GET", &em15("estudio/loja/gshop.data")).call().unwrap());
+        assert_eq!((movida["ofertas"][668][1].as_i64(), movida["ofertas"][668][2].as_i64()), (Some(2), Some(1)));
+        assert_eq!(erro_de(pedir("PUT", &em15("estudio/loja/gshop.data/668")).send_json(json!({"campos": {"sub_type": 40}}))).0, 400, "subaba inexistente");
+        let conf = json_de(pedir("POST", "estudio/loja/gshop.data/0/conferir").send_json(json!({"campos": {"main_type": 8}})).unwrap());
+        assert!(conf["erros"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("aba 8")), "{conf}");
+        let fim = json_de(pedir("DELETE", &em15("estudio/loja/gshop.data/668")).call().unwrap());
+        assert_eq!(fim["igual_ao_publicado"], true, "adicionar, mover e remover volta ao arquivo publicado byte a byte");
+        // Subaba nova além dos 8 botões do diálogo: recusada (a aba 1 do 1.2.6 já tem 8).
+        assert_eq!(lj3["categorias"][1]["subcategorias"].as_array().unwrap().len(), 8);
+        let (st, msg) = erro_de(pedir("POST", &em15("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "nova", "categoria": 1, "nome": "Nona"})));
+        assert!(st == 400 && msg.contains("botões de subaba"), "{st} {msg}");
+        // Imagem da aba: PNG do mesmo tamanho vira TGA de 32 bits; outro tamanho é recusado.
+        let png = |w: u32, h: u32| pw_recursos::mapas::png(w, h, &vec![200u8; (w * h * 4) as usize]).unwrap();
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data/abas/0/imagem")).query("estado", "normal").send_bytes(&png(3, 3))).0, 400);
+        pedir("POST", &em15("estudio/loja/gshop.data/abas/0/imagem")).query("estado", "normal").send_bytes(&png(4, 2)).unwrap();
+        let mut no_rascunho = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", "loja\\aba0n.tga").query("rascunho", &r15.to_string()).call().unwrap().into_reader(), &mut no_rascunho).unwrap();
+        assert_ne!(no_rascunho, png0, "o rascunho tem a imagem nova");
+        // Imagem própria da oferta: 128×128 vira um DDS novo em surfaces\百宝阁\ e o `icon` aponta para ele.
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data/0/imagem")).send_bytes(&png(64, 64))).0, 400);
+        let im = json_de(pedir("POST", &em15("estudio/loja/gshop.data/0/imagem")).send_bytes(&png(128, 128)).unwrap());
+        let of_im = json_de(pedir("GET", &em15("estudio/loja/gshop.data/0")).call().unwrap());
+        let icon = of_im["campos"]["icon"].as_str().unwrap().to_string();
+        assert!(icon.starts_with("Surfaces\\百宝阁\\estudio_") && im["caminho"].as_str().unwrap().ends_with(&icon[9..]), "{icon} {im}");
+        let mut dds = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", &icon).query("rascunho", &r15.to_string()).call().unwrap().into_reader(), &mut dds).unwrap();
+        assert!(dds.starts_with(b"\x89PNG"));
+        pedir("POST", &format!("rascunhos/{r15}/descartar")).send_json(json!({})).unwrap();
 
         // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
         let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());

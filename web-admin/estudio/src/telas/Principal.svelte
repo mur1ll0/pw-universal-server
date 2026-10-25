@@ -2,6 +2,7 @@
   import { CATEGORIAS, type Categoria } from "../lib/catalogo";
   import Icone from "../componentes/Icone.svelte";
   import ModalBusca from "../componentes/ModalBusca.svelte";
+  import { ir } from "../lib/estado.svelte";
 
   let aberta = $state<Categoria | null>(null);
 </script>
@@ -14,6 +15,12 @@
       {#if !c.pronta}<span class="mini">em breve</span>{/if}
     </button>
   {/each}
+  <!-- G-Shop: tela própria (a Loja Gold, `data\gshop*.data`), sem a busca de tabela das outras categorias. -->
+  <button class="categoria" type="button" onclick={() => ir("gshop")}>
+    <Icone nome="loja" tamanho={44} />
+    <span class="nome">G-Shop</span>
+    <span class="mini">Loja Gold: abas, vitrine e ofertas</span>
+  </button>
 </section>
 <p class="suave">O Estúdio grava pelas mesmas rotas dos <a href="/">Editores</a>, no rascunho escolhido no alto. O que não está aqui continua nos Editores.</p>
 

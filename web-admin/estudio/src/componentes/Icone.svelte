@@ -18,6 +18,7 @@
     refino: "M12 19V5M5 12l7-7 7 7",
     check: "M5 12l5 5 9-10",
     olho: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+    loja: "M4 8h16l-1.5 12h-13zM9 8V6a3 3 0 0 1 6 0v2M9.5 13.5h5",
   };
   let { nome, tamanho = 20 }: { nome: string; tamanho?: number } = $props();
 </script>

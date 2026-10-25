@@ -96,6 +96,9 @@ const CAMPOS_EDITAVEIS: [(&str, &str); 11] = [
     ("precisao", "só o servidor (multiplica a taxa de ataque do golpe)"),
 ];
 
+/// Nome legível em minúsculas → (SHA, tamanho, caminho GBK) dos arquivos do cliente publicado.
+type IndiceDoCliente = HashMap<String, (Sha256Bytes, u64, Vec<u8>)>;
+
 #[derive(Default)]
 pub struct Estudio {
     /// Arquivos já lidos, pelo SHA-256 (o publicado e o de cada rascunho em uso).
@@ -104,7 +107,7 @@ pub struct Estudio {
     travas: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
     /// Índice dos arquivos do cliente publicado por versão: caminho em minúsculas → (sha, tamanho),
     /// com o SHA do manifesto de onde saiu (B242).
-    arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<HashMap<String, (Sha256Bytes, u64)>>)>>,
+    arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<IndiceDoCliente>)>>,
     /// Peças do minimapa já convertidas em PNG.
     pecas: Mutex<HashMap<(String, String, String), Arc<Vec<u8>>>>,
     /// Terreno (`.hmap`) de cada mapa já lido, por (versão, caminho) — B248.
@@ -1171,28 +1174,33 @@ fn caminho_de_mapa_valido(c: &str) -> bool {
 }
 
 impl Estudio {
+    /// Índice do cliente publicado (nome legível em minúsculas → SHA, tamanho e caminho GBK), em cache por versão e
+    /// manifesto — o manifesto do 1.5.5 tem 327 mil arquivos: percorrê-lo a cada leitura custava ~0,5 s (B385).
+    fn indice_do_cliente(&self, gov: &Governanca, versao: &str) -> Result<Arc<IndiceDoCliente>> {
+        let v = gov.versao_publicada(versao)?;
+        let atual = self.arquivos_do_cliente.lock().unwrap().get(versao).cloned();
+        if let Some((sha, i)) = atual {
+            if sha == v.manifesto_sha256 {
+                return Ok(i);
+            }
+        }
+        let (_, m) = gov.publicado(versao)?;
+        let mut i = HashMap::with_capacity(m.arquivos.len());
+        for a in &m.arquivos {
+            let gbk = hex::decode(&a.caminho_gbk)?;
+            let nome = nomes::legivel(&gbk).to_lowercase();
+            let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+            i.entry(nome).or_insert((sha, a.tamanho, gbk));
+        }
+        let i = Arc::new(i);
+        self.arquivos_do_cliente.lock().unwrap().insert(versao.to_string(), (v.manifesto_sha256.clone(), i.clone()));
+        Ok(i)
+    }
+
     /// Um arquivo do cliente publicado, pelo caminho (sem diferenciar maiúsculas).
     async fn arquivo_do_cliente(&self, gov: &Governanca, versao: &str, caminho: &str) -> Result<Vec<u8>> {
-        let v = gov.publicado(versao)?.0;
-        let indice = {
-            let atual = self.arquivos_do_cliente.lock().unwrap().get(versao).cloned();
-            match atual {
-                Some((sha, i)) if sha == v.manifesto_sha256 => i,
-                _ => {
-                    let (_, m) = gov.publicado(versao)?;
-                    let mut i = HashMap::with_capacity(m.arquivos.len());
-                    for a in &m.arquivos {
-                        let nome = nomes::legivel(&hex::decode(&a.caminho_gbk)?).to_lowercase();
-                        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
-                        i.insert(nome, (sha, a.tamanho));
-                    }
-                    let i = Arc::new(i);
-                    self.arquivos_do_cliente.lock().unwrap().insert(versao.to_string(), (v.manifesto_sha256.clone(), i.clone()));
-                    i
-                }
-            }
-        };
-        let (sha, tamanho) = *indice.get(&caminho.to_lowercase()).with_context(|| format!("{caminho} não está no cliente {versao}"))?;
+        let indice = self.indice_do_cliente(gov, versao)?;
+        let (sha, tamanho, _) = indice.get(&caminho.to_lowercase()).cloned().with_context(|| format!("{caminho} não está no cliente {versao}"))?;
         let objetos = gov.objetos(versao);
         Ok(tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho as usize)).await??)
     }
@@ -2647,13 +2655,10 @@ impl Estudio {
         caminho: &str,
         rascunho: Option<i64>,
     ) -> Result<(Vec<u8>, Sha256Bytes, usize, Vec<u8>, Option<ItemDeRecurso>)> {
-        let (_, m) = gov.publicado(versao)?;
         let alvo = caminho.to_lowercase();
-        let publicado = m
-            .arquivos
-            .iter()
-            .find(|a| hex::decode(&a.caminho_gbk).map(|g| nomes::legivel(&g).to_lowercase() == alvo).unwrap_or(false));
-        let Some(a) = publicado else {
+        let indice = self.indice_do_cliente(gov, versao)?;
+        let publicado = indice.get(&alvo).cloned();
+        let Some((sha, tamanho, gbk)) = publicado else {
             // B321: arquivo que o rascunho acrescenta (ação `adicionar`, ex. o `habilidades.pwsk`): só existe nele.
             if let Some(r) = rascunho {
                 gov.rascunho_da_versao(versao, r).await?;
@@ -2667,9 +2672,7 @@ impl Estudio {
             }
             bail!("{caminho} não está no cliente {versao}");
         };
-        let gbk = hex::decode(&a.caminho_gbk)?;
-        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
-        let tamanho = a.tamanho as usize;
+        let tamanho = tamanho as usize;
         let objetos = gov.objetos(versao);
         if let Some(r) = rascunho {
             gov.rascunho_da_versao(versao, r).await?;
@@ -2979,13 +2982,39 @@ impl Estudio {
                 gs::TipoDoCampo::Gbk(n) => json!(gs::ler_texto(&o[d..d + n], t)),
             }
         };
+        // G-Shop: depois das 8 colunas do B254, o ícone do item (atlas), o selo e o VIP da 1ª opção (no 1.2.6 o
+        // `status` é da oferta e não há VIP), o brinde, quantas opções o GS vende (até a primeira sem preço) e a
+        // imagem própria da oferta (`icon`).
+        let v126 = g.formato == pw_data_loader::gshop::FormatoDoGshop::V126;
+        let icone_do_item = |id: u32| match ids.get(&("ESSENCE".to_string(), id as i32)) {
+            Some(&(ti, ri)) if ti != CONVERSAS => icone_do_registro(&e.tabelas[ti], ri),
+            _ => None,
+        };
+        let mut conferencias = Map::new();
         let ofertas: Vec<Value> = g
             .ofertas
             .iter()
             .enumerate()
             .map(|(i, o)| {
                 let id = u32::from_le_bytes(o[140..144].try_into().unwrap());
-                json!([i, pega(o, "main_type"), pega(o, "sub_type"), id, pega(o, "num"), pega(o, "szName"), pega(o, "buy_0_price"), nome_do_item(id)])
+                let c = conferir_com_o_elements(&g, o, &e, &ids);
+                if !c.vazia() {
+                    conferencias.insert(i.to_string(), json!(c));
+                }
+                let ativas = (0..4).take_while(|k| pega(o, &format!("buy_{k}_price")).as_u64() > Some(0)).count();
+                // A opção que o cartão do cliente mostra: a primeira com preço (`GetFirstBuyStatus`, `DlgQShop.cpp:914-929`).
+                let mostrada = (0..4).find(|k| pega(o, &format!("buy_{k}_price")).as_u64() > Some(0));
+                let k = mostrada.unwrap_or(0);
+                let (selo, vip, brinde) = if v126 {
+                    (pega(o, "status"), Value::Null, Value::Null)
+                } else {
+                    let vip = if g.formato == pw_data_loader::gshop::FormatoDoGshop::V155Vip { pega(o, &format!("buy_{k}_min_vip_level")) } else { Value::Null };
+                    (pega(o, &format!("buy_{k}_status")), vip, pega(o, "idGift"))
+                };
+                json!([
+                    i, pega(o, "main_type"), pega(o, "sub_type"), id, pega(o, "num"), pega(o, "szName"), pega(o, "buy_0_price"), nome_do_item(id),
+                    icone_do_item(id), selo, vip, brinde, ativas, pega(o, "icon"), mostrada.map_or(json!(0), |k| pega(o, &format!("buy_{k}_price")))
+                ])
             })
             .collect();
         let categorias: Vec<Value> = g
@@ -2995,8 +3024,8 @@ impl Estudio {
             .collect();
         Ok(json!({
             "arquivo": arquivo, "formato": format!("{:?}", g.formato), "carimbo": g.carimbo, "no_rascunho": item.is_some(),
-            "colunas": ["indice", "main_type", "sub_type", "id", "num", "szName", "buy_0_price", "item"],
-            "ofertas": ofertas, "categorias": categorias,
+            "colunas": ["indice", "main_type", "sub_type", "id", "num", "szName", "buy_0_price", "item", "icone", "selo", "vip", "brinde", "opcoes", "imagem", "preco_mostrado"],
+            "ofertas": ofertas, "categorias": categorias, "conferencias": conferencias,
             "campos": campos.iter().map(|(n, t, _)| json!([n, t])).collect::<Vec<_>>(),
         }))
     }
@@ -3033,12 +3062,22 @@ impl Estudio {
         .await
     }
 
+    /// Edita os campos da oferta. Recusa a mudança que cria um **erro novo** na conferência (`gs::conferir_oferta`,
+    /// as regras de carga do GS); erro que a oferta já tinha não impede editar o resto.
     pub async fn editar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        let ids = mapa_de_ids(&e);
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
             let mut o = g.ofertas.get(indice).cloned().with_context(|| format!("oferta {indice} não existe"))?;
             let antes = gs::ler_oferta(g, &o);
+            let conferencia_antes = conferir_com_o_elements(g, &o, &e, &ids);
             for (k, v) in &campos {
                 gs::definir_campo(g, &mut o, k, v)?;
+            }
+            let novos: Vec<String> =
+                conferir_com_o_elements(g, &o, &e, &ids).erros.into_iter().filter(|x| !conferencia_antes.erros.contains(x)).collect();
+            if !novos.is_empty() {
+                bail!("a oferta ficaria inválida: {}", novos.join("; "));
             }
             let depois = gs::ler_oferta(g, &o);
             let mudou: Map<String, Value> = depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
@@ -3049,13 +3088,25 @@ impl Estudio {
         .await
     }
 
-    /// Oferta nova no fim da lista (não muda o índice de ninguém), cópia do `base`.
-    pub async fn clonar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, base: usize) -> Result<Value> {
+    /// Oferta nova no fim da lista (não muda o índice de ninguém), cópia do `base` com os `campos` trocados (o item, a
+    /// aba e a subaba da oferta nova); recusa se a cópia teria erro na conferência.
+    pub async fn clonar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, base: usize, campos: Map<String, Value>) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        let ids = mapa_de_ids(&e);
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
-            let o = g.ofertas.get(base).cloned().with_context(|| format!("oferta {base} não existe"))?;
+            let mut o = g.ofertas.get(base).cloned().with_context(|| format!("oferta {base} não existe"))?;
+            for (k, v) in &campos {
+                gs::definir_campo(g, &mut o, k, v)?;
+            }
+            if !campos.is_empty() {
+                let c = conferir_com_o_elements(g, &o, &e, &ids);
+                if !c.erros.is_empty() {
+                    bail!("a oferta nova ficaria inválida: {}", c.erros.join("; "));
+                }
+            }
             g.ofertas.push(o);
             let indice = g.ofertas.len() - 1;
-            Ok((json!({ "indice": indice }), json!({ "acao": "nova", "tipo": "oferta", "indice": indice, "base": base })))
+            Ok((json!({ "indice": indice }), json!({ "acao": "nova", "tipo": "oferta", "indice": indice, "base": base, "campos": campos })))
         })
         .await
     }
@@ -3071,6 +3122,249 @@ impl Estudio {
             Ok((json!({ "removida": indice }), json!({ "acao": "removida", "tipo": "oferta", "indice": indice, "nome": nome })))
         })
         .await
+    }
+}
+
+// ------------------------------------------------------------------ Estúdio G-Shop: abas, imagens e conferência
+
+/// Pilha máxima do item como o `get_item_pile_limit` do GS (`cgame/gs/template/itemdataman.cpp:815`): o
+/// `pile_num_max` do registro; registro sem esse campo = 1 (os `return 1` do fim do `switch`); id que não está no espaço
+/// ESSENCE = `None` (o GS devolve 0 e recusa).
+fn pilha_do_item(e: &ElementsEditavel, ids: &HashMap<(String, i32), (usize, usize)>, id: u32) -> Option<u32> {
+    let &(ti, ri) = ids.get(&("ESSENCE".to_string(), id as i32))?;
+    if ti == CONVERSAS {
+        return None;
+    }
+    Some(match e.tabelas[ti].ler(ri).ok().and_then(|r| r.get("pile_num_max").and_then(FieldValue::as_i32)) {
+        Some(p) => p.max(0) as u32,
+        None => 1,
+    })
+}
+
+fn conferir_com_o_elements(g: &GshopEditavel, o: &[u8], e: &ElementsEditavel, ids: &HashMap<(String, i32), (usize, usize)>) -> gs::Conferencia {
+    gs::conferir_oferta(g, o, &|id| pilha_do_item(e, ids, id))
+}
+
+/// Um botão de aba principal do diálogo da loja: o texto que o arquivo de interface traz (o cliente o troca pelo
+/// `szName` do `gshop`, `DlgQShop.cpp:1287`) e as imagens de botão solto e apertado (`FrameUpImage`/`FrameDownImage`).
+#[derive(Debug, Clone)]
+struct BotaoDeAba {
+    texto: String,
+    normal: Option<String>,
+    selecionada: Option<String>,
+}
+
+/// O diálogo que mostra a loja no cliente: tema 0 = `interfaces\*.xml` (lista `ingame.dcf`), tema 1 =
+/// `interfaces\version01\*.xml` (`ingame-v1.dcf`, `EC_UIManager.cpp:136-145`); no 1.2.6 o `qshop.dtf`.
+#[derive(Debug, Clone)]
+struct DialogoDaLoja {
+    tema: u8,
+    arquivo: String,
+    principais: Vec<BotaoDeAba>,
+    /// Quantos `Btn_SubType0..N` o diálogo tem (fora o `Btn_SubType-1`, o "todos" da aba, `DlgQShop.cpp:806-822`).
+    subabas: usize,
+    /// Todos os botões usam a mesma imagem (o `qshop.dtf` do 1.2.6): trocá-la mudaria todos.
+    compartilhada: bool,
+}
+
+/// Os diálogos de cada loja: `gshop.data` → `Win_QShop` (`qshop`), `gshop1.data` → `Win_BackShop` (`backshop`,
+/// `DlgQShop.cpp:1087-1099`), `gshop2.data` → a loja VIP, mostrada dentro da `Win_QShop` na aba 5
+/// (`IsCashVipShopItem`/`GetCashVipItemIndex`, `DlgQShop.cpp:1705-1736`).
+fn dialogos_candidatos(arquivo: &str) -> [(u8, String); 3] {
+    let nome = if arquivo == "gshop1.data" { "backshop" } else { "qshop" };
+    [
+        (0, format!("interfaces\\{nome}.xml")),
+        (1, format!("interfaces\\version01\\{nome}.xml")),
+        (0, format!("interfaces\\{nome}.dtf")),
+    ]
+}
+
+/// Os atributos `nome="..."` de um trecho de XML.
+fn atributo(trecho: &str, marca: &str, nome: &str) -> Option<String> {
+    let i = trecho.find(marca)?;
+    let resto = &trecho[i..];
+    let fim_da_marca = resto.find('>').unwrap_or(resto.len());
+    let resto = &resto[..fim_da_marca];
+    let a = resto.find(&format!("{nome}=\""))? + nome.len() + 2;
+    Some(resto[a..a + resto[a..].find('"')?].to_string())
+}
+
+/// Lê o `qshop.xml`/`backshop.xml` (UTF-16LE, o formato do cliente 1.5.5 BR).
+fn ler_dialogo_xml(bytes: &[u8]) -> (Vec<BotaoDeAba>, usize) {
+    let corpo = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
+    let u: Vec<u16> = corpo.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let xml = String::from_utf16_lossy(&u);
+    let mut principais = Vec::new();
+    for i in 0..16 {
+        let Some(ini) = xml.find(&format!("Name=\"Btn_MainType{i}\"")) else { break };
+        let fim = xml[ini..].find("</STILLIMAGEBUTTON>").map_or(xml.len(), |f| ini + f);
+        let t = &xml[ini..fim];
+        principais.push(BotaoDeAba {
+            texto: atributo(t, "<Text ", "String").unwrap_or_default(),
+            normal: atributo(t, "<FrameUpImage", "FileName"),
+            selecionada: atributo(t, "<FrameDownImage", "FileName"),
+        });
+    }
+    let subabas = (0..16).take_while(|k| xml.contains(&format!("Name=\"Btn_SubType{k}\""))).count();
+    (principais, subabas)
+}
+
+/// Lê o `qshop.dtf` do 1.2.6 (GBK, uma linha por controle: `STILLIMAGEBUTTON "nome" "comando" "texto" x y w h … "imagem
+/// solta" "imagem apertada" …`).
+fn ler_dialogo_dtf(bytes: &[u8]) -> (Vec<BotaoDeAba>, usize) {
+    let texto = encoding_rs::GBK.decode(bytes).0.into_owned();
+    let mut principais = Vec::new();
+    let mut subabas = 0;
+    for linha in texto.lines() {
+        let aspas: Vec<&str> = linha.split('"').skip(1).step_by(2).collect();
+        let Some(nome) = aspas.first() else { continue };
+        if nome.strip_prefix("Btn_MainType").is_some_and(|n| n.parse::<u32>().is_ok()) {
+            principais.push(BotaoDeAba {
+                texto: aspas.get(2).unwrap_or(&"").to_string(),
+                normal: aspas.get(3).map(|s| s.to_string()),
+                selecionada: aspas.get(4).map(|s| s.to_string()),
+            });
+        } else if nome.strip_prefix("Btn_SubType").is_some_and(|n| n.parse::<u32>().is_ok()) {
+            subabas += 1;
+        }
+    }
+    (principais, subabas)
+}
+
+/// Caminho no cliente de uma imagem de interface (o motor de interface a procura em `surfaces\`).
+fn caminho_de_superficie(p: &str) -> String {
+    let p = p.replace('/', "\\");
+    if p.to_lowercase().starts_with("surfaces\\") { p } else { format!("surfaces\\{p}") }
+}
+
+/// Tamanho do quadro da imagem da oferta: `Img_Item` de 128×128 no `qshop.xml` e no `qshopbuy.xml` do 1.5.5 BR e no
+/// `qshop.dtf` do 1.2.6 (medido); as imagens das ofertas do cliente são DDS de 128×128.
+pub const LADO_DA_IMAGEM_DA_OFERTA: u32 = 128;
+
+impl Estudio {
+    async fn dialogos_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>) -> Result<Vec<DialogoDaLoja>> {
+        caminho_da_loja(arquivo)?;
+        let mut r = Vec::new();
+        for (tema, caminho) in dialogos_candidatos(arquivo) {
+            // O 1.5.5 BR ainda traz um `qshop.dtf` antigo, que o `ingame.dcf` não lista: o `.dtf` só vale sem `.xml`.
+            if caminho.ends_with(".dtf") && !r.is_empty() {
+                continue;
+            }
+            let Ok(b) = self.bytes_do_cliente(gov, versao, &caminho, rascunho).await else { continue };
+            let (principais, subabas) = if caminho.ends_with(".xml") { ler_dialogo_xml(&b) } else { ler_dialogo_dtf(&b) };
+            if principais.is_empty() {
+                continue;
+            }
+            let primeira = principais[0].normal.clone();
+            let compartilhada = principais.len() > 1 && principais.iter().all(|p| p.normal == primeira);
+            r.push(DialogoDaLoja { tema, arquivo: caminho, principais, subabas, compartilhada });
+        }
+        Ok(r)
+    }
+
+    /// As abas da loja como o cliente as desenha: quantos botões de aba e de subaba o diálogo tem, o texto e as
+    /// imagens de cada aba principal (com o tamanho, para a troca), por tema de interface.
+    pub async fn abas_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>) -> Result<Value> {
+        let mut temas = Vec::new();
+        for d in self.dialogos_da_loja(gov, versao, arquivo, rascunho).await? {
+            let mut abas = Vec::new();
+            for (i, b) in d.principais.iter().enumerate() {
+                let mut imagens = Map::new();
+                for (estado, p) in [("normal", &b.normal), ("selecionada", &b.selecionada)] {
+                    let Some(p) = p else { continue };
+                    let caminho = caminho_de_superficie(p);
+                    let medida = match self.bytes_do_cliente(gov, versao, &caminho, rascunho).await {
+                        Ok(bytes) => pw_data_loader::imagem::decodificar(&bytes).map(|i| json!({ "largura": i.largura, "altura": i.altura })),
+                        Err(_) => None,
+                    };
+                    imagens.insert(estado.into(), json!({ "caminho": caminho, "existe": medida.is_some(), "medida": medida }));
+                }
+                abas.push(json!({ "indice": i, "texto_do_dialogo": b.texto, "imagens": imagens }));
+            }
+            temas.push(json!({
+                "tema": d.tema, "dialogo": d.arquivo, "botoes_de_aba": d.principais.len(), "botoes_de_subaba": d.subabas,
+                "imagem_compartilhada": d.compartilhada, "abas": abas,
+            }));
+        }
+        Ok(json!({ "arquivo": arquivo, "temas": temas }))
+    }
+
+    /// Uma imagem de interface do cliente (TGA/DDS em `surfaces\`) em PNG, para o painel mostrar.
+    pub async fn imagem_do_cliente_em_png(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Vec<u8>> {
+        let caminho = caminho_de_superficie(caminho);
+        let b = self.bytes_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let img = pw_data_loader::imagem::decodificar(&b).with_context(|| format!("{caminho}: formato de imagem não lido"))?;
+        crate::mapas::png(img.largura, img.altura, &img.rgba)
+    }
+
+    /// Troca a imagem de uma aba principal (`estado` = `normal` ou `selecionada`) por um PNG do mesmo tamanho, gravada
+    /// no formato do arquivo original (TGA de 32 bits ou DDS). Item `cliente`: só o cliente desenha a aba.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn trocar_imagem_da_aba(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, aba: usize, tema: u8, estado: &str, png: &[u8]) -> Result<Value> {
+        let dialogos = self.dialogos_da_loja(gov, versao, arquivo, Some(rascunho)).await?;
+        let d = dialogos.iter().find(|d| d.tema == tema).with_context(|| format!("o cliente não tem o diálogo da loja no tema {tema}"))?;
+        if d.compartilhada {
+            bail!(
+                "em {} as abas não têm imagem própria: todos os botões usam {} — trocar mudaria todos os botões do jogo que usam esse arquivo",
+                d.arquivo,
+                d.principais[0].normal.clone().unwrap_or_default()
+            );
+        }
+        let b = d.principais.get(aba).with_context(|| format!("o diálogo {} não tem a aba {aba}", d.arquivo))?;
+        let p = match estado {
+            "normal" => &b.normal,
+            "selecionada" => &b.selecionada,
+            _ => bail!("estado: normal ou selecionada"),
+        };
+        let caminho = caminho_de_superficie(p.as_deref().with_context(|| format!("a aba {aba} não tem imagem {estado}"))?);
+        let nova = pw_data_loader::imagem::png(png).context("a imagem enviada não é um PNG legível")?;
+        let (c2, estado2) = (caminho.clone(), estado.to_string());
+        self.alterar_item_do_cliente(gov, versao, &caminho, rascunho, move |atual| {
+            let velha = pw_data_loader::imagem::decodificar(atual).with_context(|| format!("{c2}: formato não lido"))?;
+            if (velha.largura, velha.altura) != (nova.largura, nova.altura) {
+                bail!("a imagem precisa ter {}×{} (a do botão), não {}×{}", velha.largura, velha.altura, nova.largura, nova.altura);
+            }
+            let bytes = if pw_data_loader::imagem::tga(atual).is_some() { pw_data_loader::imagem::tga_32(&nova) } else { pw_data_loader::imagem::dds_dxt(&nova) };
+            Ok((bytes, json!({ "caminho": c2 }), json!({ "acao": "imagem", "tipo": "aba", "aba": aba, "estado": estado2, "caminho": c2 })))
+        })
+        .await
+    }
+
+    /// Imagem própria da oferta (o `icon` do `GSHOP_ITEM`, que o cliente mostra em 128×128 quando a oferta é escolhida
+    /// e na janela de compra, `DlgQShop.cpp:989`, `DlgQShopBuy.cpp:137`; o cartão da vitrine usa o ícone do item,
+    /// `DlgQShopItem.cpp:380`): o PNG vira um DDS novo em `surfaces\百宝阁\` (a pasta das imagens da loja), com o nome
+    /// pelo conteúdo — a imagem antiga pode ser de outras ofertas, então não é sobrescrita.
+    pub async fn trocar_imagem_da_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize, png: &[u8]) -> Result<Value> {
+        let nova = pw_data_loader::imagem::png(png).context("a imagem enviada não é um PNG legível")?;
+        if (nova.largura, nova.altura) != (LADO_DA_IMAGEM_DA_OFERTA, LADO_DA_IMAGEM_DA_OFERTA) {
+            bail!("a imagem da oferta precisa ter {0}×{0} (o quadro Img_Item da loja), não {1}×{2}", LADO_DA_IMAGEM_DA_OFERTA, nova.largura, nova.altura);
+        }
+        let dds = pw_data_loader::imagem::dds_dxt(&nova);
+        let sha = sha256(&dds);
+        let nome = format!("estudio_{}.dds", hex::encode(&sha[..6]));
+        let caminho = format!("surfaces\\百宝阁\\{nome}");
+        let ja_tem = self.bytes_do_cliente(gov, versao, &caminho, Some(rascunho)).await.ok().is_some_and(|b| sha256(&b) == sha);
+        if !ja_tem {
+            gov.gravar_arquivo(versao, rascunho, &caminho, dds, "cliente").await?;
+        }
+        let mut campos = Map::new();
+        campos.insert("icon".into(), json!(format!("Surfaces\\百宝阁\\{nome}")));
+        let r = self.editar_oferta(gov, versao, arquivo, rascunho, indice, campos).await?;
+        Ok(json!({ "caminho": caminho, "resultado": r }))
+    }
+
+    /// Confere uma oferta (a `indice`, ou uma nova copiada de `indice`) com os `campos` aplicados, sem gravar.
+    pub async fn conferir_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        let caminho = caminho_da_loja(arquivo)?;
+        let (_, _, _, bytes, _) = self.item_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let g = GshopEditavel::ler(&bytes)?;
+        let mut o = g.ofertas.get(indice).cloned().with_context(|| format!("oferta {indice} não existe"))?;
+        for (k, v) in &campos {
+            gs::definir_campo(&g, &mut o, k, v)?;
+        }
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let ids = mapa_de_ids(&e);
+        Ok(json!(conferir_com_o_elements(&g, &o, &e, &ids)))
     }
 }
 
@@ -3335,7 +3629,21 @@ impl Estudio {
     /// Categorias da loja (B257): `acao` = `renomear` (`categoria`, `sub?`, `nome`), `nova` (subcategoria no fim de
     /// `categoria`, com `nome`) ou `remover` (a última subcategoria de `categoria`, se nenhuma oferta a usa).
     pub async fn categoria_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, pedido: Value) -> Result<Value> {
+        // G-Shop: a subaba nova precisa de botão no diálogo da loja (`Btn_SubType0..7` nos dois clientes; a que passa
+        // disso não aparece, e as ofertas dela só se veem no "todos" da aba, `DlgQShop.cpp:667-680, 822`).
+        let limite = self.dialogos_da_loja(gov, versao, arquivo, Some(rascunho)).await?.iter().map(|d| (d.subabas, d.arquivo.clone())).min();
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            if pedido["acao"].as_str() == Some("nova") {
+                let c = pedido["categoria"].as_u64().unwrap_or(0) as usize;
+                if let (Some((n, dialogo)), Some(cat)) = (&limite, g.categorias.get(c)) {
+                    if cat.subcategorias.len() >= *n {
+                        bail!(
+                            "a aba já tem {} subabas e o diálogo da loja ({dialogo}) só tem {n} botões de subaba: a nova não teria botão na tela (as ofertas dela só apareceriam no \"todos\" da aba)",
+                            cat.subcategorias.len()
+                        );
+                    }
+                }
+            }
             let c = pedido["categoria"].as_u64().context("categoria")? as usize;
             let texto = |k: &str| pedido[k].as_str().map(str::to_string).with_context(|| format!("{k}: texto"));
             let (resposta, mudanca) = match pedido["acao"].as_str() {

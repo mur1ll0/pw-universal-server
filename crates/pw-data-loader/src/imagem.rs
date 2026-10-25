@@ -418,6 +418,61 @@ pub fn dds_argb32(img: &Imagem) -> Vec<u8> {
     o
 }
 
+/// Estúdio G-Shop: TGA tipo 2 de 32 bits (BGRA), origem embaixo (descritor 0x08: 8 bits de alfa) e o rodapé TGA 2.0
+/// (`TRUEVISION-XFILE.`) — o formato das imagens das abas da Loja Gold no cliente 1.5.5 BR
+/// (`surfaces\version02\系统\商城\*.tga`, medido: cabeçalho `00 00 02 … 20 08`, 18 + w·h·4 + 26 bytes).
+pub fn tga_32(img: &Imagem) -> Vec<u8> {
+    let (w, h) = (img.largura as usize, img.altura as usize);
+    let mut o = Vec::with_capacity(18 + w * h * 4 + 26);
+    o.extend_from_slice(&[0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    o.extend_from_slice(&(w as u16).to_le_bytes());
+    o.extend_from_slice(&(h as u16).to_le_bytes());
+    o.extend_from_slice(&[32, 0x08]);
+    for y in (0..h).rev() {
+        for p in img.rgba[y * w * 4..(y + 1) * w * 4].chunks_exact(4) {
+            o.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+        }
+    }
+    o.extend_from_slice(&[0u8; 8]);
+    o.extend_from_slice(b"TRUEVISION-XFILE.\0");
+    o
+}
+
+#[cfg(test)]
+mod testes_do_tga_32 {
+    use super::*;
+
+    /// Decodificar e gravar de novo devolve o arquivo do cliente byte a byte (todas as imagens das abas da loja do
+    /// cliente BR que estiverem no disco; sem o cliente, só o caso sintético).
+    #[test]
+    fn tga_da_aba_volta_identico() {
+        let img = Imagem { largura: 2, altura: 1, rgba: vec![1, 2, 3, 4, 5, 6, 7, 8] };
+        let t = tga_32(&img);
+        assert_eq!(t.len(), 18 + 8 + 26);
+        assert_eq!(tga(&t).unwrap().rgba, img.rgba);
+        // `系统\商城` em GBK, gravado no disco do cliente BR como Latin-1 (como o extrator deixou os nomes).
+        let pasta = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\surfaces\version02\ÏµÍ³\ÉÌ³Ç");
+        let mut vistos = 0;
+        let mut pilha = vec![pasta.to_path_buf()];
+        while let Some(d) = pilha.pop() {
+            let Ok(l) = std::fs::read_dir(&d) else { continue };
+            for e in l.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    pilha.push(p);
+                } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("tga")) && vistos < 200 {
+                    let b = std::fs::read(&p).unwrap();
+                    if b.len() >= 18 && b[2] == 2 && b[16] == 32 && b[17] == 0x08 && b.ends_with(b"TRUEVISION-XFILE.\0") {
+                        assert!(tga_32(&tga(&b).unwrap()) == b, "{} não volta idêntico", p.display());
+                        vistos += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("tga_32: {vistos} TGA do cliente BR conferidos");
+    }
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
