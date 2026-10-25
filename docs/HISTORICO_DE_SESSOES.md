@@ -17622,4 +17622,4 @@ comparação lado a lado.
     - Teste `morrer_golpeando_encerra_o_golpe_antes_do_aviso_de_morte` (23 logo antes do 28, motivo 0; reviver não
       reabre o golpe; sem golpe aberto, nenhum 23 de sobra).
     ### d. Falta
-    - Murillo: ver em jogo (roteiro no ESTADO §3.3). Não commitado nem publicado.
+    - Murillo: ver em jogo (roteiro no ESTADO §3.3). Commitado (`34c0922`); `pw-world-126` e `pw-world-155` publicados.
