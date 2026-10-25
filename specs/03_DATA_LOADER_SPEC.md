@@ -494,6 +494,18 @@ teste): só o carimbo, loja vazia. Prova: `pw-data-loader/tests/gshop_do_realm.r
 `wchar[512]`, `szName` `wchar[32]`, brinde, `owner_npcs_0..7`, `buy_times_limit(_mode)`; no 1.2.6 `status`@196). Texto só
 é reescrito (e o resto do campo zerado) quando muda.
 
+**Conferência (B385):** `gshop_editavel::conferir_oferta(g, oferta, pilha)` porta as regras com que o GS 1.5.5 recusa a
+loja ao carregar — `load_malldata` (`cgame/gs/template/globaldataman.cpp:135-200`: `type` fora de -1..2 em qualquer
+opção) e `InitMall` (`cgame/gs/playermall.cpp:155-380`: id e quantidade, quantidade ≤ pilha do item
+(`get_item_pile_limit`, `itemdataman.cpp:815`), validade < 2³¹, `CheckParam` do período (datas com início < fim,
+semanal com bit 0–6 = domingo–sábado, mensal com bit k = dia k+1), grupo/selo ≥ 0, validade só com pilha 1 e sem
+período, opções do mesmo grupo sem sobreposição, brinde com pilha e validade). Aba e subaba têm de existir. Oferta sem
+nenhum preço = **aviso** (desativada: o cliente a esconde, `CalcBuyType`/`GetFirstBuyStatus`, `EC_Shop.cpp:172-197`,
+`DlgQShop.cpp:914-929`; 751 das 1.726 do BR); preço só depois de um buraco = aviso (o GS para na 1ª opção sem preço,
+`playermall.cpp:198`). No 1.2.6 as regras de item/pilha valem como aviso (o `InitMall` do `gs` 1.2.6 não foi conferido).
+As 4 lojas reais passam sem erro de opção (`testes_da_conferencia`). **`imagem::tga_32`**: TGA tipo 2, 32 bits, origem
+embaixo, descritor 0x08 e o rodapé `TRUEVISION-XFILE.` — os 37 TGA das abas da loja do cliente BR voltam byte a byte.
+
 ### 3.9 `collision.clt` (`collision.rs`)
 
 Carregado por mapa; **não consultado** pela simulação (monstro atravessa obstáculos).

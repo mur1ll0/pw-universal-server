@@ -416,6 +416,20 @@ sub?, nome?}` — `renomear` (categoria ou subcategoria, `wchar[64]`: até 63 ca
 `nova` (subcategoria no fim: nenhuma oferta muda de índice) e `remover` (só a **última** subcategoria e só se nenhuma
 oferta a usa — `main_type`/`sub_type` são índices). Painel: botão "Categorias" na vista Loja.
 
+**G-Shop no Estúdio (B385):** tela própria do Estúdio Svelte (`telas/GShop.svelte`). Rotas novas: `GET
+estudio/loja/{arquivo}/abas` (o diálogo da loja do cliente: `interfaces\qshop.xml`/`backshop.xml` no tema 0,
+`interfaces\version01\…` no tema 1, `qshop.dtf` no 1.2.6 — quantos `Btn_MainType`/`Btn_SubType` tem, o texto e as
+imagens solta/apertada de cada aba com o tamanho; `imagem_compartilhada` quando todos os botões usam o mesmo arquivo, o
+caso do 1.2.6), `POST …/abas/{aba}/imagem?tema&estado` (PNG do mesmo tamanho → TGA de 32 bits com rodapé TGA 2.0 ou DDS,
+no formato do original; item `cliente`), `POST …/{i}/imagem` (PNG 128×128 → DDS novo `surfaces\百宝阁\estudio_<sha>.dds`,
+nome pelo conteúdo, e o `icon` da oferta aponta para ele), `POST …/{i}/conferir {campos}` (a conferência sem gravar) e
+`GET estudio/imagem?caminho` (imagem de interface em PNG). A listagem ganhou 7 colunas (ícone do item, selo/VIP da 1ª
+opção com preço, brinde, opções que o GS vende, `icon`, preço mostrado) e `conferencias` por oferta. `POST loja {base,
+campos}` aplica os campos à cópia. **Conferência** (`gshop_editavel::conferir_oferta`, spec 03 §3.8): editar recusa só o
+erro **novo**; oferta sem nenhum preço é aviso ("desativada": o cliente não a mostra). **Subaba nova** recusada quando a
+aba já tem tantas quanto os botões do diálogo (8 nos dois clientes; a 9ª "Cabeça" da aba Roupas do BR não tem botão e só
+aparece no "todos", `DlgQShop.cpp:667-680, 822`). Leitura de arquivo do cliente pelo Estúdio: índice do publicado em cache com o caminho GBK, conferido pelo `versao.json` (`Governanca::versao_publicada`) — a rota das abas caiu de 16,6 s para 0,14 s no 1.5.5.
+
 **Comportamento dos monstros (S7, B258 — só leitura):** o `aipolicy.data` do realm (só do servidor; o cliente não o
 tem) pelo leitor do GS (`pw_data_loader::aipolicy`, porte de `cgame/gs/ai/policy.cpp`, interpretado no mundo desde o
 B127), em cache por versão/SHA. `GET estudio/comportamentos?busca` (linhas `[id, gatilhos, monstros]`, busca por id

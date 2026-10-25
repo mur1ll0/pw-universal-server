@@ -185,6 +185,27 @@ ser o mesmo arquivo (spec 03 §3.8); há `gshop1`/`gshop2` (segunda loja, `globa
 - 1.2.6: os campos que o layout v55 não tem (selo, VIP, período semanal…) aparecem desligados com a explicação.
 - Publicar = mesma regra do resto (rascunho → canal de teste → versão); vai ao `config/` do realm **e** ao cliente.
 
+**Feito no B385 (Estúdio Svelte, `telas/GShop.svelte`) — o que a evidência mudou no desenho:**
+
+- **Arquivos:** `gshop.data` = Loja Gold (`Win_QShop`, gold); `gshop1.data` = segunda loja (`Win_BackShop`, paga em
+  dividendos, `globaldata_getgshopitems2`, `DlgQShop.cpp:1087-1121`); `gshop2.data` = loja VIP
+  (`globaldata_getgshopitems3`, `CECVipShop`, `EC_Shop.cpp:695`), mostrada no fim da Loja Gold na aba 5
+  (`DlgQShop.cpp:1705-1736`). O 1.2.6 só tem `gshop.data`.
+- **Abas:** 8 fixas (o carregador lê 8, `globaldataman.cpp:643`; 8 `Btn_MainType` nos diálogos); o texto do botão é o
+  `szName` do arquivo (`DlgQShop.cpp:1287`), não o do `.xml`; subabas pelo nome do arquivo (:669), até 8 botões
+  (`Btn_SubType0..7`) mais o "todos" (`Btn_SubType-1`). **Imagem de aba:** no 1.5.5 cada botão tem a sua
+  (`surfaces\version02\系统\商城\<nome>（普通|选中）.tga`, TGA 32 bits, 63–82×33, só o desenho, sem texto); no 1.2.6
+  todos usam `Button\按钮_文本1/2.dds` — sem troca por aba. **Criar aba e reordenar: não** (índices citados no
+  `configs\qshopitem.ini` [Category], aba 5 = VIP, imagem por número de botão) — a tela explica.
+- **Arrastar para reordenar ofertas: não** — a ordem é o `goods_index`; oferta nova vai ao fim, remover avisa e oferece
+  "desativar" (zerar preços: o cliente esconde, ninguém muda de índice).
+- **Vitrine:** a ordem do jogo agrupa pelo selo da 1ª opção com preço — relâmpago, recomendado, promoção, novo, resto
+  (`GShopCollector`, `DlgQShop.cpp:170-232`); o cartão usa o ícone do **item** (`DlgQShopItem.cpp:380`).
+- **Imagem da oferta:** existe — o `icon` (`char[128]`, `Surfaces\百宝阁\*.dds`, DXT3 128×128), mostrado grande ao
+  escolher a oferta e na compra (`DlgQShop.cpp:989`, `DlgQShopBuy.cpp:137`); trocar grava um DDS novo.
+- **Unidades:** preço em centavos (`GetCashText`, `EC_GameUIMan.cpp:7951`), validade em segundos, datas time_t em GMT
+  (`playermall.cpp:195`), limite 0–4 = sem/dia/semana/mês/ano (`template/globaldataman.cpp:79`).
+
 ## 5. Arquitetura e tecnologia
 
 ```text
@@ -693,6 +714,15 @@ Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstro
 Gold com o arquivo e o preço da 1ª opção) e **Forjado por** (NPC → forja e página → receita, com a chance). Rota e
 regra na spec 07 §6c. Cada monstro, NPC, loja, forja e receita abre nos Editores em outra aba. Não cobre: drop pelo
 `npcgen` (os monstros só citam a própria essência), drops do GS fora do `elements` e as listas de "item especial".
+
+### 9.11 G-Shop (B385, 2026-10-25)
+
+Card "G-Shop" na Principal → `#/gshop?loja=<arquivo>`: arquivo no alto, abas à esquerda (`ArvoreDeAbas.svelte`),
+vitrine no meio (`CartaoDaOferta.svelte`), oferta à direita (`PainelDaOferta.svelte`). Lógica pura em `lib/gshop.ts`
+(filtros, ordem do jogo, preço em gold, selo, datas GMT, dias marcados, wchar) com `gshop.test.ts`. O que o layout da
+versão não tem (1.2.6: período, grupo, VIP, brinde, donos, limite) aparece desligado com a explicação. A conferência
+roda a cada mudança (`POST …/conferir`) e os erros impedem gravar; o motor recusa de novo no `PUT`. Desenho e evidência
+em §4.6; rotas na spec 07 (G-Shop).
 
 ### 9.10 Refino explicado e Equipáveis ↔ Blender (B383, 2026-10-25)
 

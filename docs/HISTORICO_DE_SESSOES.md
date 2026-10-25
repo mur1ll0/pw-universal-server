@@ -17694,3 +17694,35 @@ comparação lado a lado.
       parado | … | Decolando | Recolhendo | Abrindo".
     - Falta: o Murillo ver no Blender.
 
+385. **Sessão 2026-10-25: Estúdio G-Shop — a Loja Gold no Estúdio Svelte (B385).** Pedido do Murillo: card "G-Shop" com
+    tela própria no layout do §4.6 (abas, vitrine, oferta), abas e subabas editáveis, imagem de aba, itens por aba
+    (adicionar, mover, remover), painel da oferta com os campos de cada versão, imagem da oferta, conferência e prévia.
+    - Evidência (cliente 1.5.5 e GS 1.5.5): 3 lojas (`globaldataman.cpp:614-760`; `Win_QShop`/`Win_BackShop`,
+      `DlgQShop.cpp:1087-1121`; VIP na aba 5, :1705-1736); 8 abas fixas (:643) com o texto do `szName` (:1287); 8 botões
+      de subaba + "todos" no `qshop.xml` BR e no `qshop.dtf` 1.2.6; imagem por aba só no 1.5.5 (TGA 32 bits, medida);
+      `icon` da oferta = imagem 128×128 (`DlgQShop.cpp:989`); ordem da vitrine pelo selo (`GShopCollector`, :170-232);
+      preço em centavos (`EC_GameUIMan.cpp:7951`); regras de carga do GS (`globaldataman.cpp:135-200`,
+      `playermall.cpp:97-380`); limite 0–4 (`template/globaldataman.cpp:79`). Achado: 751 das 1.726 ofertas do BR não
+      têm preço (o cliente as esconde) e a aba Roupas do BR tem 9 subabas — a 9ª ("Cabeça", 165 ofertas) não tem
+      botão (diagnosticado; falta ver em jogo se só aparece no "todos").
+    - Feito: `gshop_editavel::conferir_oferta` e `imagem::tga_32` (pw-data-loader); `pw-recursos`: abas do diálogo,
+      imagem em PNG, troca da imagem da aba e da oferta, conferência, `clonar_oferta` com campos, editar recusa erro
+      novo, subaba limitada aos botões, 7 colunas novas na listagem; proxy do painel; Estúdio: `GShop.svelte`,
+      `ArvoreDeAbas`, `CartaoDaOferta`, `PainelDaOferta`, `lib/gshop.ts`.
+    - Provas: `tga_32` 37 TGA reais byte a byte; `testes_da_conferencia` (regras e as 4 lojas reais sem erro de opção);
+      `pw-recursos` integração: listagem, abas, imagem PNG, adicionar → mover → remover volta ao publicado byte a byte
+      (`igual_ao_publicado`), subaba além dos botões recusada, imagem da aba (tamanho errado recusado) e da oferta
+      (DDS novo, `icon`), rascunho descartado. Suítes `pw-data-loader` + `pw-recursos` com o banco: **307 passaram, 2 falharam** — as duas de dado, não da loja: `carga_dos_realms::a_geracao_de_equipamento_do_126` (a foice 15964 trocada pelo rascunho "v1" publicado na 1.2.6 v5, já registrado no B379) e `progressao_do_realm::o_distrito_do_nascimento_no_161…` (o `precinct.sev` do realm); `pw-recursos` sozinho depois do ajuste de desempenho: 30/0. Painel `teste_recursos` 14/14 no contêiner.
+      svelte-check 0/0; vitest 52/52.
+    - Desempenho: a rota das abas levava 16,6 s no 1.5.5 — `item_do_cliente` percorria os 327 mil arquivos do manifesto e
+      `gov.publicado()` relia o manifesto inteiro a cada imagem. Agora o índice do cliente publicado fica em cache com o
+      caminho GBK (`indice_do_cliente`) e o cache confere só o `versao.json` (`Governanca::versao_publicada`): 0,14 s
+      (1,15 s na primeira). Vale para toda leitura de arquivo do cliente no Estúdio. O 1.5.5 BR traz um `qshop.dtf` velho
+      fora do `ingame.dcf`: o `.dtf` só vale quando não há `.xml`.
+    - Navegador (localhost:8000, publicado): 1.5.5 — 1726 ofertas, 751 desativadas, 0 com erro, árvore com as imagens das
+      abas nos dois temas; rascunho 112: preço da #5 → 2,50 gold (250 no arquivo) gravado; "Nova oferta" com a Espada de
+      Bronze → #1726 no fim da aba Especial › Ofertas (cópia da #5); remover → 1726 de novo; rascunho descartado. 1.2.6 —
+      668 ofertas, só `gshop.data`, aviso de imagem compartilhada (`Button\按钮_文本1.dds`) e os campos do v126.
+    - Falta: o Murillo abrir a Loja Gold no 1.5.5 e no 1.2.6 depois de publicar (aba renomeada, oferta nova na aba
+      certa, compra com o goods_index certo); a 9ª subaba do BR em jogo; ordem da vitrine do 1.2.6 no binário.
+
