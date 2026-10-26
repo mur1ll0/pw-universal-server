@@ -769,3 +769,55 @@ no servidor (spec 07 §6c, B384), com voo, asas e espada voadora; a tela mostra 
 "Descendo de baixa altura"… (o nome do cliente ao passar o mouse), e o GLB exportado leva "Voando parado · 飞行悬停". No
 Blender, pode-se mudar a parte em português; o que vale na volta é o nome depois de " · ".
 
+
+### 9.12 Itens e minas (B386, 2026-10-25)
+
+**Card "Itens".** As tabelas que o GS gera como item (`TABELAS_DE_ITEM`, `generate_item_temp.h:5-145`) e que não são
+Equipáveis, agrupadas em `lib/itens.ts::SUBCATEGORIAS_DE_ITENS` com o nome em português e o que o servidor faz de cada uma
+(a classe do item, `template/setclassid.cpp:23-289`, e o tratador em `cgame/gs/item/`). Cada tabela foi conferida no
+layout das duas versões; a que o v7 não tem só aparece no 1.5.5 (o teste `lib/itens.test.ts` confere contra
+`specs/elements_layouts/v156.json` e `v7.json`, e que a lista cobre exatamente `TABELAS_DE_ITEM` menos os Equipáveis).
+
+| grupo | tabelas | o que o servidor faz |
+| :--- | :--- | :--- |
+| Materiais | `MATERIAL`, `FACTION_MATERIAL` (1.5.5), `ELEMENT` | classe -1: usar não faz nada; entra em receita, desmontar, voo (元石) |
+| Poções e remédios | `MEDICINE`, `AUTOHP`, `AUTOMP`, `DOUBLE_EXP` | remédio pela categoria (1794/1802/1810/1815/2038; outra não gera item); amuleto dispara abaixo da proporção |
+| Pergaminhos | `TOWNSCROLL`, `TRANSMITSCROLL`, `REVIVESCROLL`, `UNIONSCROLL`, `FIX_POSITION_TRANSMIT` e `CONGREGATE` (1.5.5) | cidade, ponto descoberto, marca, reunir; reviver e `UNIONSCROLL` têm classe -1 no GS 1.5.5 |
+| Livros de habilidade | `SKILLTOME`, `SKILLMATTER`, `INC_SKILL_ABILITY` e `DYNSKILLEQUIP` (1.5.5) | o livro não guarda a habilidade: é o `item_exigido` dela |
+| Pedras e refino | `STONE`, `REFINE_TICKET`, `DAMAGERUNE`, `ARMORRUNE`, `SHARPENER` (1.5.5) | incrustar, talismã, runas |
+| Aparência | `DYE_TICKET`, `FACETICKET`, `FACEPILL` | tingir, cirurgia, transformação |
+| Itens de missão | `TASKMATTER`, `TASKNORMALMATTER`, `TASKDICE` | classe -1; o sorteio dá uma missão |
+| Mascote e Daimon | `PET_EGG`, `PET_FOOD`; `GOBLIN`, `GOBLIN_EXPPILL`, `MONSTER_SPIRIT` (1.5.5) | |
+| Fogos e diversos | `FIREWORKS`, `SPEAKER`, `TOSSMATTER`, `QUIVER`, `WAR_TANKCALLIN`, `GM_GENERATOR` e, no 1.5.5, `FIREWORKS2`, barraca, alvo, casamento, facção, fichas, pacote por classe | |
+| Cartas e Astrolábio (1.5.5) | `POKER_DICE`, `ASTROLABE*` | |
+| Minas (no mapa) | `MINE_ESSENCE` | não é item: o recurso do mapa que dá os materiais |
+
+**Edição (`telas/EdicaoItem.svelte`).** Principal (nome, ícone, categoria/subcategoria pelas tabelas `*_TYPE` de cada uma,
+regras do item, descrição do `item_ext_desc.txt`); boxes próprias por tipo; boxes genéricas (Comércio, Desmontar com a pedra
+elemental, Coleta, Monstros ao colher, Uso) e "Outros campos" com o resto da tabela — o que a versão não tem some.
+
+| box | regra mostrada | evidência |
+| :--- | :--- | :--- |
+| O que cura (remédio) | 1794 vida e 1802 mana no tempo: `total / tempo` por segundo (divisão inteira; menos de 1/s o GS recusa), tomar outra soma; 1810 vida e mana na hora; 1815 enfraquece, 2038 tira o veneno; recarga em ms, abaixo de 1000 ×100; família de recarga de cada uma; nível = o maior que o personagem já teve | `generate_item_temp.h:913-1000`; `item_potion.cpp:18-110`; `potion_filter.h:16-64` |
+| Como dispara (amuleto) | abaixo de `trigger_amount` × máximo repõe o que falta, gastando os pontos; recarga `cool_time` ms | `player.cpp:9105-9130`; `item_amulet.cpp`; `itemdataman.cpp:1815-1819` |
+| Incrustar (pedra) | onde serve pela máscara (`require_equip` = `combined_switch`: 1 sem arma, 2 sem armadura, 4 colar, 8 cinto; acessório só com 4 ou 8); efeito em arma/armadura/acessório com o texto do cliente; preço de incrustar, remover e trocar | `item.cpp:332-353`; `ExpTypes.h:2053-2065`; `serviceprovider.cpp:1374-1385`; `item_list.cpp:205`; `player.cpp:23879` |
+| Chances do refino (talismã) | +0…+11: sucesso, nada muda, cai um, zera — com e sem o talismã; o que passa de 100% é cortado | `equip_item.cpp:192-205, 265-273`; `player.cpp:11719-11747`; `arandomgen.h:129-139` |
+| Habilidade | nome e nível da habilidade citada (catálogo do realm) | |
+| Livro de habilidade | as habilidades (e níveis) que exigem o livro | catálogo do realm (`item_exigido`); `skill.cpp:79-84` |
+| Materiais que dá (mina) | lista editável (até 16) com chance e validade; soma tem de ser 1 ("Ajustar para somar 1"); a mina como o GS a monta ou o motivo da recusa; sorteio do material e da quantidade ao nascer; coleta | `npcgenerator.cpp:1280-1365, 5003-5016`; `matter.cpp:265-440` |
+
+**Para onde vai.** Cards "Entra nas receitas" (receita, quantidade, o que faz) e "Sai das minas" (chance, validade, aviso de
+mina recusada); cada um abre em outra aba (mina e item no Estúdio, receita nos Editores).
+
+**Onde aparece (`componentes/BoxDeRecurso.svelte`).** No Material (as minas que o dão) e na Mina: as áreas de recurso do
+npcgen de todos os mapas, com o mapa (zoom, clique no centro, alça do retângulo — `fExtX × fExtZ`, a área é centro ± metade),
+quantidade (`dwNumber`), renascer (`15 + dwRefreshTime` s, mínimo 15), os campos da área com o significado do
+`npcgenerator.cpp:3888-3932` e criar (clone de uma área de recurso do mapa), mover, redimensionar e remover pelas rotas
+`npcgen/recursos` dos Editores (B243/B247), com a altura do chão pelo `.hmap` (B248). Nenhum item nasce direto no chão pelo
+npcgen: só minas.
+
+**Modelo 3D.** Card "Modelo 3D no chão" (`file_matter`) e "Modelo 3D da mina" (`file_model`): o `ModeloDoEquipavel` com
+`como="matter"` — o cliente monta como `CECMatter` (peles do `.smd`; sem nenhuma, a `<.smd>.ski`), sem gancho; Exportar GLB,
+Importar só o modelo / só as animações / tudo (modelo novo em `models\matters\estudio`), Conferir sem gravar, relatório. Os
+outros `file_model*` da tabela (Daimon, arremessável) ficam no Visual 3D só para ver. Fogos são um `.gfx` (não modelo) e
+nada pende no personagem ao usar item.

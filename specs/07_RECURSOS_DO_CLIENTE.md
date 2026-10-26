@@ -979,7 +979,9 @@ monstro) e
   espada voadora (medidos em 130 modelos de voo/asa/arma das duas versões: 低空下降/地空下降, 高空下降, 飞行悬停, 飞行前进,
   飞行落地, 飞行下降, 翅膀收起, 飞剑…, 展开, 收起, 起飞, 滑翔, 前进, 悬停, 落地, 静止); o prefixo do modelo ("天鹅之翼_")
   sai do legível; 起/落 só viram "— início/— golpe" do ataque quando o fim não é um termo da tabela (收起, 落地). A volta é
-  a de sempre (`importar::nome_original`): o nome do cliente depois de " · ". Medido no publicado: as animações de
+  a de sempre (`importar::nome_original`): o nome do cliente depois de " · ". B386 acrescentou o item caído (`掉落保护` no chão, `_水中` na água, `_空中` no ar —
+  o `CECMatter` escolhe pelo ambiente, `EC_Matter.cpp:300-311`; em 1.006 dos 1.681 modelos de chão e de mina das duas versões),
+  `刀光` (614) e termos soltos de modelos de personagem usados como item; um termo da tabela com `_` não é prefixo de modelo. Medido no publicado: as animações de
   天鹅之翼 e 机械翼 exportadas e importadas de volta deram "igual à do cliente (não gravada)" em todas.
 - **Pesos da pele (todo importador: `ski_do_glb`)** — decisão com evidência do motor:
   - corrigido sozinho, porque o resultado é o que o jogo faria: peso zero antes de um não nulo (o motor para no 1º
@@ -995,6 +997,32 @@ monstro) e
   - sem limite de ossos por malha: o motor divide a malha sozinho pelas constantes do D3D9
     (`A3DSkinMesh::CreateVertexShaderSubMeshes`, `:500-640`).
   - Tudo vai para o `relatorio` (texto em português, com o que fazer no Blender).
+
+### Itens e minas (B386)
+
+- **Para onde o item vai** — `GET estudio/usos/{id}?rascunho=` (`Estudio::usos_do_item`; painel `GET /api/realms/{r}/estudio/usos/{id}`):
+  `ingrediente_de` (receitas cujo `materials_N_id` é o item, com a soma das `materials_N_num` e os alvos `targets_N_id_to_make`),
+  `minas` (registros de `MINE_ESSENCE` com o item em `materials_N_id` e chance > 0: `chance` = soma das linhas, `vida` = validade em
+  segundos, `valida`/`motivo` pela montagem do GS) e `habilidades` (as do catálogo do realm cujo `item_exigido` por nível é o item:
+  `{id, nome, niveis}` — o livro é gasto ao aprender, `skill.cpp:79-84`). Até 300 por lista.
+- **A mina como o GS a monta** — `GET estudio/minas/{indice}?rascunho=` (`Estudio::mina_do_gs`): `pw_data_loader::minas::montar` (o
+  `mine_info` de `npcgenerator.cpp:1280-1365`), com nomes e ícones de materiais, ferramenta e monstros ao colher; recusada →
+  `{valida: false, motivo}` com a linha do original (quantidade sem missão `:1297-1299`, tempos `:1299-1303`, chances que não somam 1
+  `:1323-1327`, missão pela metade `:1328-1332`, sucesso ≤ 0 `:1353-1357`, tipo fora de 0–1 `:1359-1363`). A mina recusada não entra no
+  `npc_stubs_manager` e a área de recurso que a cita não a faz nascer (`:3913-3917`). `carregar` (o GS) usa a mesma montagem.
+- **Área de recurso do npcgen** (as rotas de área do B243 com tipo `recursos`): retângulo `vPos ± fExtX/2, fExtZ/2` (`npcgenerator.cpp:3893`),
+  `bAutoRevive` (`:3904`), `iMaxNum` (`:3905`), `idCtrl` (`:3930`); por mina: `idTemplate`, `dwNumber` (`:3919`), renascer = `15 +
+  dwRefreshTime` s, nunca menos de 15 (`BASE_REBORN_TIME`, `config.h:106`; `:3920-3922`), `fHeiOff` (`:3923`). `iResType`, `bInitGen`,
+  `bValidOnce` e `dwGenID` o GS 1.5.5 não lê nas áreas de recurso. Ao nascer, a mina sorteia **um** material pelas chances e a quantidade
+  (`num1`, ou `num2` com `probability2`; `npcgenerator.cpp:5003-5016`); a coleta confere ferramenta, nível e lotação e dá certo com
+  `material_gain_ratio` (`matter.cpp:265-440`). Nenhum item nasce no chão sem mina pelo npcgen: as áreas são de criatura, de recurso
+  (mina) ou objeto dinâmico (`npcgenerator.cpp:3700`, `:3888`, `:3937`); item no chão vem de drop. `FIREWORKS2.id_mine` o GS não lê.
+- **GLB do item no chão e da mina** — `como=matter` em `estudio/modelos/glb` e em `estudio/modelos/importar_glb`: o
+  `CECMatter::LoadMatterModel` (`EC_Matter.cpp:71-107`) carrega o `.ecm` com o `CECModel::Load` comum — as peles do `.smd` e, se o modelo
+  ficou sem pele, a `<.smd>.ski` (`:96-103`); as `AddiSkinPath` só entram no editor (`#ifdef GFX_EDITOR`, `EC_Model.cpp:678-689`). O
+  modelo é o `file_matter` do item (`EC_Matter.cpp:353-602`) ou o `file_model` da mina (`:511-516`). Importar "só o modelo": a 1ª pele do
+  `.smd` (as outras saem da lista, como no equipamento) ou, sem pele no `.smd`, a `<.smd>.ski`. Nada disso pende no personagem: os fogos
+  tocam o `.gfx` `file_fw` na frente dele (`EC_Player.cpp:9022-9024`) e o `TOSSMATTER.file_model` o cliente não carrega.
 
 ## 7. Testes
 

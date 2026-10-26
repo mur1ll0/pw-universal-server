@@ -17726,3 +17726,82 @@ comparação lado a lado.
     - Falta: o Murillo abrir a Loja Gold no 1.5.5 e no 1.2.6 depois de publicar (aba renomeada, oferta nova na aba
       certa, compra com o goods_index certo); a 9ª subaba do BR em jogo; ordem da vitrine do 1.2.6 no binário.
 
+
+386. **Sessão 2026-10-25: Itens e minas no Estúdio Svelte (B386).** Pedido do Murillo: ativar o card "Itens" com as
+     tabelas de item que não são Equipáveis, agrupadas, edição por tipo com significado e unidade pelo fonte, modelo 3D
+     do item no chão e da mina como nos Equipáveis, e "Onde aparece" (minas nas áreas de recurso do npcgen).
+     - **Evidência levantada:** a classe que o GS dá a cada tabela (`template/setclassid.cpp:23-289`; -1 = usar não faz
+       nada: material, missão, livro de habilidade, reviver, `UNIONSCROLL`…); remédio pela categoria
+       (`generate_item_temp.h:913-1000`: 1794/1802/1810/1815/2038, outra não gera item; `cool_time` < 1000 → ×100;
+       `item_potion.cpp`; o filtro entrega `total/tempo` por segundo e o resto da divisão se perde,
+       `potion_filter.h:16-65`); amuleto (`player.cpp:9105-9130`, `item_amulet.cpp`); pedra (`require_equip` do layout é
+       o `combined_switch`, `IsStoneFit`, `item.cpp:332-353`; preços em `serviceprovider.cpp:1374-1385`,
+       `item_list.cpp:205`, `player.cpp:23879`); talismã (`player.cpp:11719-11747`, `equip_item.cpp:192-205, 265-273`,
+       `RandSelect` em `arandomgen.h:129-139`); o livro de habilidade não guarda a habilidade — é o `item_exigido` dela;
+       a mina (`npcgenerator.cpp:1280-1365`, sorteio de material e quantidade ao nascer `:5003-5016`, coleta
+       `matter.cpp:265-440`); a área de recurso (`npcgenerator.cpp:3888-3932`: centro ± `fExt/2`, renascer
+       `15 + dwRefreshTime` s, mín. 15; `iResType`/`bInitGen`/`bValidOnce`/`dwGenID` não lidos); nenhum item nasce no chão
+       pelo npcgen sem mina. No cliente: o item caído e a mina são `CECMatter` (`EC_Matter.cpp:71-107`): `CECModel::Load`
+       comum, peles do `.smd` e, sem nenhuma, a `<.smd>.ski`; tocam `掉落保护`/`_水中`/`_空中` pelo ambiente
+       (`:300-311`); fogos são um `.gfx` (`EC_Player.cpp:9022-9024`); nada pende no personagem.
+     - **Servidor:** `pw_data_loader::minas::montar` (a montagem do GS com o motivo da recusa; `carregar` usa a mesma);
+       `GET estudio/usos/{id}` e `GET estudio/minas/{indice}` no `pw-recursos` e no painel; `como=matter` no GLB e na
+       importação; o resumo do `importar_pele` passou a contar as malhas rígidas (dava 0 nos modelos sem osso); 14 termos
+       novos na tabela única de nomes de animação (medidos em 1.681 modelos das duas versões: `掉落保护` em 1.006, `刀光`
+       em 614…) e o `_` de um termo da tabela deixou de ser lido como prefixo de modelo.
+     - **Estúdio:** `lib/itens.ts` (10 grupos + Minas, regras com evidência), `telas/EdicaoItem.svelte`,
+       `componentes/BoxDeRecurso.svelte`, `ModeloDoEquipavel` com `como="matter"`, busca agrupada (`optgroup`), rota
+       `#/itens/<tabela>/<indice>`, "abrir em nova aba" pela categoria da tabela. O seletor de item continua pedindo
+       colunas só para Equipáveis/Monstros/pedras (o teste do B376 pegou a mudança).
+     - **Testes:** `pw-data-loader` 161/1 (a falha, `a_geracao_de_equipamento_do_126`, é o `elements.data` do realm
+       1.2.6 editado por publicações — a foice 15964 tem outros efeitos; não é deste bloco); `pw-recursos` 30/0 com
+       `TEST_DATABASE_URL`, incluindo a área de recurso de uma mina real do mapa principal do 1.2.6: criar, mover,
+       redimensionar, 2 minas, voltar e remover → `igual_ao_publicado: true` (npcgen byte a byte); `svelte-check` 0/0;
+       vitest 70/70 (17 novos: grupos contra os dois layouts, remédio, pedra, talismã, renascer); painel 14/14 com
+       banco e Redis. No publicado (rascunhos 113–114, descartados): GLB do material 795 (`标准原料掉落.ecm`, 1 malha,
+       44 vértices) e da mina 3074 (`枯树.ecm`, 3 malhas, 241 vértices) exportado e importado de volta — nada a corrigir,
+       texturas iguais às do cliente; os dois não têm animação.
+     - **Falta:** o Murillo ver a mina nascer num lugar novo e colher; NPCs e Mascotes no Estúdio.
+
+387. **Sessão 2026-10-25: painel do jogador — cadastro e acesso de conta comum (B387).** Pedido do Murillo: centralizar
+    no painel admin; criar conta pela tela; conta comum entra com Visão geral, Minha conta (criada em, cash, personagens
+    por realm, trocar a senha), Recursos do cliente só com o histórico de versões, e no realm só o Painel do realm e
+    Personagens (só os dela, só ver); nenhuma outra ação; o resto bloqueado mesmo mexendo na URL.
+
+    ### a. Decisão
+    - Centralizar com **deny por padrão**: o papel (`gm`/`jogador`) sai do banco a cada requisição e a conta comum só
+      alcança a lista fechada `ROTAS_DO_JOGADOR` (`web-admin/backend/painel/jogador.py`); rota nova nasce só de GM.
+      Leitura de personagem confere dono **e** realm da URL (404 sem dizer se existe). Mesma conferência no GS
+      (defesa em profundidade): `ServidorAdministrativo::liberado_a_conta_comum`.
+    - O GS recusava todo autor sem GM (`administrador_recusado`). Liberações estreitas: `trocar_senha` da própria
+      conta (o repositório confere de novo sob o lock), `mundos` e as leituras de personagem do dono; e a consulta nova
+      `cadastrar_conta`, só com autor 0 (o painel, provado pelo HMAC), com a mesma reserva idempotente da
+      `criar_conta` (`criar_conta_por`, sem conferir GM).
+
+    ### b. Feito
+    - GS/armazenamento: `Consulta::CadastrarConta`, `liberado_a_conta_comum`, `dono_do_personagem`,
+      `cadastrar_conta`; `trocar_senha` aceita a própria conta.
+    - Painel: `jogador.py` (barra, cadastro com 5/IP/hora e `PAINEL_CADASTRO=fechado`, Minha conta, troca da própria
+      senha refazendo a sessão, histórico só do publicado e sem autor), login aceita conta comum, lista de personagens
+      filtrada pela sessão, `canal.py` aceita `criar_conta` como resposta de `cadastrar_conta`.
+    - Tela: "Criar conta" no login, `body.modo-jogador` esconde `[data-somente-gm]`, páginas Minha conta e Recursos do
+      cliente (histórico), ficha sem botões, arrasto nem clique de edição (a dica continua).
+    - Numeração: o B386 já era de outra sessão do mesmo dia (Itens e minas); este bloco é o B387.
+
+    ### c. Provas
+    - `cargo test -p pw-gs --test canal_administrativo` (banco): 37/40; o novo
+      `cadastro_publico_cria_conta_comum_e_ela_so_troca_a_propria_senha` passa e o de revogação foi ajustado (sem GM
+      lê o próprio personagem, `templates` recusado). Das 3 falhas, `modificar_e_redistribuir…` e `templates_editados…`
+      passam em série (carga do paralelo); **`missoes_ver_dar_concluir_cancelar_e_esquecer` falha igual com os três
+      arquivos deste bloco revertidos** (fecha a conexão; pré-existente, não investigado).
+    - Painel no `pw-admin-api` (cópia em `/tmp/tp`): `teste_jogador` 6/6; suíte inteira 96 testes com as **mesmas 14
+      falhas/erros do commit `bc3258f`** rodado lado a lado (`/tmp/tb`) — nenhuma nova.
+    - `teste_fluxo_contas.cjs` (Node): 13/13 falham **também no commit anterior** (`location` indefinido no
+      `abrirLinkDireto`); não é deste bloco.
+    - Navegador numa instância temporária (`docker run` da imagem do painel com `painel/` e `static/` montados, porta
+      8099, parada no fim): login, Criar conta, menu do jogador, Minha conta, histórico, lista e ficha só do próprio
+      personagem (`testuser`), botões de edição com `display: none`; por curl, `admin` = `gm` (contas 200) e `testuser`
+      = 403 em contas e Estúdio. Com o GS de hoje, online/inventário do jogador aparecem como "recusado pelo daemon".
+
+    ### d. Falta
+    - Publicar `pw-world-126`, `pw-world-155` e `pw-admin-api` e o Murillo ver no navegador. Não commitado.
