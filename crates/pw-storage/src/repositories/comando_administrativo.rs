@@ -163,9 +163,10 @@ impl ComandoAdministrativoRepository {
         let contas: Vec<(i32, i32, bool)> = sqlx::query_as(
             "SELECT id,gm_privileges,is_banned FROM accounts WHERE id IN ($1,$2) ORDER BY id FOR UPDATE",
         ).bind(administrador).bind(conta).fetch_all(&mut *transacao).await?;
+        // B387: GM troca qualquer senha; conta comum, só a própria.
         if !contas
             .iter()
-            .any(|(id, gm, ban)| *id == administrador && *gm > 0 && !ban)
+            .any(|(id, gm, ban)| *id == administrador && !ban && (*gm > 0 || administrador == conta))
         {
             transacao.rollback().await?;
             return Ok(json!({"estado":"falha", "codigo":"administrador_recusado"}));
@@ -213,6 +214,44 @@ impl ComandoAdministrativoRepository {
         impressao: &[u8],
         hash_senha: &str,
     ) -> Result<Value> {
+        self.criar_conta_por(id, Some(administrador), realm, usuario, impressao, hash_senha).await
+    }
+
+    /// B387: conta dona do personagem neste realm (apagado conta como inexistente) — a conferência das
+    /// leituras de conta comum no canal administrativo.
+    pub async fn dono_do_personagem(&self, personagem: i32, realm: &str) -> Result<Option<i32>> {
+        Ok(sqlx::query_scalar(
+            "SELECT account_id FROM characters WHERE id=$1 AND realm_id=$2 AND NOT is_deleted",
+        )
+        .bind(personagem)
+        .bind(realm)
+        .fetch_optional(self.pool.get_ref())
+        .await?)
+    }
+
+    /// B387: cadastro público pelo painel — mesma reserva idempotente da `criar_conta`, com autor 0
+    /// (não há conta antes do cadastro) e sem conferir GM. Sempre conta comum (`gm_privileges` padrão 0).
+    pub async fn cadastrar_conta(
+        &self,
+        id: &str,
+        realm: &str,
+        usuario: &str,
+        impressao: &[u8],
+        hash_senha: &str,
+    ) -> Result<Value> {
+        self.criar_conta_por(id, None, realm, usuario, impressao, hash_senha).await
+    }
+
+    async fn criar_conta_por(
+        &self,
+        id: &str,
+        gm: Option<i32>,
+        realm: &str,
+        usuario: &str,
+        impressao: &[u8],
+        hash_senha: &str,
+    ) -> Result<Value> {
+        let administrador = gm.unwrap_or(0);
         let mut transacao = self.pool.get_ref().begin().await?;
         sqlx::query("SET LOCAL lock_timeout='1500ms'")
             .execute(&mut *transacao)
@@ -225,14 +264,16 @@ impl ComandoAdministrativoRepository {
              VALUES($1,$2,$3,NULL,$4,'{}') ON CONFLICT DO NOTHING",
         ).bind(id).bind(administrador).bind(realm).bind(impressao)
          .execute(&mut *transacao).await?.rows_affected() == 1;
-        let autorizado: Option<(i32, bool)> =
-            sqlx::query_as("SELECT gm_privileges,is_banned FROM accounts WHERE id=$1 FOR UPDATE")
-                .bind(administrador)
-                .fetch_optional(&mut *transacao)
-                .await?;
-        if !autorizado.is_some_and(|(gm, ban)| gm > 0 && !ban) {
-            transacao.rollback().await?;
-            return Ok(json!({"estado":"falha", "codigo":"administrador_recusado"}));
+        if gm.is_some() {
+            let autorizado: Option<(i32, bool)> =
+                sqlx::query_as("SELECT gm_privileges,is_banned FROM accounts WHERE id=$1 FOR UPDATE")
+                    .bind(administrador)
+                    .fetch_optional(&mut *transacao)
+                    .await?;
+            if !autorizado.is_some_and(|(gm, ban)| gm > 0 && !ban) {
+                transacao.rollback().await?;
+                return Ok(json!({"estado":"falha", "codigo":"administrador_recusado"}));
+            }
         }
         if !inserido {
             let (dono, anterior, resultado): (i32, Vec<u8>, Value) = sqlx::query_as(

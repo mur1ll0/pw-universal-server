@@ -240,7 +240,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(nao_enviado.json()["codigo"], "canal_nao_enviado")
         self.assertEqual(nao_enviado.json()["operacao_id"], pedido["operacao_id"])
         await self.modificar_conta("gm_privileges", 0)
-        self.assertEqual((await self.cliente.post(caminho, json=pedido, headers=cabecalhos)).status_code, 401)
+        # B387: sem GM a sessão continua, como jogador — e a criação de conta é só de GM.
+        self.assertEqual((await self.cliente.post(caminho, json=pedido, headers=cabecalhos)).status_code, 403)
 
     async def test_criacao_real_concorrente_reinicio_relogin_e_outro_realm(self):
         realm, _ = await self.criar_personagem()
@@ -785,8 +786,10 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resposta.status_code, 413)
 
     async def test_sem_gm(self):
+        # B387: conta comum entra como jogador.
         await self.modificar_conta("gm_privileges", 0)
-        self.assertEqual((await self.entrar()).status_code, 401)
+        self.assertEqual((await self.entrar()).status_code, 200)
+        self.assertEqual((await self.cliente.get("/api/sessao")).json()["papel"], "jogador")
 
     async def test_conta_banida(self):
         await self.modificar_conta("is_banned", True)
@@ -795,7 +798,9 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
     async def test_gm_revogado_encerra_sessao(self):
         await self.entrar()
         await self.modificar_conta("gm_privileges", 0)
-        self.assertEqual((await self.cliente.get("/api/realms")).status_code, 401)
+        # B387: o papel sai do banco a cada requisição — vira jogador na hora e perde o que é de GM.
+        self.assertEqual((await self.cliente.get("/api/contas")).status_code, 403)
+        self.assertEqual((await self.cliente.get("/api/sessao")).json()["papel"], "jogador")
 
     async def test_banimento_encerra_sessao(self):
         await self.entrar()
@@ -908,7 +913,8 @@ class BaseAdministrativa(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resposta.status_code, 503)  # canal sem chave: nada enviado (B174)
         self.assertEqual(resposta.json()["estado"], "falha")
         await self.modificar_conta("gm_privileges", 0)
-        self.assertEqual((await self.cliente.post(caminho, json=pedido, headers={"X-CSRF-Token": csrf})).status_code, 401)
+        # B387: GM revogado vira jogador, e definir GM é só de GM.
+        self.assertEqual((await self.cliente.post(caminho, json=pedido, headers={"X-CSRF-Token": csrf})).status_code, 403)
 
     async def test_gold_ban_e_desconectar_validam_antes_do_envio(self):
         """E4 (B175): CSRF, valores estritos e canal ausente = falha definitiva (nada enviado)."""

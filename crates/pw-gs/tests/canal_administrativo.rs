@@ -81,6 +81,58 @@ async fn criacao_valida_nome_no_daemon_e_deduplica_variacao_de_caixa() {
     c.encerrar().await;
 }
 
+/// B387: cadastro público (autor 0) cria conta comum, idempotente; conta comum só troca a própria senha.
+#[tokio::test]
+async fn cadastro_publico_cria_conta_comum_e_ela_so_troca_a_propria_senha() {
+    let c = Cenario::montar().await;
+    let nome = format!("cad_{}", c.conta);
+    let consulta = json!({"tipo":"cadastrar_conta", "usuario":nome.to_uppercase(), "senha":"Nova!"});
+    let id = format!("cadastro-{}", c.conta);
+    // Só o painel (autor 0) cadastra; um GM usa a `criar_conta`.
+    assert_eq!(c.pedir_com_id(&c.realm, "cad-gm", c.conta, consulta.clone()).await["dados"]["codigo"],
+        "administrador_recusado");
+    assert_eq!(c.pedir_com_id(&c.realm, "cad-ruim", 0,
+        json!({"tipo":"cadastrar_conta", "usuario":"a b", "senha":"Nova!"})).await["dados"]["codigo"], "alvo_invalido");
+    let criada = c.pedir_com_id(&c.realm, &id, 0, consulta.clone()).await;
+    assert_eq!(criada["estado"], "salvo");
+    assert_eq!(criada["dados"]["usuario"], nome);
+    let nova = criada["dados"]["conta_id"].as_i64().unwrap() as i32;
+    assert_eq!(c.pedir_com_id(&c.realm, &id, 0, consulta).await, criada);
+    assert_eq!(c.pedir_com_id(&c.realm, &id, 0,
+        json!({"tipo":"cadastrar_conta", "usuario":"outro_nome", "senha":"Nova!"})).await["dados"]["codigo"],
+        "operacao_em_conflito");
+    let (gm, hash): (i32, String) = sqlx::query_as("SELECT gm_privileges,password_hash FROM accounts WHERE id=$1")
+        .bind(nova).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(gm, 0);
+    assert_eq!(hash, pw_crypto::hash_legacy_pw_md5(&nome, "Nova!"));
+    // A conta comum troca a própria senha…
+    let propria = c.pedir_com_id(&c.realm, &format!("propria-{nova}"), nova,
+        json!({"tipo":"trocar_senha", "conta_id":nova, "senha":"Outra!"})).await;
+    assert_eq!(propria["estado"], "salvo");
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM accounts WHERE id=$1")
+        .bind(nova).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(hash, pw_crypto::hash_legacy_pw_md5(&nome, "Outra!"));
+    // O resumo dos mundos é público ao jogador…
+    assert!(c.pedir_com_id(&c.realm, &format!("mundos-{nova}"), nova, json!({"tipo":"mundos"}))
+        .await["dados"].get("codigo").is_none());
+    // …e nada mais: nem a senha de outra conta, nem personagem de outra conta, nem escrita de GM.
+    for consulta in [json!({"tipo":"trocar_senha", "conta_id":c.conta, "senha":"Invasao!"}),
+                     json!({"tipo":"personagem", "personagem_id":c.personagem}),
+                     json!({"tipo":"inventario", "personagem_id":c.personagem}),
+                     json!({"tipo":"detalhe_item", "personagem_id":c.personagem, "recipiente":"bolsa", "slot":0}),
+                     json!({"tipo":"definir_taxas", "exp":1.0, "sp":1.0, "drop":1.0, "moedas":1.0}),
+                     json!({"tipo":"criar_conta", "usuario":"x_x", "senha":"Nova!"})] {
+        assert_eq!(c.pedir_com_id(&c.realm, &format!("nega-{nova}-{}", consulta["tipo"].as_str().unwrap()), nova, consulta)
+            .await["dados"]["codigo"], "administrador_recusado");
+    }
+    // Banida, nem a própria.
+    sqlx::query("UPDATE accounts SET is_banned=true WHERE id=$1").bind(nova).execute(c.pool.get_ref()).await.unwrap();
+    assert_eq!(c.pedir_com_id(&c.realm, &format!("banida-{nova}"), nova,
+        json!({"tipo":"trocar_senha", "conta_id":nova, "senha":"Mais!"})).await["dados"]["codigo"], "administrador_recusado");
+    sqlx::query("DELETE FROM accounts WHERE id=$1").bind(nova).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
 /// A vez de cada teste no banco (B194). `entrada_em_andamento_nao_parece_offline` trava a tabela
 /// `characters` inteira; com o arquivo em paralelo isso estoura o prazo das consultas dos outros
 /// testes ("unexpected end of file" em testes variados). O exclusivo só entra com **nenhum**
@@ -536,8 +588,10 @@ async fn canal_confere_realm_e_revogacao_de_gm() {
         .execute(c.pool.get_ref())
         .await
         .unwrap();
+    // B387: sem GM, a conta ainda lê o próprio personagem (painel do jogador), mas nada de GM.
+    assert!(c.consultar().await["dados"].get("codigo").is_none());
     assert_eq!(
-        c.consultar().await["dados"]["codigo"],
+        c.pedir(&c.realm, json!({"tipo":"templates"})).await["dados"]["codigo"],
         "administrador_recusado"
     );
     sqlx::query("UPDATE accounts SET gm_privileges=1,is_banned=true WHERE id=$1")

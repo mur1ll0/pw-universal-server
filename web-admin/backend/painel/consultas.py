@@ -394,20 +394,25 @@ def registrar_consultas(app):
         return {"realm_id": realm_id, "mascotes": dados.get("mascotes", [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
-    async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64),
+    async def buscar_personagens(realm_id: str, requisicao: Request, busca: str = Query("", max_length=64),
                                  pagina: int = Query(1, ge=1, le=100_000),
                                  por_pagina: int = Query(12, ge=1, le=48)):
-        """B190: personagens do realm de todas as contas, por nome do personagem ou da conta."""
+        """B190: personagens do realm de todas as contas, por nome do personagem ou da conta.
+        B387: conta comum vê só os da própria conta (o filtro vem da sessão, não da URL)."""
         await validar_realm(realm_id)
+        administrador = requisicao.state.administrador
+        # GM: 0 = todas as contas.
+        conta = 0 if administrador["papel"] == "gm" else administrador["conta_id"]
         # Curingas do ILIKE escapados, como na busca de contas.
         padrao = "%" + busca.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
         filtro = ("FROM characters c JOIN accounts a ON a.id=c.account_id WHERE c.realm_id=$1 "
-                  "AND NOT c.is_deleted AND (c.name ILIKE $2 ESCAPE '!' OR a.username ILIKE $2 ESCAPE '!')")
+                  "AND NOT c.is_deleted AND (c.name ILIKE $2 ESCAPE '!' OR a.username ILIKE $2 ESCAPE '!') "
+                  "AND ($3 = 0 OR c.account_id = $3)")
         async with app.state.seguranca.pool.acquire() as conexao:
-            total = await conexao.fetchval(f"SELECT count(*) {filtro}", realm_id, padrao)
+            total = await conexao.fetchval(f"SELECT count(*) {filtro}", realm_id, padrao, conta)
             registros = await conexao.fetch(
                 f"SELECT c.id,c.name,c.cls,c.level,c.gender,a.id AS conta_id,a.username {filtro} "
-                "ORDER BY c.id LIMIT $3 OFFSET $4", realm_id, padrao, por_pagina, (pagina - 1) * por_pagina,
+                "ORDER BY c.id LIMIT $4 OFFSET $5", realm_id, padrao, conta, por_pagina, (pagina - 1) * por_pagina,
             )
         return {"realm_id": realm_id, "origem": "persistida", "total": total, "pagina": pagina,
                 "por_pagina": por_pagina,

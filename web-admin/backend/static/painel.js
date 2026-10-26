@@ -21,7 +21,12 @@ const PAGINAS = {
   templates: ["Templates", ""],
   recursos: ["Recursos do cliente", "Versões do cliente distribuídas pelo launcher"],
   estudio: ["Editores", ""],
+  "minha-conta": ["Minha conta", "Vale para todos os realms"],
+  historico: ["Recursos do cliente", "Histórico das versões publicadas"],
 };
+/* Painel do jogador (B387): conta sem GM vê só estas páginas; o servidor barra o resto (painel/jogador.py). */
+const PAGINAS_DO_JOGADOR = ["inicio", "minha-conta", "historico", "realm", "personagens"];
+const ehJogador = () => estado.sessao?.papel === "jogador";
 const CAMPOS_RATES = [["exp", "rate-exp"], ["sp", "rate-sp"], ["drop", "rate-drop"], ["moedas", "rate-moedas"]];
 const mesmasRates = (a, b) => !!a && !!b && CAMPOS_RATES.every(([c]) => Math.abs(Number(a[c]) - Number(b[c])) < 0.001);
 
@@ -110,15 +115,18 @@ function mostrarEntrada() {
   elemento("ficha-personagem").hidden = true;
   elemento("consulta-personagens").hidden = false;
   estado.paginaPersonagens = 1;
+  document.body.classList.remove("modo-jogador");
+  mostrarLogin();
 }
 
 /* ---------------- Navegação ---------------- */
 
 function mudarPagina(pagina) {
+  if (ehJogador() && !PAGINAS_DO_JOGADOR.includes(pagina)) pagina = "inicio";
   if (!estado.selecionado && ["realm", "personagens", "mapas", "rates", "templates", "estudio"].includes(pagina)) pagina = "inicio";
   estado.pagina = pagina;
   fecharConta();
-  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates", "recursos", "estudio"]) elemento(`pagina-${id}`).hidden = pagina !== id;
+  for (const id of ["inicio", "realm", "personagens", "contas", "rates", "mapas", "templates", "recursos", "estudio", "minha-conta", "historico"]) elemento(`pagina-${id}`).hidden = pagina !== id;
   const [titulo, sub] = PAGINAS[pagina];
   const realm = estado.selecionado;
   elemento("titulo-pagina").textContent = pagina === "realm" && realm ? realm.nome : titulo;
@@ -137,6 +145,8 @@ function mudarPagina(pagina) {
   if (pagina === "estudio") carregarEstudio(); // static/estudio.js (B237)
   if (pagina === "rates") preencherRates();
   if (pagina === "mapas") renderizarMapas();
+  if (pagina === "minha-conta") carregarMinhaConta();
+  if (pagina === "historico") carregarHistorico();
 }
 
 /* ---------------- Mundo sem resposta (B178) ---------------- */
@@ -804,9 +814,11 @@ async function consultarPersonagem(realmId, id) {
     estado.personagemId = id;
     const online = dados.presenca === "online";
     estado.personagemOnline = online;
-    elemento("dica-edicao").textContent = online
-      ? "Em jogo: as edições valem na hora e o jogador vê a mudança."
-      : "Fora do jogo: grava no banco; EXP/SP só com o personagem em jogo.";
+    elemento("dica-edicao").textContent = ehJogador()
+      ? (online ? "Em jogo agora: os valores são os da memória do servidor." : "Fora do jogo: valores salvos no banco.")
+      : online
+        ? "Em jogo: as edições valem na hora e o jogador vê a mudança."
+        : "Fora do jogo: grava no banco; EXP/SP só com o personagem em jogo.";
     elemento("est-resumo").textContent = `${ficha.nome} · ${online ? "em jogo" : "fora do jogo"}`;
     elemento("form-exp").querySelector?.("button")?.toggleAttribute?.("disabled", !online);
     preencherCultivos(estado.selecionado?.versao, ficha.cultivo);
@@ -1073,7 +1085,8 @@ const SLOTS_DE_EQUIPAMENTO = ["Arma", "Cabeça", "Colar", "Manto", "Peito", "Cin
   "Astrolábio"];
 function celulaDeItem(chave, rotulo, item, sexo, legenda, slot) {
   const celula = criar("div", `celula-item ${item ? "ocupada" : "vazia"}`);
-  prepararArrasto(celula, chave, slot, item);
+  const leitura = ehJogador(); // B387: o jogador só olha (a dica continua)
+  if (!leitura) prepararArrasto(celula, chave, slot, item);
   if (legenda) celula.title = legenda;
   if (item) {
     const nome = item.nome || `Item ${item.id}`;
@@ -1082,10 +1095,10 @@ function celulaDeItem(chave, rotulo, item, sexo, legenda, slot) {
     if (item.quantidade > 1) celula.append(criar("span", "qtd-item", fmt(item.quantidade)));
     celula.addEventListener("mouseenter", () => mostrarDica(chave, item, celula));
     celula.addEventListener("mouseleave", () => esconderDica());
-    celula.addEventListener("click", () => abrirEdicaoDeItem(chave, rotulo, item, celula));
+    if (!leitura) celula.addEventListener("click", () => abrirEdicaoDeItem(chave, rotulo, item, celula));
   } else {
     if (legenda) celula.append(criar("span", "rotulo-slot", legenda));
-    celula.addEventListener("click", (evento) => { evento.stopPropagation?.(); mostrarMenuDoSlot(celula, { chave, rotulo, slot, legenda }); });
+    if (!leitura) celula.addEventListener("click", (evento) => { evento.stopPropagation?.(); mostrarMenuDoSlot(celula, { chave, rotulo, slot, legenda }); });
   }
   return celula;
 }
@@ -1584,7 +1597,7 @@ async function carregarHabilidades(realm, id) {
       celula.type = "button";
       celula.title = `${h.nome} · nível ${h.nivel}${h.nivel_maximo ? `/${h.nivel_maximo}` : ""} (ID ${h.id})`;
       celula.append(imagemDoIcone("habilidade", h.icone, h.nome), criar("span", "qtd-item", String(h.nivel)));
-      celula.addEventListener("click", () => abrirHabilidade(h, true));
+      if (!ehJogador()) celula.addEventListener("click", () => abrirHabilidade(h, true));
       grade.append(celula);
     }
     const resumo = criar("p", "resumo-grade");
@@ -1821,7 +1834,7 @@ async function carregarMascotes(realm, id) {
         criar("small", "", `${TIPOS_DE_MASCOTE[m.classe] || "Mascote"} · ${semCores(m.modelo) || `Modelo ${m.tid}`} · slot ${m.slot}`));
       const lado = criar("span", m.invocado ? "etiqueta" : "etiqueta etiqueta-neutra", m.invocado ? "Invocado" : `Nv. ${m.nivel}`);
       cartao.append(figura, texto, lado);
-      cartao.addEventListener("click", () => abrirMascote(m));
+      if (!ehJogador()) cartao.addEventListener("click", () => abrirMascote(m));
       alvo.append(cartao);
     }
     if (!(dados.mascotes || []).length) alvo.append(criar("p", "nota-vazia", "Jaula vazia."));
@@ -1987,7 +2000,7 @@ function linhaDeMissao(m, porId, comAcoes) {
     criar("small", "", `ID ${m.id}${m.pai ? ` · etapa de ${semCores(rotuloDaMissao(porId.get(m.pai) || { id: m.pai }))}` : ""}${abates ? ` · abates ${abates}` : ""}`));
   const [rotulo, classe] = situacaoDaMissao(m);
   linha.append(texto, criar("span", classe, rotulo));
-  if (comAcoes) {
+  if (comAcoes && !ehJogador()) {
     const acoes = criar("span", "acoes-linha");
     const concluir = criar("button", "botao botao-secundario botao-pequeno", "Concluir");
     concluir.type = "button"; concluir.disabled = !!m.finalizada;
@@ -2944,7 +2957,7 @@ async function atualizar() {
     consultarOnline(estado.geracao);
     abrirLinkDireto();
     if (estado.pagina === "contas") buscarContas();
-    else if (!elemento("nome-conta").value) buscarTotalContas();
+    else if (!ehJogador() && !elemento("nome-conta").value) buscarTotalContas();
     if (estado.pagina === "personagens") {
       if (estado.personagemId && estado.selecionado) await consultarPersonagem(estado.selecionado.id, estado.personagemId);
       else await buscarPersonagens();
@@ -2964,11 +2977,145 @@ async function buscarTotalContas() {
   } catch (_) { /* Número da visão geral é opcional. */ }
 }
 
+/* ---------------- Painel do jogador (B387) ----------------
+   Cadastro público, Minha conta (dados e a troca da própria senha) e o histórico das versões
+   publicadas do cliente. As rotas são as de `/api/jogador/` (painel/jogador.py). */
+function mostrarLogin() {
+  elemento("formulario-login").hidden = false;
+  elemento("formulario-cadastro").hidden = true;
+  fetch("/api/jogador/cadastro", { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : { aberto: false }))
+    .then((d) => { elemento("link-cadastro").hidden = !d.aberto; })
+    .catch(() => { elemento("link-cadastro").hidden = true; });
+}
+function mostrarCadastro() {
+  elemento("formulario-login").hidden = true;
+  elemento("formulario-cadastro").hidden = false;
+  elemento("erro-cadastro").hidden = true;
+  elemento("cadastro-usuario").focus?.();
+}
+async function cadastrar(evento) {
+  evento.preventDefault();
+  const erro = elemento("erro-cadastro");
+  erro.hidden = true;
+  const senha = elemento("cadastro-senha").value;
+  if (senha !== elemento("cadastro-confirmacao").value) {
+    erro.textContent = "As senhas não são iguais.";
+    erro.hidden = false;
+    return;
+  }
+  elemento("cadastrar").disabled = true;
+  try {
+    const dados = await api("/api/jogador/cadastro", { method: "POST",
+      body: JSON.stringify({ usuario: elemento("cadastro-usuario").value.trim(), senha }) });
+    elemento("cadastro-senha").value = "";
+    elemento("cadastro-confirmacao").value = "";
+    if (dados?.estado === "desconhecido") {
+      mostrarLogin();
+      elemento("erro-login").textContent = dados.detail;
+      elemento("erro-login").hidden = false;
+      return;
+    }
+    await abrirPortal();
+    alerta("sucesso", "Conta criada", `Bem-vindo, ${dados.usuario}! Use esta conta e senha para entrar no jogo.`);
+  } catch (falha) {
+    erro.textContent = falha.message;
+    erro.hidden = false;
+  } finally { elemento("cadastrar").disabled = false; }
+}
+const dataHora = (iso) => (iso ? new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
+async function carregarMinhaConta() {
+  const numeros = elemento("numeros-minha-conta");
+  try {
+    const conta = await api("/api/jogador/conta");
+    numeros.replaceChildren();
+    for (const [rotulo, valor] of [["Conta", conta.usuario], ["Criada em", dataHora(conta.criada_em)],
+      ["Último login", dataHora(conta.ultimo_login)], ["Gold", gold(conta.gold)], ["Personagens", fmt(conta.personagens)]]) {
+      const caixa = criar("article", "numero");
+      caixa.append(criar("span", "", rotulo), criar("strong", "", valor));
+      numeros.append(caixa);
+    }
+    const lista = elemento("minha-conta-realms");
+    lista.replaceChildren();
+    for (const r of conta.por_realm) {
+      const realm = estado.realms.find((x) => x.id === r.realm_id);
+      // Como os cartões da Visão geral: o gateway do realm aceita conexão.
+      const [texto, classe] = realm?.gateway === "acessivel" ? ["No ar", "etiqueta"] : ["Fora do ar", "etiqueta etiqueta-neutra"];
+      const item = criar("li");
+      item.append(criar("span", "", `${r.nome} · ${r.versao} — ${fmt(r.personagens)} personagem(ns)`), criar("span", classe, texto));
+      lista.append(item);
+    }
+  } catch (erro) { aviso(`Não foi possível ler a conta: ${erro.message}`); }
+}
+async function trocarMinhaSenha(evento) {
+  evento.preventDefault();
+  const nova = elemento("senha-nova").value;
+  if (nova !== elemento("senha-nova-confirmacao").value) { alerta("erro", "Senha não trocada", "As senhas novas não são iguais."); return; }
+  elemento("trocar-minha-senha").disabled = true;
+  try {
+    const dados = await api("/api/jogador/senha", { method: "POST",
+      body: JSON.stringify({ senha_atual: elemento("senha-atual").value, senha: nova }) });
+    // A sessão foi refeita com a senha nova: pega o CSRF novo.
+    estado.sessao = await api("/api/sessao");
+    if (dados?.estado === "desconhecido") alerta("aviso", "Troca não confirmada", dados.detail);
+    else alerta("sucesso", "Senha trocada", "Use a senha nova no próximo login do jogo e do painel.");
+  } catch (erro) {
+    alerta("erro", "Senha não trocada", erro.message);
+  } finally {
+    for (const id of ["senha-atual", "senha-nova", "senha-nova-confirmacao"]) elemento(id).value = "";
+    elemento("trocar-minha-senha").disabled = false;
+  }
+}
+async function carregarHistorico(versao) {
+  const abas = elemento("historico-versoes");
+  const lista = elemento("historico-lista");
+  try {
+    if (!estado.versoesDoHistorico) estado.versoesDoHistorico = (await api("/api/jogador/versoes")).versoes;
+    const versoes = estado.versoesDoHistorico;
+    versao = versao || estado.versaoDoHistorico || versoes[versoes.length - 1]?.versao;
+    estado.versaoDoHistorico = versao;
+    abas.replaceChildren(...versoes.map((v) => {
+      const botao = criar("button", `botao ${v.versao === versao ? "botao-primario" : "botao-secundario"}`, `Cliente ${v.versao}`);
+      botao.type = "button";
+      botao.setAttribute("role", "tab");
+      botao.setAttribute("aria-selected", String(v.versao === versao));
+      botao.addEventListener("click", () => carregarHistorico(v.versao));
+      return botao;
+    }));
+    if (!versao) { lista.replaceChildren(criar("p", "nota-vazia", "Nenhuma versão do cliente publicada.")); return; }
+    const atual = versoes.find((v) => v.versao === versao)?.atual;
+    elemento("historico-situacao").textContent = atual !== undefined ? `Versão atual do launcher: ${atual}` : "";
+    const dados = await api(`/api/jogador/versoes/${encodeURIComponent(versao)}/historico`);
+    lista.replaceChildren();
+    for (const a of dados.alteracoes) {
+      const item = criar("article", "painel item-historico");
+      item.append(criar("h3", "", `${a.versao ? `Versão ${a.versao}` : "Publicada"} · ${dataHora(a.criada_em)}`),
+        criar("p", "", a.reverte ? `Desfaz a alteração ${a.reverte}. ${a.descricao || ""}` : (a.descricao || "")));
+      if (a.arquivos?.length) {
+        const arquivos = criar("ul", "arquivos-historico");
+        for (const caminho of a.arquivos.slice(0, 20)) arquivos.append(criar("li", "", caminho));
+        if (a.arquivos.length > 20) arquivos.append(criar("li", "", `… e mais ${a.arquivos.length - 20}`));
+        item.append(arquivos);
+      }
+      lista.append(item);
+    }
+    if (!dados.alteracoes.length) lista.append(criar("p", "nota-vazia", "Nenhuma alteração publicada nesta versão."));
+  } catch (erro) {
+    lista.replaceChildren(criar("p", "nota-vazia", `Histórico indisponível: ${erro.message}`));
+  }
+}
+elemento("abrir-cadastro").addEventListener("click", mostrarCadastro);
+elemento("voltar-login").addEventListener("click", mostrarLogin);
+elemento("formulario-cadastro").addEventListener("submit", cadastrar);
+elemento("form-minha-senha").addEventListener("submit", trocarMinhaSenha);
+
 async function abrirPortal() {
   estado.sessao = await api("/api/sessao");
   estado.comando = lerComando();
   atualizarComando(false);
   elemento("nome-usuario").textContent = estado.sessao.usuario;
+  document.body.classList.toggle("modo-jogador", ehJogador());
+  elemento("marca-papel").textContent = ehJogador() ? "Painel do jogador" : "Administração";
   elemento("entrada").hidden = true;
   elemento("portal").hidden = false;
   mudarPagina("inicio");

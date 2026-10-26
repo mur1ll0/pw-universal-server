@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0d1117">
-  <title>Perfect World · Administração</title>
+  <title>Perfect World · Painel</title>
   <link rel="icon" href="/static/selo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/painel.css">
   <script src="/static/painel.js" defer></script>
@@ -23,8 +23,8 @@
   <section id="entrada" class="entrada">
     <form id="formulario-login" class="cartao-entrada" autocomplete="on">
       <img src="/static/selo.svg" alt="" class="selo-entrada">
-      <h1>Administração</h1>
-      <p class="texto-suave">Conta do jogo com acesso GM</p>
+      <h1>Perfect World</h1>
+      <p class="texto-suave">Entre com a sua conta do jogo</p>
       <label class="campo">
         <span>Usuário</span>
         <input id="usuario" name="usuario" autocomplete="username" required maxlength="64" spellcheck="false">
@@ -38,6 +38,29 @@
       </label>
       <p id="erro-login" class="alerta alerta-erro" role="alert" hidden></p>
       <button id="entrar" type="submit" class="botao botao-primario botao-largo">Entrar</button>
+      <p id="link-cadastro" class="texto-suave texto-centro" hidden>Não tem conta? <button id="abrir-cadastro" type="button" class="botao-texto">Criar conta</button></p>
+    </form>
+    <!-- Cadastro público (B387): cria conta comum e já entra no painel do jogador -->
+    <form id="formulario-cadastro" class="cartao-entrada" autocomplete="on" hidden>
+      <img src="/static/selo.svg" alt="" class="selo-entrada">
+      <h1>Criar conta</h1>
+      <p class="texto-suave">A conta vale para todos os servidores</p>
+      <label class="campo">
+        <span>Nome da conta</span>
+        <input id="cadastro-usuario" name="usuario" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_]+" spellcheck="false" title="3 a 32 letras sem acento, números ou _">
+      </label>
+      <label class="campo">
+        <span>Senha</span>
+        <input id="cadastro-senha" name="senha" type="password" autocomplete="new-password" required minlength="6" maxlength="64">
+      </label>
+      <label class="campo">
+        <span>Repita a senha</span>
+        <input id="cadastro-confirmacao" type="password" autocomplete="new-password" required minlength="6" maxlength="64">
+      </label>
+      <p class="dica">Letras sem acento, números e _. O nome entra no jogo em minúsculas.</p>
+      <p id="erro-cadastro" class="alerta alerta-erro" role="alert" hidden></p>
+      <button id="cadastrar" type="submit" class="botao botao-primario botao-largo">Criar conta e entrar</button>
+      <p class="texto-suave texto-centro">Já tem conta? <button id="voltar-login" type="button" class="botao-texto">Entrar</button></p>
     </form>
   </section>
 
@@ -46,25 +69,27 @@
     <aside id="lateral" class="lateral" aria-label="Navegação">
       <div class="marca">
         <img src="/static/selo.svg" alt="" class="marca-selo">
-        <div><strong>Perfect World</strong><span>Administração</span></div>
+        <div><strong>Perfect World</strong><span id="marca-papel">Administração</span></div>
       </div>
 
       <nav class="grupo-nav" aria-label="Geral">
         <p class="rotulo-grupo">Geral</p>
         <button class="nav" type="button" data-pagina="inicio"><span class="icone" data-icone="casa" aria-hidden="true"></span>Visão geral</button>
-        <button class="nav" type="button" data-pagina="contas"><span class="icone" data-icone="grupo" aria-hidden="true"></span>Contas globais</button>
-        <button class="nav" type="button" data-pagina="recursos"><span class="icone" data-icone="servidor" aria-hidden="true"></span>Recursos do cliente</button>
+        <button class="nav" type="button" data-pagina="minha-conta" data-somente-jogador><span class="icone" data-icone="usuario" aria-hidden="true"></span>Minha conta</button>
+        <button class="nav" type="button" data-pagina="contas" data-somente-gm><span class="icone" data-icone="grupo" aria-hidden="true"></span>Contas globais</button>
+        <button class="nav" type="button" data-pagina="recursos" data-somente-gm><span class="icone" data-icone="servidor" aria-hidden="true"></span>Recursos do cliente</button>
+        <button class="nav" type="button" data-pagina="historico" data-somente-jogador><span class="icone" data-icone="servidor" aria-hidden="true"></span>Recursos do cliente</button>
       </nav>
 
       <nav id="grupo-realm" class="grupo-nav" aria-label="Realm selecionado" hidden>
         <p class="rotulo-grupo">Realm · <span id="rotulo-realm-nav"></span></p>
         <button class="nav" type="button" data-pagina="realm"><span class="icone" data-icone="servidor" aria-hidden="true"></span>Painel do realm</button>
         <button class="nav" type="button" data-pagina="personagens"><span class="icone" data-icone="usuario" aria-hidden="true"></span>Personagens</button>
-        <button class="nav" type="button" data-pagina="mapas"><span class="icone" data-icone="mapa" aria-hidden="true"></span>Mapas</button>
-        <button class="nav" type="button" data-pagina="rates"><span class="icone" data-icone="porcentagem" aria-hidden="true"></span>Rates</button>
-        <button class="nav" type="button" data-pagina="templates"><span class="icone" data-icone="espada" aria-hidden="true"></span>Templates</button>
-        <button class="nav" type="button" data-pagina="estudio"><span class="icone" data-icone="editores" aria-hidden="true"></span>Editores</button>
-        <a id="nav-estudio" class="nav" href="/static/estudio/index.html"><span class="icone" data-icone="estudio" aria-hidden="true"></span>Estúdio</a>
+        <button class="nav" type="button" data-pagina="mapas" data-somente-gm><span class="icone" data-icone="mapa" aria-hidden="true"></span>Mapas</button>
+        <button class="nav" type="button" data-pagina="rates" data-somente-gm><span class="icone" data-icone="porcentagem" aria-hidden="true"></span>Rates</button>
+        <button class="nav" type="button" data-pagina="templates" data-somente-gm><span class="icone" data-icone="espada" aria-hidden="true"></span>Templates</button>
+        <button class="nav" type="button" data-pagina="estudio" data-somente-gm><span class="icone" data-icone="editores" aria-hidden="true"></span>Editores</button>
+        <a id="nav-estudio" class="nav" data-somente-gm href="/static/estudio/index.html"><span class="icone" data-icone="estudio" aria-hidden="true"></span>Estúdio</a>
       </nav>
 
       <div class="lateral-rodape">
@@ -105,7 +130,7 @@
             <article class="numero"><span>Realms</span><strong id="total-realms">—</strong></article>
             <article class="numero"><span>Jogadores online</span><strong id="total-online">—</strong></article>
             <article class="numero"><span>Personagens</span><strong id="total-personagens">—</strong></article>
-            <article class="numero"><span>Contas</span><strong id="total-contas">—</strong></article>
+            <article class="numero" data-somente-gm><span>Contas</span><strong id="total-contas">—</strong></article>
           </div>
           <div class="cabecalho-secao">
             <h2>Realms do ambiente</h2>
@@ -127,7 +152,7 @@
               <ul id="lista-mapas" class="lista-simples"></ul>
             </article>
           </div>
-          <article class="painel">
+          <article class="painel" data-somente-gm>
             <header class="painel-topo"><h2>Recursos deste realm</h2></header>
             <div id="lista-capacidades" class="lista-recursos"></div>
           </article>
@@ -165,7 +190,7 @@
             <!-- B216: janelas do mesmo tamanho; editar e dar abrem modais pelo botão da barra. -->
             <section class="janela" data-janela="estatisticas">
               <header class="barra-janela"><h3><span class="ico" data-icone="usuario"></span>Estatísticas</h3>
-                <div class="acoes-janela"><button id="abrir-estatisticas" type="button" class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-estatisticas" type="button" data-somente-gm class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela">
                 <div id="dados-personagem" class="grade-atributos"></div>
                 <p id="dica-edicao" class="dica"></p>
@@ -181,7 +206,7 @@
             </section>
             <section class="janela" data-janela="inventario">
               <header class="barra-janela"><h3><span class="ico" data-icone="bolsa"></span>Inventário</h3>
-                <div class="acoes-janela"><button id="organizar-bolsa" type="button" class="botao-barra" title="Junta os itens sem deixar espaços, na ordem do botão do cliente 1.5.5">Organizar</button><button id="abrir-dar-item" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar item</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="organizar-bolsa" type="button" data-somente-gm class="botao-barra" title="Junta os itens sem deixar espaços, na ordem do botão do cliente 1.5.5">Organizar</button><button id="abrir-dar-item" type="button" data-somente-gm class="botao-barra"><span class="ico" data-icone="mais"></span>Dar item</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-bolsa"></div></div>
             </section>
             <section class="janela" data-janela="armazem">
@@ -194,22 +219,22 @@
             </section>
             <section class="janela" data-janela="habilidades">
               <header class="barra-janela"><h3><span class="ico" data-icone="livro"></span>Habilidades</h3>
-                <div class="acoes-janela"><button id="abrir-dar-habilidade" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar habilidade</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-dar-habilidade" type="button" data-somente-gm class="botao-barra"><span class="ico" data-icone="mais"></span>Dar habilidade</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-habilidades"></div></div>
             </section>
             <section class="janela" data-janela="mascotes">
               <header class="barra-janela"><h3><span class="ico" data-icone="pata"></span>Mascotes</h3>
-                <div class="acoes-janela"><button id="abrir-dar-mascote" type="button" class="botao-barra"><span class="ico" data-icone="mais"></span>Dar mascote</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-dar-mascote" type="button" data-somente-gm class="botao-barra"><span class="ico" data-icone="mais"></span>Dar mascote</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-mascotes" class="lista-mascotes"></div></div>
             </section>
             <section class="janela" data-janela="daimon">
               <header class="barra-janela"><h3><span class="ico" data-icone="brilho"></span>Daimon</h3>
-                <div class="acoes-janela"><button id="abrir-daimon-atributos" type="button" class="botao-barra" hidden><span class="ico" data-icone="forca"></span>Atributos</button><button id="abrir-daimon-habilidades" type="button" class="botao-barra" hidden><span class="ico" data-icone="livro"></span>Habilidades</button><button id="abrir-daimon-exp" type="button" class="botao-barra" hidden><span class="ico" data-icone="exp"></span>Dar EXP</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-daimon-atributos" type="button" data-somente-gm class="botao-barra" hidden><span class="ico" data-icone="forca"></span>Atributos</button><button id="abrir-daimon-habilidades" type="button" data-somente-gm class="botao-barra" hidden><span class="ico" data-icone="livro"></span>Habilidades</button><button id="abrir-daimon-exp" type="button" data-somente-gm class="botao-barra" hidden><span class="ico" data-icone="exp"></span>Dar EXP</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="janela-daimon" class="ficha-daimon"></div></div>
             </section>
             <section class="janela" data-janela="missoes">
               <header class="barra-janela"><h3><span class="ico" data-icone="pergaminho"></span>Missões ativas</h3>
-                <div class="acoes-janela"><button id="abrir-missoes" type="button" class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
+                <div class="acoes-janela"><button id="abrir-missoes" type="button" data-somente-gm class="botao-barra"><span class="ico" data-icone="editar"></span>Editar</button><button type="button" class="botao-janela" aria-label="Recolher">–</button></div></header>
               <div class="corpo-janela"><div id="missoes-ativas" class="lista-missoes"></div></div>
             </section>
             </div>
@@ -413,6 +438,36 @@
               <div id="estudio-ficha" class="texto-suave">Escolha uma tabela e um registro.</div>
             </section>
           </div>
+        </section>
+
+        <!-- Minha conta (B387): a conta da sessão e a troca da própria senha -->
+        <section id="pagina-minha-conta" class="pagina" hidden>
+          <div class="grade-numeros" id="numeros-minha-conta"></div>
+          <div class="grade-duas">
+            <article class="painel">
+              <header class="painel-topo"><h2>Personagens por realm</h2></header>
+              <ul id="minha-conta-realms" class="lista-simples"></ul>
+            </article>
+            <article class="painel">
+              <header class="painel-topo"><h2>Trocar a senha</h2></header>
+              <form id="form-minha-senha" class="formulario">
+                <label class="campo"><span>Senha atual</span><input id="senha-atual" type="password" autocomplete="current-password" required maxlength="64"></label>
+                <label class="campo"><span>Senha nova</span><input id="senha-nova" type="password" autocomplete="new-password" required minlength="6" maxlength="64"></label>
+                <label class="campo"><span>Repita a senha nova</span><input id="senha-nova-confirmacao" type="password" autocomplete="new-password" required minlength="6" maxlength="64"></label>
+                <p class="dica">Vale para o próximo login no jogo; quem está em jogo continua.</p>
+                <button id="trocar-minha-senha" type="submit" class="botao botao-primario">Trocar a senha</button>
+              </form>
+            </article>
+          </div>
+        </section>
+
+        <!-- Recursos do cliente para o jogador (B387): só o histórico do que foi publicado -->
+        <section id="pagina-historico" class="pagina" hidden>
+          <div class="barra-ferramentas recursos-topo">
+            <div id="historico-versoes" class="recursos-versoes" role="tablist" aria-label="Versão do cliente"></div>
+            <span id="historico-situacao" class="texto-suave"></span>
+          </div>
+          <div id="historico-lista" class="lista-historico"></div>
         </section>
 
         <!-- Recursos do cliente (P3, B235): versões publicadas, rascunhos, publicar, reverter -->

@@ -804,3 +804,13 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .missao-objeto { padding-left: 12px; border-left: 2px solid var(--borda); margin: 2px 0; }
 #missoes-ficha table.tabela-simples { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
 #missoes-ficha table.tabela-simples th, #missoes-ficha table.tabela-simples td { border: 1px solid var(--borda); padding: 2px 6px; text-align: left; }
+
+/* Painel do jogador (B387): conta comum vê só o que é dela; o servidor barra o resto (painel/jogador.py). */
+body.modo-jogador [data-somente-gm],
+body:not(.modo-jogador) [data-somente-jogador] { display: none !important; }
+body.modo-jogador .tela-personagem .celula-item { cursor: default; }
+.texto-centro { text-align: center; }
+.lista-historico { display: grid; gap: 12px; }
+.lista-historico .item-historico { padding: 14px 16px; }
+.lista-historico .item-historico h3 { margin: 0 0 4px; font-size: 1rem; }
+.lista-historico .arquivos-historico { margin: 6px 0 0; padding-left: 18px; color: var(--texto-2); font-size: .9rem; }

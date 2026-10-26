@@ -212,24 +212,29 @@ class Seguranca:
                 "SELECT id, username, password_hash, gm_privileges, is_banned "
                 "FROM accounts WHERE LOWER(username) = LOWER($1)", usuario,
             )
-        if conta is None or conta["is_banned"] or conta["gm_privileges"] <= 0:
-            raise HTTPException(401, "Conta ou senha inválida, ou acesso GM indisponível.")
+        # B387: conta comum também entra (papel "jogador", só as rotas de `painel/jogador.py`).
+        if conta is None or conta["is_banned"]:
+            raise HTTPException(401, "Conta ou senha inválida, ou conta bloqueada.")
         if not await self.validar_senha(conta["username"], senha, conta["password_hash"]):
-            raise HTTPException(401, "Conta ou senha inválida, ou acesso GM indisponível.")
+            raise HTTPException(401, "Conta ou senha inválida, ou conta bloqueada.")
+        return await self.criar_sessao(requisicao, conta["id"], conta["password_hash"])
+
+    async def criar_sessao(self, requisicao, conta_id, hash_senha):
+        """Sessão nova (login, cadastro, troca da própria senha); a do navegador, se houver, é encerrada."""
         token = secrets.token_urlsafe(32)
-        sessao = {"conta_id": conta["id"], "csrf": secrets.token_urlsafe(32),
-                  "impressao": impressao_senha(conta["password_hash"])}
+        sessao = {"conta_id": conta_id, "csrf": secrets.token_urlsafe(32),
+                  "impressao": impressao_senha(hash_senha)}
         await self.redis.set(f"{self.prefixo}sessoes:{chave_sessao(token)}", json.dumps(sessao), ex=TEMPO_SESSAO)
         anterior = requisicao.cookies.get(COOKIE)
         if anterior:
             await self.sair(anterior)
-        REGISTRO.info("sessao_admin_criada conta=%s", conta["id"])
+        REGISTRO.info("sessao_admin_criada conta=%s", conta_id)
         return token
 
     async def autorizar(self, requisicao):
         token = requisicao.cookies.get(COOKIE, "")
         if not token or len(token) > 128:
-            raise HTTPException(401, "Entre com sua conta PW com acesso GM.")
+            raise HTTPException(401, "Entre com sua conta PW.")
         chave = f"{self.prefixo}sessoes:{chave_sessao(token)}"
         registro = await self.redis.get(chave)
         if not registro:
@@ -240,15 +245,17 @@ class Seguranca:
                 "SELECT id, username, gm_privileges, is_banned, password_hash "
                 "FROM accounts WHERE id = $1", sessao["conta_id"],
             )
-        if (conta is None or conta["is_banned"] or conta["gm_privileges"] <= 0
+        if (conta is None or conta["is_banned"]
                 or not hmac.compare_digest(sessao["impressao"], impressao_senha(conta["password_hash"]))):
             await self.redis.delete(chave)
-            raise HTTPException(401, "Acesso GM revogado. Entre novamente.")
+            raise HTTPException(401, "Sessão revogada. Entre novamente.")
         if requisicao.method not in ("GET", "HEAD", "OPTIONS"):
             verificar_origem(requisicao)
             if not hmac.compare_digest(requisicao.headers.get("x-csrf-token", ""), sessao["csrf"]):
                 raise HTTPException(403, "Recarregue a sessão antes de realizar esta operação.")
-        return {"conta_id": conta["id"], "usuario": conta["username"], "csrf": sessao["csrf"]}
+        # B387: o papel sai do banco a cada requisição — GM revogado vira jogador na hora.
+        return {"conta_id": conta["id"], "usuario": conta["username"], "csrf": sessao["csrf"],
+                "papel": "gm" if conta["gm_privileges"] > 0 else "jogador"}
 
     async def sair(self, token):
         await self.redis.delete(f"{self.prefixo}sessoes:{chave_sessao(token)}")

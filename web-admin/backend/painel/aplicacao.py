@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from .realms import listar_realms
 from .consultas import registrar_consultas
 from .contas import registrar_contas
+from .jogador import ROTAS_PUBLICAS, exigir_rota_do_jogador, registrar_jogador
 from .recursos import registrar_conversas, registrar_estudio, registrar_mapas, registrar_recursos, registrar_reinicio
 from .seguranca import COOKIE, TEMPO_SESSAO, LimitarEntrada, Seguranca
 
@@ -57,8 +58,11 @@ def criar_aplicacao():
                 seguranca = getattr(app.state, "seguranca", None)
                 if seguranca is None:
                     raise HTTPException(503, "Serviço administrativo indisponível.")
-                if not (caminho == "/api/sessao/entrar" and requisicao.method == "POST"):
+                if not ((caminho == "/api/sessao/entrar" and requisicao.method == "POST")
+                        or (requisicao.method, caminho) in ROTAS_PUBLICAS):
                     requisicao.state.administrador = await seguranca.autorizar(requisicao)
+                    # B387: conta comum só alcança a lista fechada de `painel/jogador.py`.
+                    await exigir_rota_do_jogador(requisicao, requisicao.state.administrador, seguranca.pool)
             resposta = await proximo(requisicao)
         except HTTPException as erro:
             resposta = JSONResponse({"detail": erro.detail}, status_code=erro.status_code)
@@ -102,6 +106,7 @@ def criar_aplicacao():
     async def realms():
         return {"realms": await listar_realms(app.state.seguranca.pool)}
 
+    registrar_jogador(app)
     registrar_consultas(app)
     registrar_contas(app)
     registrar_recursos(app)
