@@ -17804,4 +17804,9 @@ comparação lado a lado.
       = 403 em contas e Estúdio. Com o GS de hoje, online/inventário do jogador aparecem como "recusado pelo daemon".
 
     ### d. Falta
-    - Publicar `pw-world-126`, `pw-world-155` e `pw-admin-api` e o Murillo ver no navegador. Não commitado.
+    - Publicados a pedido do Murillo, um por vez: `pw-world-126` (27.327 monstros, canal na 29110), `pw-world-155`
+      (mapas 1, 161, 169) e `pw-admin-api`; `public` conferido antes (vazio), nenhum contêiner parado. Por curl com
+      `testuser`: estado do realm 126 `consultado`, inventário próprio 200, `/api/contas` 403. A imagem do painel levou
+      também o que a sessão do B386 tinha na árvore (`recursos.py`, Estúdio Svelte), que ela já publicara.
+    - Código commitado em `e70e25e`; a documentação inicial deste bloco entrou no `0fcdca8` (commit de documentação do
+      B386, que levou os arquivos inteiros) e o registro da publicação no commit seguinte. Falta o Murillo ver no navegador.
