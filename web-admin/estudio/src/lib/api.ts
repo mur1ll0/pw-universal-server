@@ -237,6 +237,30 @@ export interface Origens {
 }
 export const origensDoItem = (id: number) => api<Origens>(rota(`origens/${id}`));
 
+/** Para onde o item vai: receitas que o gastam, minas que o dão, habilidades que o exigem (`Estudio::usos_do_item`). */
+export interface UsosDoItem {
+  id: number;
+  ingrediente_de: (RefDeOrigem & { quantidade: number; faz: (RefDeOrigem | { id: number; nome: null })[] })[];
+  minas: (RefDeOrigem & { chance: number; vida: number; valida: boolean; motivo?: string })[];
+  habilidades: { id: number; nome: string; niveis: number[] }[];
+}
+export const usosDoItem = (id: number) => api<UsosDoItem>(rota(`usos/${id}`));
+
+/** A mina como o GS a monta (`Estudio::mina_do_gs`, `npcgenerator.cpp:1280-1365`), ou o motivo da recusa. */
+export type RefOuId = RefDeOrigem | { id: number; nome: null };
+export interface MinaDoGs {
+  valida: boolean;
+  motivo?: string;
+  mina?: {
+    quantidade: number; quantidade_bonus: number; chance_bonus: number; tempo_minimo: number; tempo_maximo: number; nivel: number;
+    exp: number; sp: number; materiais: { item: RefOuId; chance: number; vida: number }[]; ferramenta: RefOuId | null;
+    missao_de_entrada: number; missao_de_saida: number; ininterrupta: boolean; permanente: boolean; gasta_ferramenta: boolean;
+    distancia: number; coletores: number; chance_de_sucesso: number; tipo: number;
+    monstros_ao_colher: { monstro: RefOuId; quantidade: number; raio: number; vida: number }[];
+  };
+}
+export const minaDoGs = (indice: number) => api<MinaDoGs>(rota(`minas/${indice}`));
+
 /* ---- B371: monstros — habilidades, onde nasce e as áreas do npcgen (rotas dos Editores, B243/B248/B284) ---- */
 export interface Habilidade { id: number; nome: string; type: number; cls: number; max_level: number }
 export const buscarHabilidades = (busca: string) =>
@@ -258,15 +282,18 @@ export interface MapaDoRealm { caminho: string; id: number; nome: string; coluna
 export const mapasDoRealm = () => api<MapaDoRealm[]>(rota("mapas", {}, false));
 
 export interface Area { indice: number; campos: Record<string, number | boolean>; filhos: Record<string, number | boolean>[] }
-export const lerArea = (caminho: string, indice: number) => api<Area>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`));
-export const salvarArea = (caminho: string, indice: number, campos: Record<string, number | boolean>, filhos?: Record<string, number | boolean>[]) =>
-  api<{ resultado?: unknown }>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`), {
+/** Áreas do npcgen: "areas" (criatura, B243) ou "recursos" (área de recurso: as minas, `NPCGENFILERESAREA`). */
+export type TipoDeArea = "areas" | "recursos";
+const rotaDaArea = (caminho: string, tipo: TipoDeArea, indice: number) => `mapas/${encodeURIComponent(caminho)}/npcgen/${tipo}/${indice}`;
+export const lerArea = (caminho: string, indice: number, tipo: TipoDeArea = "areas") => api<Area>(rota(rotaDaArea(caminho, tipo, indice)));
+export const salvarArea = (caminho: string, indice: number, campos: Record<string, number | boolean>, filhos?: Record<string, number | boolean>[], tipo: TipoDeArea = "areas") =>
+  api<{ resultado?: unknown }>(rota(rotaDaArea(caminho, tipo, indice)), {
     method: "PUT", body: JSON.stringify({ campos, filhos: filhos ?? null }),
   });
-export const clonarArea = (caminho: string, indice: number) =>
-  api<{ resultado?: { indice?: number }; indice?: number }>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}/clonar`), { method: "POST" });
-export const removerArea = (caminho: string, indice: number) =>
-  api(rota(`mapas/${encodeURIComponent(caminho)}/npcgen/areas/${indice}`), { method: "DELETE" });
+export const clonarArea = (caminho: string, indice: number, tipo: TipoDeArea = "areas") =>
+  api<{ resultado?: { indice?: number }; indice?: number }>(rota(`${rotaDaArea(caminho, tipo, indice)}/clonar`), { method: "POST" });
+export const removerArea = (caminho: string, indice: number, tipo: TipoDeArea = "areas") =>
+  api(rota(rotaDaArea(caminho, tipo, indice)), { method: "DELETE" });
 export const alturaDoChao = (caminho: string, x: number, z: number) =>
   api<{ tem_terreno: boolean; y: number }>(rota(`mapas/${encodeURIComponent(caminho)}/altura`, { x, z }, false));
 export const npcgenDoMapa = (caminho: string) => api<any>(rota(`mapas/${encodeURIComponent(caminho)}/npcgen`));
@@ -305,7 +332,7 @@ export async function importarAcoesGlb(smd: string, glb: ArrayBuffer) {
 /** B374: um modelo inteiro (esqueleto, pele, texturas, animações, .smd e .ecm) a partir de um GLB, em `<pasta>\<título>.*`
     (`modelos/novo`, B298/B299); `molde` = o .ecm de onde o novo herda o cabeçalho e as ações. */
 /** B380: GLB no modelo (.ecm) do monstro — só o modelo (malha e texturas) ou só as animações, com o mesmo esqueleto. */
-export async function importarGlbNoModelo(caminho: string, modo: "modelo" | "animacoes", glb: ArrayBuffer, extra: { como?: "equipamento"; validar?: boolean } = {}) {
+export async function importarGlbNoModelo(caminho: string, modo: "modelo" | "animacoes", glb: ArrayBuffer, extra: { como?: "equipamento" | "matter"; validar?: boolean } = {}) {
   const q: Record<string, string> = { caminho, modo };
   if (extra.como) q.como = extra.como;
   if (extra.validar) q.validar = "true";

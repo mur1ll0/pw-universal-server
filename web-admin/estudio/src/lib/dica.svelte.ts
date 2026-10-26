@@ -2,7 +2,7 @@
    agora pelo GS como se tivesse caído (`GET /api/realms/{r}/itens/{id}/exemplo`; o GS não grava nada). Cada linha traz
    os códigos de cor do cliente (`^RRGGBB`). */
 import { api, buscarNoEspaco, contexto, linkDosEditores } from "./api";
-import { subcategoriaPorTabela } from "./catalogo";
+import { categoriaDaTabela, subcategoriaPorTabela } from "./catalogo";
 import { parametros } from "./estado.svelte";
 
 /* B375: a dica fica presa ao ícone, logo acima dele (`base` = distância do pé da janela até o topo do ícone). */
@@ -57,7 +57,7 @@ export async function abrirItemEmNovaAba(id: number) {
     const r = (await buscarNoEspaco("ESSENCE", String(id), 10)).find((x) => x.id === id && x.tabela);
     if (!r) throw new Error(`item ${id} não encontrado`);
     const sub = subcategoriaPorTabela(r.tabela!);
-    const cat = r.tabela === "MONSTER_ESSENCE" ? "monstros" : "equipaveis";
+    const cat = categoriaDaTabela(r.tabela!) ?? "equipaveis";
     const url = sub?.pronta ? `${location.pathname}#/${cat}/${r.tabela}/${r.indice}?${parametros()}` : linkDosEditores(r.tabela!, r.indice);
     if (aba) aba.location.href = url; else window.open(url, "_blank");
   } catch (e) {

@@ -312,6 +312,19 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         await self.cliente.get("/api/realms/realm_155/estudio/modelos/doadores", params={"caminho": "a.ecm", "acao": "站立"})
         p = RecursosFalso.pedidos[-1]
         self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.5.5/estudio/modelos/doadores", {"caminho": ["a.ecm"], "acao": ["站立"]}))
+        # Itens no Estúdio: usos do item, a mina do GS e o GLB do item no chão (como=matter).
+        await self.cliente.get("/api/realms/realm_155/estudio/usos/795", params={"rascunho": 4})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.5.5/estudio/usos/795", {"rascunho": ["4"]}))
+        await self.cliente.get("/api/realms/realm_126/estudio/minas/12")
+        self.assertEqual(RecursosFalso.pedidos[-1]["caminho"], "/admin/1.2.6/estudio/minas/12")
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "a.ecm", "como": "matter"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"]["como"], ["matter"])
+        antes = len(RecursosFalso.pedidos)
+        self.assertEqual((await self.cliente.get("/api/realms/realm_155/estudio/usos/0")).status_code, 422)
+        r = await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "a.ecm", "como": "npc"})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(len(RecursosFalso.pedidos), antes)
 
     async def test_area_do_npcgen_repassa_e_recusa_o_que_nao_e_area(self):
         """B243: salvar área do npcgen passa de 8 KiB (geradores) só na rota dela; tipo fora do padrão fica no painel."""

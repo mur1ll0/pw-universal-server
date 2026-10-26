@@ -2,6 +2,8 @@
    realm (v156 no 1.5.5, v7 no 1.2.6) simplesmente não aparece: as boxes filtram pelos `campos` da ficha. O resto dos
    campos continua nos Editores. */
 
+import { SUBCATEGORIAS_DE_ITENS } from "./itens";
+
 export interface Subcategoria {
   chave: string;
   nome: string;
@@ -12,6 +14,10 @@ export interface Subcategoria {
   /** só nesta versão de cliente */
   so?: string;
   pronta: boolean;
+  /** grupo na lista de subcategorias (Itens: Materiais, Poções…) */
+  grupo?: string;
+  /** o que o servidor faz com o item, com a evidência */
+  oQueE?: string;
 }
 
 export interface Categoria {
@@ -45,11 +51,15 @@ export const CATEGORIAS: Categoria[] = [
     { chave: "monstros", nome: "Monstros", tabela: "MONSTER_ESSENCE", maior: "MONSTER_TYPE", pronta: true },
   ] },
   { chave: "mascotes", nome: "Mascotes", icone: "pata", pronta: false, subcategorias: [] },
-  { chave: "itens", nome: "Itens", icone: "caixa", pronta: false, subcategorias: [] },
+  // Itens: as tabelas de item que não são Equipáveis, agrupadas (`lib/itens.ts`), e as Minas.
+  { chave: "itens", nome: "Itens", icone: "caixa", pronta: true, subcategorias: SUBCATEGORIAS_DE_ITENS },
 ];
 
 export const subcategoriaPorTabela = (tabela: string) =>
   CATEGORIAS.flatMap((c) => c.subcategorias).find((s) => s.tabela === tabela);
+
+/** A categoria (rota da edição: "equipaveis", "monstros", "itens") da tabela com tela própria. */
+export const categoriaDaTabela = (tabela: string) => CATEGORIAS.find((c) => c.subcategorias.some((s) => s.tabela === tabela))?.chave;
 
 /* ---- B376: colunas do seletor de item (filtro e ordenação sobre a tabela inteira, `GET tabelas/{T}?colunas=`) ----
    Nomes do layout (`specs/elements_layouts/v156.json` e `v7.json`, listas achatadas a partir de 1): WEAPON (4),
@@ -88,7 +98,8 @@ export const TABELAS_DE_ITEM = new Set([
 ]);
 
 /** As tabelas cujo seletor ganha colunas: as das categorias do Estúdio e as pedras. */
-export const tabelaComColunas = (tabela: string) => tabela === "STONE_ESSENCE" || !!subcategoriaPorTabela(tabela);
+export const tabelaComColunas = (tabela: string) => tabela === "STONE_ESSENCE"
+  || CATEGORIAS.some((c) => c.chave !== "itens" && c.subcategorias.some((s) => s.tabela === tabela));
 
 /* ---- boxes da edição de Equipável (B366 Armas; B370 todas as subcategorias) ----
    Uma lista só para todas as tabelas: o campo que a tabela (ou a versão) não tem não aparece. Entrada que começa com

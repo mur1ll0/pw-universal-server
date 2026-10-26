@@ -15,9 +15,12 @@
   import { avisar, estudio } from "../lib/estado.svelte";
   import Icone from "./Icone.svelte";
 
-  let { tabela, campos, caminhos, modoDeVoo = 0, idDoItem = 0, aoTrocarModelo }:
+  /* `como`: "equipamento" (arma, asa, voo — peles do .smd, pendura num gancho) ou "matter" (item no chão e mina:
+     `CECMatter::LoadMatterModel`, `EC_Matter.cpp:71-107` — o `CECModel::Load` comum, as peles do .smd e, sem nenhuma, a
+     `<.smd>.ski`; não pendura em gancho). */
+  let { tabela, campos, caminhos, modoDeVoo = 0, idDoItem = 0, aoTrocarModelo, como = "equipamento", titulo: tituloDoCard = "Modelo 3D no personagem", pastaPadrao = "" }:
     { tabela: string; campos: CampoDeModelo[]; caminhos: Record<string, string>; modoDeVoo?: number; idDoItem?: number;
-      aoTrocarModelo: (campo: string, ecm: string) => Promise<void> } = $props();
+      aoTrocarModelo: (campo: string, ecm: string) => Promise<void>; como?: "equipamento" | "matter"; titulo?: string; pastaPadrao?: string } = $props();
 
   const comModelo = $derived(campos.filter((c) => (caminhos[c.campo] ?? "").trim()));
   let escolhido = $state("");
@@ -42,7 +45,7 @@
   let relatorio = $state<{ titulo: string; linhas: string[]; ok: boolean } | null>(null);
   let arquivo: File | null = $state(null);
 
-  $effect(() => { if (!pasta) pasta = pastaSugerida(tabela); });
+  $effect(() => { if (!pasta) pasta = pastaPadrao || pastaSugerida(tabela); });
 
   async function carregarFicha() {
     ficha = null;
@@ -52,7 +55,7 @@
     tocando = base;
     parar?.(); parar = null; erroDoGlb = ""; carregando = true;
     try {
-      const r = await fetch(rotaDoGlb(caminho, base || undefined, false, { como: "equipamento" }), { credentials: "same-origin", cache: "no-store" });
+      const r = await fetch(rotaDoGlb(caminho, base || undefined, false, { como }), { credentials: "same-origin", cache: "no-store" });
       if (!r.ok) throw new Error(`GLB: HTTP ${r.status}${r.status === 400 ? " — " + ((await r.json().catch(() => ({}))).detail || "") : ""}`);
       if (tela) parar = desenharGlb(tela, await r.arrayBuffer());
     } catch (e) { erroDoGlb = (e as Error).message; }
@@ -106,7 +109,7 @@
           }
         }
       } else {
-        const d = await importarGlbNoModelo(caminho, modo, glb, { como: "equipamento", validar });
+        const d = await importarGlbNoModelo(caminho, modo, glb, { como, validar });
         relatorio = { titulo: validar ? "Conferência (nada gravado)" : "Importado no rascunho", linhas: linhasDe(d), ok: true };
         if (!validar) { mostrado = ""; await carregarFicha(); await tocar(""); }
       }
@@ -119,7 +122,7 @@
 
 {#if comModelo.length}
 <section class="caixa visual">
-  <h3>Modelo 3D no personagem</h3>
+  <h3>{tituloDoCard}</h3>
   {#if comModelo.length > 1}
     <select class="campo" bind:value={escolhido} aria-label="Modelo">
       {#each comModelo as c (c.campo)}<option value={c.campo}>{c.rotulo}</option>{/each}
@@ -127,16 +130,20 @@
   {/if}
   <canvas bind:this={tela} width="560" height="420"></canvas>
   <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada")} · {caminho}</p>
-  <p class="mini">Pendura no personagem pelo gancho {ganchos.length ? ganchos.join(" ou ") : "— (não pendura)"}; as peles são as do .smd, como o cliente carrega.</p>
+  {#if como === "matter"}
+    <p class="mini">Como o cliente monta no chão: o .ecm com as peles do .smd; se o .smd não tem pele, a &lt;.smd&gt;.ski (EC_Matter.cpp:71-107). Não pendura em gancho.</p>
+  {:else}
+    <p class="mini">Pendura no personagem pelo gancho {ganchos.length ? ganchos.join(" ou ") : "— (não pendura)"}; as peles são as do .smd, como o cliente carrega.</p>
+  {/if}
   <div class="linha">
-    <a class="botao pequeno" href={rotaDoGlb(caminho, undefined, true, { como: "equipamento" })} download={arquivoDoGlb}><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
+    <a class="botao pequeno" href={rotaDoGlb(caminho, undefined, true, { como })} download={arquivoDoGlb}><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
   </div>
 
   <fieldset class="importar" disabled={!editavel || ocupado}>
     <legend class="mini">Importar GLB{editavel ? "" : " — escolha um rascunho no alto"}</legend>
-    <label class="mini"><input type="radio" bind:group={modo} value="modelo" /> Só o modelo — malha e texturas na pele do .smd; esqueleto, ganchos e animações ficam</label>
+    <label class="mini"><input type="radio" bind:group={modo} value="modelo" /> Só o modelo — malha e texturas na pele do .smd{como === "matter" ? " (ou na <.smd>.ski)" : ""}; esqueleto, ganchos e animações ficam</label>
     <label class="mini"><input type="radio" bind:group={modo} value="animacoes" /> Só as animações — substitui as de mesmo nome, acrescenta as novas</label>
-    <label class="mini"><input type="radio" bind:group={modo} value="tudo" /> Tudo — modelo, texturas, esqueleto e animações (arquivos novos; o GLB tem de ter o gancho)</label>
+    <label class="mini"><input type="radio" bind:group={modo} value="tudo" /> Tudo — modelo, texturas, esqueleto e animações (arquivos novos{ganchos.length ? "; o GLB tem de ter o gancho" : ""})</label>
     {#if modo === "tudo"}
       <div class="linha">
         <input class="campo" bind:value={pasta} aria-label="Pasta do modelo novo" />

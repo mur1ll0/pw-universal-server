@@ -3,6 +3,7 @@
      #/                               tela principal (categorias)
      #/equipaveis/<tabela>/<indice>   edição (Armas: tela própria)
      #/itens/novo?retorno=<código>    item novo para a aba de origem (BroadcastChannel)
+     #/itens/<tabela>/<indice>         edição de Item (materiais, poções, pedras… e minas)
      #/gshop?loja=<arquivo>            G-Shop: a Loja Gold (gshop*.data) */
   import { onMount } from "svelte";
   import { contexto, sessao, versaoDoRealm } from "./lib/api";
@@ -13,6 +14,7 @@
   import EdicaoEquipavel from "./telas/EdicaoEquipavel.svelte";
   import EdicaoMonstro from "./telas/EdicaoMonstro.svelte";
   import NovoItem from "./telas/NovoItem.svelte";
+  import EdicaoItem from "./telas/EdicaoItem.svelte";
   import GShop from "./telas/GShop.svelte";
 
   let pronto = $state(false);
@@ -54,6 +56,10 @@
     {/key}
   {:else if rota.caminho[0] === "itens" && rota.caminho[1] === "novo"}
     <NovoItem />
+  {:else if rota.caminho[0] === "itens" && rota.caminho[1] && rota.caminho[2] !== undefined}
+    {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
+      <EdicaoItem tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
+    {/key}
   {:else if rota.caminho[0] === "gshop"}
     <GShop />
   {:else}

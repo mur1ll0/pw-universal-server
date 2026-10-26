@@ -551,7 +551,7 @@ struct QModelo {
     /// B380: todas as ações-base do `.smd` (o GLB que vai para o Blender).
     todas: Option<bool>,
     /// B383: "equipamento" = monta o `.ecm` como o `CECModel::Load` da arma/asa/voo (peles do `.smd` + `AddiSkinPath`),
-    /// não como o NPC (`<.ecm>.ski`).
+    /// não como o NPC (`<.ecm>.ski`). "matter" = item no chão e mina (`CECMatter`): peles do `.smd`, senão a `<.smd>.ski`.
     como: Option<String>,
     /// B383: as peles (`.ski`, separadas por `|`) a vestir no esqueleto do `.ecm` — a armadura/moda sobre o corpo do
     /// jogador (`Models\Players\形象\<classe>\躯干\<classe>.ecm`), como o `ChangeArmor` do cliente.
@@ -563,8 +563,15 @@ struct QModelo {
 /// o legível de cada nome (`nomes_legiveis`) e as telas mostram esse; só para ler, o arquivo guarda o original.
 /// Aplicada em ordem: os compostos antes dos simples. B384: ações de voo, asas e espada voadora (medidas em 130 modelos
 /// de voo/asa/arma do 1.5.5 e do 1.2.6: 低空下降, 高空下降, 展开, 飞行悬停, 飞行前进, 飞剑…, 翅膀收起, 起飞, 滑翔, 收起…;
-/// `地空下降` é grafia do cliente para 低空下降).
+/// `地空下降` é grafia do cliente para 低空下降). B386: item no chão e mina (medidos em 1.681 modelos `file_matter`/`file_model`
+/// das duas versões): o item caído toca `掉落保护` (no chão), `掉落保护_水中` (na água) ou `掉落保护_空中` (no ar), pelo ambiente
+/// (`CECMatter`, `EC_Matter.cpp:300-311`; em 1.006 modelos), `刀光` (rastro da lâmina, 614), e os termos soltos `四处张望`,
+/// `战斗站立`, `行走`, `奔跑`, `普通攻击`, `点头`, `摇头`, `招手`, `挑衅`, `复活` (modelos de personagem usados como item no chão).
 const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[
+    ("掉落保护_水中", "Item caído na água"), ("掉落保护_空中", "Item caído no ar"), ("掉落保护", "Item caído no chão"),
+    ("刀光", "Rastro da lâmina"), ("四处张望", "Olhando ao redor"), ("战斗站立", "Parado em combate"), ("行走", "Andando"),
+    ("奔跑", "Correndo"), ("普通攻击", "Ataque normal"), ("点头", "Acenando que sim"), ("摇头", "Acenando que não"),
+    ("招手", "Chamando com a mão"), ("挑衅", "Provocando"), ("复活", "Revivendo"),
     ("低空下降", "descendo de baixa altura"), ("地空下降", "descendo de baixa altura"), ("高空下降", "descendo de grande altura"),
     ("飞行悬停", "voando parado"), ("飞行前进", "voando para frente"), ("飞行落地", "pousando"), ("飞行下降", "descendo"),
     ("翅膀收起", "asas recolhidas"), ("飞剑", "espada voadora: "), ("展开", "abrindo"), ("收起", "recolhendo"), ("起飞", "decolando"),
@@ -584,7 +591,9 @@ fn nome_legivel_da_acao(original: &str) -> String {
     };
     // B384: "<modelo>_<ação>" (天鹅之翼_起飞): o prefixo é o nome do modelo — o legível fica só com a ação (o original,
     // inteiro, vai depois do separador).
-    let miolo = miolo.rsplit_once('_').map_or(miolo, |x| x.1);
+    // B386: termo da tabela com "_" (掉落保护_水中) não é prefixo de modelo.
+    let com_traco = TRADUCOES_DE_ACAO.iter().any(|(a, _)| a.contains('_') && miolo.contains(a));
+    let miolo = if com_traco { miolo } else { miolo.rsplit_once('_').map_or(miolo, |x| x.1) };
     let mut t = miolo.to_string();
     for (a, b) in TRADUCOES_DE_ACAO.iter().filter(|(a, _)| *a != "起" && *a != "落") {
         t = t.replace(a, b);
@@ -641,6 +650,18 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
                     match ler_pele(&c) {
                         Ok((n, s)) => peles.push((n, Ok(s))),
                         Err(x) => peles.push((c, Err(x))),
+                    }
+                }
+            } else if q.como.as_deref() == Some("matter") {
+                // Item no chão e mina (`CECMatter::LoadMatterModel`, `EC_Matter.cpp:71-107`): `CECModel::Load` comum — as
+                // peles do .smd; se o modelo ficou sem pele, a `<.smd>.ski` (`:96-103`). As `AddiSkinPath` só entram no
+                // editor (`#ifdef GFX_EDITOR`, `EC_Model.cpp:678-689`).
+                peles.extend(peles_do_smd);
+                if !peles.iter().any(|p| p.1.is_ok()) {
+                    let ski = format!("{}.ski", m.smd.trim().replace('/', "\\").rsplit_once('.').map_or(m.smd.trim().to_string(), |x| x.0.to_string()));
+                    match ler_pele(&ski) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((ski, Err(x))),
                     }
                 }
             } else {
@@ -943,6 +964,7 @@ struct QImportarGlb {
     caminho: String,
     modo: String,
     /// B383: "equipamento" = o GLB vai para a 1ª pele do `.smd` (arma, asa, voo), não para a `<.ecm>.ski` do NPC.
+    /// "matter" = item no chão e mina: a 1ª pele do `.smd` ou, sem nenhuma, a `<.smd>.ski` (`EC_Matter.cpp:96-103`).
     como: Option<String>,
     /// B383: só conferir (relatório), sem gravar.
     validar: Option<bool>,
@@ -1163,6 +1185,21 @@ async fn estudio_origens(State(e): State<Arc<Estado>>, Path((v, id)): Path<(Stri
         return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
     }
     Ok(Json(e.estudio.origens_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
+/// Para onde o item vai: receitas que o gastam, minas que o dão, habilidades que o exigem — `Estudio::usos_do_item`.
+async fn estudio_usos(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    if id <= 0 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
+    }
+    Ok(Json(e.estudio.usos_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
+/// A mina (registro `indice` de `MINE_ESSENCE`) como o GS a monta, ou o motivo da recusa — `Estudio::mina_do_gs`.
+async fn estudio_mina(State(e): State<Arc<Estado>>, Path((v, indice)): Path<(String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.mina_do_gs(&e.gov, &v, q.rascunho, indice).await?))
 }
 
 #[derive(Deserialize)]
@@ -2069,6 +2106,8 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/telas/{tabela}/{indice}", get(estudio_tela))
         .route("/admin/{v}/estudio/origens/{id}", get(estudio_origens))
+        .route("/admin/{v}/estudio/usos/{id}", get(estudio_usos))
+        .route("/admin/{v}/estudio/minas/{indice}", get(estudio_mina))
         .route("/admin/{v}/estudio/refinos", get(estudio_refinos))
         .route("/admin/{v}/estudio/equipamentos/pele", get(estudio_pele_do_equipamento).post(estudio_importar_pele_do_equipamento))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
@@ -2149,6 +2188,10 @@ mod testes_b380 {
     #[test]
     fn nome_legivel_da_acao() {
         assert_eq!(super::nome_legivel_da_acao("站立"), "Parado · 站立");
+        // B386: item caído (EC_Matter.cpp:300-311) e o "站立" composto antes do simples.
+        assert_eq!(super::nome_legivel_da_acao("掉落保护_水中"), "Item caído na água · 掉落保护_水中");
+        assert_eq!(super::nome_legivel_da_acao("掉落保护"), "Item caído no chão · 掉落保护");
+        assert_eq!(super::nome_legivel_da_acao("战斗站立"), "Parado em combate · 战斗站立");
         assert_eq!(super::nome_legivel_da_acao("普攻1起"), "Ataque 1 — início · 普攻1起");
         assert_eq!(super::nome_legivel_da_acao("andar"), "andar");
         assert_eq!(super::nome_legivel_da_acao("受伤叠加"), "Apanhando (sobreposto) · 受伤叠加");

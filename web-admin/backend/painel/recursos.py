@@ -349,6 +349,20 @@ def registrar_estudio(app):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/origens/{id_item}", {"rascunho": rascunho})
 
+    # Para onde o item vai (receitas que o gastam, minas que o dão, habilidades que o exigem), só leitura.
+    @app.get("/api/realms/{realm}/estudio/usos/{id_item}")
+    async def estudio_usos(realm: str, id_item: int, requisicao: Request, rascunho: int | None = None):
+        if not 0 < id_item <= 2_147_483_647:
+            raise HTTPException(422, "Id inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/usos/{id_item}", {"rascunho": rascunho})
+
+    # A mina (registro de MINE_ESSENCE) como o GS a monta, ou o motivo por que o GS a recusa.
+    @app.get("/api/realms/{realm}/estudio/minas/{indice}")
+    async def estudio_mina(realm: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/minas/{max(0, indice)}", {"rascunho": rascunho})
+
     # Efeitos de refino (tratador refine_* do GS): o que somam, valor de +1 a +12 e uso por família.
     @app.get("/api/realms/{realm}/estudio/refinos")
     async def estudio_refinos(realm: str, requisicao: Request, rascunho: int | None = None):
@@ -1005,7 +1019,7 @@ def registrar_reinicio(app):
         v = await _versao_do_realm(requisicao, realm)
         if modo not in ("modelo", "animacoes"):
             raise HTTPException(422, "Modo inválido.")
-        if como not in (None, "equipamento"):
+        if como not in (None, "equipamento", "matter"):
             raise HTTPException(422, "Parâmetro como inválido.")
         corpo = await requisicao.body()
         if not corpo:
@@ -1070,7 +1084,7 @@ def registrar_reinicio(app):
     async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None,
                                  rascunho: int | None = None, todas: bool = False, como: str | None = None, peles: str | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        if como not in (None, "equipamento"):
+        if como not in (None, "equipamento", "matter"):
             raise HTTPException(422, "Parâmetro como inválido.")
         # B374: com o rascunho, o GLB mostra os arquivos de modelo dele (ex.: o modelo importado de um GLB).
         # B380: `todas` = todas as ações-base do .smd (o GLB que vai para o Blender).

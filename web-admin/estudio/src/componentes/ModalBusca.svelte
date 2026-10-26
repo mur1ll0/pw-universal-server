@@ -16,6 +16,11 @@
   let subs = $derived(categoria.subcategorias.filter((s) => (!s.so || s.so === estudio.versao) && (!existentes.size || existentes.has(s.tabela))));
   let chave = $state(categoria.subcategorias[0]?.chave ?? "");
   let sub = $derived(subs.find((s) => s.chave === chave) ?? subs[0]);
+  const grupos = $derived.by(() => {
+    const g = new Map<string, typeof subs>();
+    for (const x of subs) g.set(x.grupo ?? "", [...(g.get(x.grupo ?? "") ?? []), x]);
+    return [...g.entries()];
+  });
   let busca = $state("");
   let pagina = $state(0);
   let total = $state(0);
@@ -80,10 +85,18 @@
   <div class="linha">
     <label class="suave" for="sub">Subcategoria</label>
     <select id="sub" class="campo" bind:value={chave} onchange={() => { pagina = 0; escolhido = null; }}>
-      {#each subs as s (s.chave)}<option value={s.chave}>{s.nome}{s.pronta ? "" : " (Editores)"}</option>{/each}
+      {#if subs.some((s) => s.grupo)}
+        <!-- Itens: subcategorias agrupadas como o jogador entende (lib/itens.ts). -->
+        {#each grupos as [g, lista] (g)}
+          <optgroup label={g}>{#each lista as s (s.chave)}<option value={s.chave}>{s.nome}</option>{/each}</optgroup>
+        {/each}
+      {:else}
+        {#each subs as s (s.chave)}<option value={s.chave}>{s.nome}{s.pronta ? "" : " (Editores)"}</option>{/each}
+      {/if}
     </select>
     <input class="campo busca" placeholder="id ou nome" bind:value={busca} oninput={digitar} aria-label="Buscar por id ou nome" />
   </div>
+  {#if sub?.oQueE}<p class="mini">{sub.tabela} · {sub.oQueE}</p>{/if}
   {#if sub && !sub.pronta}
     <p class="mini">{sub.nome} ({sub.tabela}) ainda não tem tela própria no Estúdio: a lista serve para achar o id; a edição é nos Editores.</p>
   {/if}

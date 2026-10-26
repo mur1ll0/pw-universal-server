@@ -16,6 +16,10 @@
 # B366: o Estúdio entra pelo código-fonte (estágio Node); a saída local da build e o node_modules ficam fora.
 !web-admin/estudio/
 !web-admin/estudio/**
+!specs/
+!specs/elements_layouts/
+!specs/elements_layouts/v156.json
+!specs/elements_layouts/v7.json
 web-admin/estudio/node_modules/
 web-admin/backend/static/estudio/
 **/__pycache__/

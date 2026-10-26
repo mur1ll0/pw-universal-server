@@ -4012,7 +4012,9 @@ impl Estudio {
         pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
         let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, destino, imp.texturas_novas).await?;
         let resumo = json!({ "texturas_gravadas": texturas_gravadas,
-            "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+            // Malhas com pele e rígidas (o item no chão e a mina costumam ser só rígidas), como a conferência conta.
+            "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+            "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>() + imp.ski.malhas_rigidas.iter().map(|m| m.vertices.len()).sum::<usize>(),
             "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,
         });
         let mudanca = json!({ "acao": "importar", "tipo": "pele", "de": "glTF", "esqueleto": caminho_bon });
@@ -4828,6 +4830,9 @@ impl Estudio {
             bail!("o modelo é um .ecm");
         }
         let equipamento = como == Some("equipamento");
+        // Item no chão e mina (`CECMatter::LoadMatterModel`, `EC_Matter.cpp:71-107`): as peles do .smd e, sem nenhuma, a
+        // `<.smd>.ski` (`:96-103`) — nunca a `<.ecm>.ski` do NPC.
+        let matter = como == Some("matter");
         let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
         let smd = ecm.smd.trim().replace('/', "\\");
         let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
@@ -4859,9 +4864,9 @@ impl Estudio {
             // B383: equipamento (arma, asa, voo): o cliente carrega o .ecm com as peles do próprio .smd
             // (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`), não a `<.ecm>.ski` do NPC — o GLB vai para a
             // 1ª pele do .smd, e as outras saem da lista (o GLB exportado trouxe as malhas de todas).
-            "modelo" if equipamento => {
+            "modelo" if equipamento || (matter && !c.peles.is_empty()) => {
                 let ecm_lido = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
-                if !ecm_lido.peles_adicionais.is_empty() {
+                if equipamento && !ecm_lido.peles_adicionais.is_empty() {
                     bail!("o .ecm tem {} pele(s) adicional(is) além das do .smd: importe com \"tudo\"", ecm_lido.peles_adicionais.len());
                 }
                 let bytes_smd = self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?;
@@ -4884,7 +4889,9 @@ impl Estudio {
                 Ok(r)
             }
             "modelo" => {
-                let destino = format!("{}.ski", caminho.rsplit_once('.').map_or(caminho, |x| x.0));
+                // NPC: a `<.ecm>.ski`; item no chão/mina sem pele no .smd: a `<.smd>.ski` (`EC_Matter.cpp:96-103`).
+                let base = if matter { smd.as_str() } else { caminho };
+                let destino = format!("{}.ski", base.rsplit_once('.').map_or(base, |x| x.0));
                 if self.bytes_do_cliente(gov, versao, &destino, Some(rascunho)).await.is_ok() {
                     return self.importar_pele(gov, versao, rascunho, &smd, &destino, glb).await;
                 }
@@ -5568,6 +5575,130 @@ impl Estudio {
 
         Ok(json!({ "id": id, "dropado_de": dropado_de, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
             "loja_gold": loja_gold, "forjado_por": forjado_por }))
+    }
+
+    /// Para onde o item vai (o contrário de [`origens_do_item`]): as receitas que o gastam como material
+    /// (`RECIPE_ESSENCE.materials_N_id/num`, consumidos no `ProduceItem`, `player.cpp:16404`), as minas que o dão
+    /// (`MINE_ESSENCE.materials_N`, com a chance e a validade; a mina que o GS recusa vem com o motivo,
+    /// `pw_data_loader::minas::montar`, `npcgenerator.cpp:1280-1365`) e as habilidades que o exigem para aprender (o
+    /// `item_exigido` do catálogo do realm, `GetRequiredItem`; consumido no aprendizado, `skill.cpp:79-84`).
+    pub async fn usos_do_item(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i32) -> Result<Value> {
+        const LIMITE: usize = 300;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let ids = mapa_de_ids(&e);
+        let reg = |t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize| {
+            json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i), "icone": icone_do_registro(t, i) })
+        };
+        let item = |alvo: i32| -> Value {
+            match ids.get(&("ESSENCE".to_string(), alvo)) {
+                Some(&(ti, ri)) if ti != CONVERSAS => reg(&e.tabelas[ti], ri),
+                _ => json!({ "id": alvo, "nome": null }),
+            }
+        };
+        let deslocamento = |t: &pw_data_loader::elements_editavel::TabelaEditavel, nome: &str| {
+            t.campos().into_iter().find(|(_, _, f)| f.name == nome).map(|(o, _, _)| o)
+        };
+
+        let mut ingrediente_de = Vec::new();
+        if let Ok(rt) = e.tabela("RECIPE_ESSENCE") {
+            let mats: Vec<(usize, Option<usize>)> = campos_que(rt, |n| n.starts_with("materials_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(rt, &n.replace("_id", "_num"))))
+                .collect();
+            let alvos = campos_que(rt, |n| n.starts_with("targets_") && n.ends_with("_id_to_make"));
+            for (i, b) in rt.registros.iter().enumerate() {
+                if ingrediente_de.len() >= LIMITE {
+                    break;
+                }
+                let qtd: Vec<i32> = mats.iter().filter(|(o, _)| i32_em(b, *o) == id).map(|(_, q)| q.map_or(0, |q| i32_em(b, q))).collect();
+                if qtd.is_empty() {
+                    continue;
+                }
+                let mut v = reg(rt, i);
+                v["quantidade"] = json!(qtd.iter().sum::<i32>());
+                v["faz"] = json!(alvos.iter().map(|(o, _)| i32_em(b, *o)).filter(|&x| x > 0).map(item).collect::<Vec<_>>());
+                ingrediente_de.push(v);
+            }
+        }
+
+        let mut minas = Vec::new();
+        if let Ok(mt) = e.tabela("MINE_ESSENCE") {
+            let mats: Vec<(usize, Option<usize>, Option<usize>)> = campos_que(mt, |n| n.starts_with("materials_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(mt, &n.replace("_id", "_probability")), deslocamento(mt, &n.replace("_id", "_life"))))
+                .collect();
+            for (i, b) in mt.registros.iter().enumerate() {
+                if minas.len() >= LIMITE {
+                    break;
+                }
+                let linhas: Vec<(f32, i32)> = mats
+                    .iter()
+                    .filter(|(o, p, _)| i32_em(b, *o) == id && p.map_or(0.0, |p| f32_em(b, p)) > 0.0)
+                    .map(|(_, p, l)| (p.map_or(0.0, |p| f32_em(b, p)), l.map_or(0, |l| i32_em(b, l))))
+                    .collect();
+                if linhas.is_empty() {
+                    continue;
+                }
+                let mut v = reg(mt, i);
+                v["chance"] = json!(linhas.iter().map(|x| x.0).sum::<f32>());
+                v["vida"] = json!(linhas[0].1);
+                match pw_data_loader::minas::montar(&mt.ler(i)?) {
+                    Ok(_) => v["valida"] = json!(true),
+                    Err(m) => {
+                        v["valida"] = json!(false);
+                        v["motivo"] = json!(m);
+                    }
+                }
+                minas.push(v);
+            }
+        }
+
+        let mut habilidades = Vec::new();
+        if let Ok((hs, _)) = self.habilidades_do_servidor(gov, versao, rascunho).await {
+            let t = self.skillstr(gov, versao, rascunho).await.ok();
+            for (k, h) in &hs {
+                let Ok(hid) = k.parse::<i64>() else { continue };
+                let Some(lista) = h.get("item_exigido").and_then(Value::as_array) else { continue };
+                let niveis: Vec<usize> = lista.iter().enumerate().filter(|(_, x)| x.as_i64() == Some(id as i64)).map(|(n, _)| n + 1).collect();
+                if !niveis.is_empty() {
+                    habilidades.push((hid, json!({ "id": hid, "nome": t.as_ref().and_then(|t| t.texto(hid * 10)).unwrap_or_default(), "niveis": niveis })));
+                }
+            }
+            habilidades.sort_by_key(|x| x.0);
+        }
+        Ok(json!({ "id": id, "ingrediente_de": ingrediente_de, "minas": minas,
+            "habilidades": habilidades.into_iter().map(|x| x.1).collect::<Vec<_>>() }))
+    }
+
+    /// A mina como o GS a monta (`pw_data_loader::minas::montar`, `npcgenerator.cpp:1280-1365`), com os nomes do que
+    /// ela cita (materiais, ferramenta, monstros ao colher). Recusada: `valida: false` e o motivo.
+    pub async fn mina_do_gs(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, indice: usize) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let t = e.tabela("MINE_ESSENCE")?;
+        let r = t.ler(indice)?;
+        let ids = mapa_de_ids(&e);
+        let item = |alvo: i64| -> Value {
+            match ids.get(&("ESSENCE".to_string(), alvo as i32)) {
+                Some(&(ti, ri)) if ti != CONVERSAS && alvo > 0 => {
+                    let x = &e.tabelas[ti];
+                    json!({ "tabela": x.nome, "indice": ri, "id": alvo, "nome": nome_do_registro(x, ri), "icone": icone_do_registro(x, ri) })
+                }
+                _ => json!({ "id": alvo, "nome": null }),
+            }
+        };
+        Ok(match pw_data_loader::minas::montar(&r) {
+            Err(motivo) => json!({ "valida": false, "motivo": motivo }),
+            Ok(m) => json!({ "valida": true, "mina": {
+                "quantidade": m.quantidade, "quantidade_bonus": m.quantidade_bonus, "chance_bonus": m.chance_bonus,
+                "tempo_minimo": m.tempo_minimo, "tempo_maximo": m.tempo_maximo, "nivel": m.nivel, "exp": m.exp, "sp": m.sp,
+                "materiais": m.materiais.iter().map(|x| json!({ "item": item(x.item as i64), "chance": x.probabilidade, "vida": x.vida })).collect::<Vec<_>>(),
+                "ferramenta": (m.ferramenta > 0).then(|| item(m.ferramenta as i64)),
+                "missao_de_entrada": m.missao_de_entrada, "missao_de_saida": m.missao_de_saida, "ininterrupta": m.ininterrupta,
+                "permanente": m.permanente, "gasta_ferramenta": m.gasta_ferramenta, "distancia": m.distancia, "coletores": m.coletores,
+                "chance_de_sucesso": m.chance_de_sucesso, "tipo": m.tipo,
+                "monstros_ao_colher": m.monstros_ao_colher.iter().map(|(tid, n, raio, vida)| json!({ "monstro": item(*tid as i64), "quantidade": n, "raio": raio, "vida": vida })).collect::<Vec<_>>(),
+            } }),
+        })
     }
 
     /// Os efeitos de refino do `EQUIPMENT_ADDON` do rascunho (os de tratador `refine_*` no GS,

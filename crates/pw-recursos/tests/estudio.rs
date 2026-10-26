@@ -561,6 +561,63 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         pedir("POST", "publicar").send_json(json!({"rascunhos": [rv]})).unwrap();
         assert_eq!(fs::read(realm2.join("world").join("npcgen.data")).unwrap(), npcgen_original, "reverter devolve o npcgen");
 
+        // Itens no Estúdio: área de recurso de uma mina real (NPCGENFILERESAREA) — a mina como o GS a monta, o material
+        // dela "sai das minas", e criar/mover/redimensionar/remover a área volta o npcgen byte a byte. A a01 não tem área
+        // de recurso: neste bloco o "world" do teste usa o npcgen do mapa principal do 1.2.6, devolvido no fim.
+        fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world").join("npcgen.data"), realm2.join("world").join("npcgen.data"))
+            .expect("npcgen do mundo do realm_126");
+        let ng = json_de(pedir("GET", "estudio/mapas/world/npcgen").call().unwrap());
+        let recursos = ng["recursos"].as_array().unwrap().clone();
+        assert!(!recursos.is_empty(), "a a01 tem áreas de recurso");
+        // A primeira área cuja mina dá um material de verdade (mina de missão dá o item 0 e é válida no GS).
+        let mut achado = None;
+        for linha in recursos.iter().take(200) {
+            let ia = linha[0].as_u64().unwrap();
+            let ar = json_de(pedir("GET", &format!("estudio/mapas/world/npcgen/recursos/{ia}")).call().unwrap());
+            let Some(mina) = ar["filhos"][0]["idTemplate"].as_i64() else { continue };
+            let achada = json_de(pedir("GET", "estudio/espacos/ESSENCE").query("busca", &mina.to_string()).call().unwrap());
+            let Some(reg_mina) = achada.as_array().unwrap().iter().find(|a| a["id"] == mina && a["tabela"] == "MINE_ESSENCE").cloned() else { continue };
+            let gs = json_de(pedir("GET", &format!("estudio/minas/{}", reg_mina["indice"])).call().unwrap());
+            if gs["valida"] != true {
+                continue;
+            }
+            if let Some(material) = gs["mina"]["materiais"].as_array().unwrap().iter().filter_map(|m| m["item"]["id"].as_i64()).find(|&x| x > 0) {
+                achado = Some((ia, ar, mina, material));
+                break;
+            }
+        }
+        let (ia, ar, mina, material) = achado.expect("nenhuma área de recurso com mina que dá material");
+        let (x_ar, z_ar) = (ar["campos"]["vPos_x"].as_f64().unwrap(), ar["campos"]["vPos_z"].as_f64().unwrap());
+        let (ex_ar, ez_ar) = (ar["campos"]["fExtX"].as_f64().unwrap(), ar["campos"]["fExtZ"].as_f64().unwrap());
+        let usos = json_de(pedir("GET", &format!("estudio/usos/{material}")).call().unwrap_or_else(|e| panic!("usos: {}", erro_de(Err(e)).1)));
+        assert!(usos["minas"].as_array().unwrap().iter().any(|m| m["id"] == mina && m["valida"] == true && m["chance"].as_f64() > Some(0.0)), "{usos}");
+        assert_eq!(erro_de(pedir("GET", "estudio/usos/0").call()).0, 400);
+        let nasc = json_de(pedir("GET", "estudio/nascimentos").query("id", &mina.to_string()).call().unwrap());
+        assert!(nasc["locais"].as_array().unwrap().iter().any(|l| l["tipo"] == "recurso" && l["area"] == ia), "{nasc}");
+        let r8 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "areas de recurso", "operacao_id": "t_itens_r8"})).unwrap())["id"].as_i64().unwrap();
+        let em8 = |rel: &str| format!("{rel}?rascunho={r8}");
+        // Criar (clone), pôr no lugar novo com outro tamanho e 2 minas; mover a área original.
+        let nova = json_de(pedir("POST", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}/clonar"))).call().unwrap())["resultado"]["indice"].as_u64().unwrap();
+        assert_eq!(nova as usize, recursos.len());
+        pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}")))
+            .send_json(json!({"campos": {"vPos_x": x_ar + 20.0, "vPos_z": z_ar - 20.0, "fExtX": 30.0, "fExtZ": 40.0}, "filhos": [{"dwNumber": 2}]}))
+            .unwrap();
+        pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}"))).send_json(json!({"campos": {"vPos_x": x_ar + 5.0, "fExtX": ex_ar + 4.0}})).unwrap();
+        let an = json_de(pedir("GET", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}"))).call().unwrap());
+        assert_eq!((an["campos"]["fExtX"].as_f64(), an["campos"]["fExtZ"].as_f64()), (Some(30.0), Some(40.0)));
+        assert_eq!((an["filhos"][0]["idTemplate"].as_i64(), an["filhos"][0]["dwNumber"].as_u64()), (Some(mina), Some(2)));
+        let nasc8 = json_de(pedir("GET", "estudio/nascimentos").query("id", &mina.to_string()).query("rascunho", &r8.to_string()).call().unwrap());
+        assert!(nasc8["locais"].as_array().unwrap().iter().any(|l| l["tipo"] == "recurso" && l["area"] == nova && l["quantidade"] == 2), "{nasc8}");
+        // Desfazer: a original volta ao lugar e a nova sai — o npcgen do rascunho fica igual ao publicado, byte a byte.
+        let volta = json_de(pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}")))
+            .send_json(json!({"campos": {"vPos_x": x_ar, "vPos_z": z_ar, "fExtX": ex_ar, "fExtZ": ez_ar}})).unwrap());
+        assert_eq!(volta["igual_ao_publicado"], false, "a área nova ainda está lá");
+        let fim = json_de(pedir("DELETE", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}"))).call().unwrap());
+        assert_eq!(fim["igual_ao_publicado"], true, "desfeito, o npcgen volta byte a byte: {fim}");
+        let ng8 = json_de(pedir("GET", &em8("estudio/mapas/world/npcgen")).call().unwrap());
+        assert_eq!(ng8["recursos"].as_array().unwrap().len(), recursos.len());
+        fs::write(realm2.join("world").join("npcgen.data"), &npcgen_original).unwrap();
+
         // Distritos e portais (B244): só ponto de renascer / chegada; carimbo intacto; publicar grava os dois.
         let sev = |f: &str| fs::read(realm2.join("world").join(f)).unwrap();
         let (precinct0, region0) = (sev("precinct.sev"), sev("region.sev"));
