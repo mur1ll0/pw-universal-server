@@ -1244,7 +1244,7 @@ impl RoteadorDeMapas {
                     |[f, a, v, e, p]| serde_json::json!({"forca":f,"agilidade":a,"vitalidade":v,"energia":e,"pontos_livres":p})),
             },
             E::Cultivo(v) => Self::offline(roleid, "cultivo",
-                self.repo.definir_cultivo_offline(roleid, v).await.map(|ok| ok.then_some(v)),
+                self.repo.definir_cultivo_offline(roleid, v, bus.teto_de_chi_do_cultivo(v).await).await.map(|ok| ok.then_some(v)),
                 |c| serde_json::json!({"cultivo": c})),
             E::Dinheiro(delta) => match self.repo.ajustar_dinheiro_offline(roleid, delta).await {
                 Ok(Some(dinheiro)) => serde_json::json!({"estado":"salvo","presenca":"offline","dinheiro":dinheiro.to_string()}),

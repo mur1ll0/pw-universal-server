@@ -299,6 +299,31 @@ fn as_missoes_de_teto_de_chi_do_126() {
     assert_eq!(tetos, vec![(915, 99), (922, 199), (925, 299), (966, 99), (973, 99), (1888, 399), (2804, 399), (2818, 399)]);
 }
 
+/// O teto de chi que o painel dá junto com o cultivo (`TasksData::teto_de_chi_do_cultivo`):
+/// o mesmo que as missões de cultivo deixam, nos dois realms.
+#[test]
+fn o_teto_de_chi_de_cada_cultivo() {
+    for realm in ["realm_126", "realm_155"] {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").join(realm).join("config");
+        if !dir.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", dir.display());
+            continue;
+        }
+        let mut d = GameDataManager::new();
+        d.load_from_directory(&dir);
+        let tetos: Vec<(u32, u32)> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 30, 31, 32, 9, 255]
+            .into_iter()
+            .map(|c| (c, d.tasks.teto_de_chi_do_cultivo(c)))
+            .collect();
+        assert_eq!(
+            tetos,
+            vec![(0, 0), (1, 99), (2, 99), (3, 199), (4, 199), (5, 199), (6, 299), (7, 299), (8, 299),
+                 (20, 399), (21, 399), (22, 399), (30, 399), (31, 399), (32, 399), (9, 0), (255, 0)],
+            "{realm}"
+        );
+    }
+}
+
 /// B143 — o preço do vendedor com os dados do 1.2.6: `shop_price` 9.600 da armadura 139 ×
 /// 1,05 + 0,5 → 10.080 → `AdjustVendorFee` → 10.100; e as taxas do `NPC_ESSENCE` v7
 /// (1.441 NPCs com 0, 28 com 0,05, 2 com 17).

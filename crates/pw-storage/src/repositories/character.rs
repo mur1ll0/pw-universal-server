@@ -1035,13 +1035,16 @@ impl CharacterRepository {
         Ok(r.rows_affected() == 1)
     }
 
-    /// Painel (E5, B182), offline: grava o cultivo (`level2`), já validado pela versão.
-    pub async fn definir_cultivo_offline(&self, role_id: RoleId, cultivo: i32) -> Result<bool> {
+    /// Painel (E5, B182), offline: grava o cultivo (`level2`), já validado pela versão, e o
+    /// teto de chi que as missões deixam nesse cultivo (`_base_prop.max_ap`); o chi atual
+    /// fica preso ao teto novo, como no `SetMaxAP` (`gs/actobject.h:1634-1652`).
+    pub async fn definir_cultivo_offline(&self, role_id: RoleId, cultivo: i32, teto_de_chi: i32) -> Result<bool> {
         let r = sqlx::query(
-            "UPDATE characters SET cultivation = $2, updated_at = CURRENT_TIMESTAMP              WHERE id = $1 AND NOT is_deleted",
+            "UPDATE characters SET cultivation = $2, max_ap = $3, ap = LEAST(ap, $3),              updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND NOT is_deleted",
         )
         .bind(role_id)
         .bind(cultivo)
+        .bind(teto_de_chi)
         .execute(self.pool.get_ref())
         .await?;
         Ok(r.rows_affected() == 1)

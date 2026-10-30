@@ -798,7 +798,15 @@ impl BusServer {
                         }
                     }
                 }
-                EdicaoDePersonagem::Cultivo(v) => ctx.definir_cultivo(v.max(0) as u32),
+                // Pelas missões, o cultivo e o teto de chi são dois prêmios (`m_ulNewPeriod` e
+                // `m_ulFuryULimit`, `TaskProcess.cpp:1284,1293`): o painel dá os dois, com o
+                // teto que as missões deixam nesse cultivo (`teto_de_chi_do_cultivo`).
+                EdicaoDePersonagem::Cultivo(v) => {
+                    let cultivo = v.max(0) as u32;
+                    let teto = ctx.dados.tasks.teto_de_chi_do_cultivo(cultivo);
+                    ctx.definir_cultivo(cultivo);
+                    ctx.definir_teto_de_chi(teto);
+                }
                 // Tratada no roteador (`RoteadorDeMapas::editar_personagem`): o teleporte
                 // troca de mapa fora do contexto do jogador.
                 EdicaoDePersonagem::Posicao { .. } | EdicaoDePersonagem::MoverItem { .. }
@@ -1278,6 +1286,11 @@ impl BusServer {
         self.gravar_habilidade(roleid, id, nivel).await.map_err(|_| "banco_indisponivel")?;
         info!(roleid, id, atual, nivel, "painel: habilidade editada (offline)");
         Ok(atual)
+    }
+
+    /// Teto de chi que as missões deixam no cultivo `c` (`TasksData::teto_de_chi_do_cultivo`).
+    pub(crate) async fn teto_de_chi_do_cultivo(&self, c: i32) -> i32 {
+        self.world.read().await.data_manager.tasks.teto_de_chi_do_cultivo(c.max(0) as u32) as i32
     }
 
     /// Piso dos atributos da versão (`WorldProtocol::piso_da_restauracao`).

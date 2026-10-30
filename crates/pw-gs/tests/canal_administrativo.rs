@@ -226,6 +226,15 @@ impl Cenario {
         dados.pilhas.insert(3001, 100);
         dados.pilhas.insert(3002, 10);
         dados.itens_de_missao.insert(3002);
+        // B388: o teto de chi que o painel dá com o cultivo vem das missões de cultivo — uma
+        // mãe que dá o teto 99 e a filha que dá o cultivo 1 (como a 32394/32416 do 1.5.5), e
+        // uma que dá cultivo 3 e teto 199 de uma vez (como a 922).
+        for (tid, pai, cultivo, teto) in [(9001u32, None, 0u32, 99u32), (9002, Some(9001), 1, 0), (9003, None, 3, 199)] {
+            let mut m = pw_data_loader::tasks::TaskTemplate { id: tid, parent: pai, ..Default::default() };
+            m.rewards.novo_cultivo = cultivo;
+            m.rewards.teto_de_chi = teto;
+            dados.tasks.tasks.insert(tid, m);
+        }
         // B191: 3003 é uma arma (máscara `0x1`, só o slot 0 do corpo); o resto não entra no corpo.
         dados.nomes_de_itens.insert(3003, "Espada de teste".into());
         dados.pilhas.insert(3003, 1);
@@ -1242,6 +1251,8 @@ async fn editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155() {
         assert_eq!(r["estado"], "aplicado", "{r}");
         esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 160u16.to_le_bytes())).await;
         assert_eq!(jogador(&*c.mundo.read().await).2, 5);
+        // Com o cultivo veio o teto de chi das missões até o cultivo 5 (B388).
+        assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].max_ap, 199, "teto de chi do cultivo 5");
         let r = c.pedir_com_id(&c.realm, &id("cul-deus"), c.conta, editar(json!({"cultivo": 22}))).await;
         if versao == GameVersion::V1_2_6 {
             assert_eq!(r["dados"]["codigo"], "cultivo_invalido", "{r}");
@@ -1273,6 +1284,14 @@ async fn editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155() {
         assert_eq!(r["dados"]["codigo"], "nivel_invalido");
         let r = c.pedir_com_id(&c.realm, &id("cul-off"), c.conta, editar(json!({"cultivo": 8}))).await;
         assert_eq!((r["estado"].as_str(), r["dados"]["cultivo"].as_i64()), (Some("salvo"), Some(8)), "{r}");
+        let chi: (i32, i32) = sqlx::query_as("SELECT cultivation, max_ap FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(chi, (8, 199), "offline grava o teto de chi do cultivo 8");
+        let r = c.pedir_com_id(&c.realm, &id("cul-off-1"), c.conta, editar(json!({"cultivo": 1}))).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        let chi: (i32,) = sqlx::query_as("SELECT max_ap FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(chi.0, 99, "o teto 99 vem da missão-mãe da que dá o cultivo 1");
         sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e5b-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
         c.encerrar().await;
     }
