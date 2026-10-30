@@ -17810,3 +17810,43 @@ comparação lado a lado.
       também o que a sessão do B386 tinha na árvore (`recursos.py`, Estúdio Svelte), que ela já publicara.
     - Código commitado em `e70e25e`; a documentação inicial deste bloco entrou no `0fcdca8` (commit de documentação do
       B386, que levou os arquivos inteiros) e o registro da publicação no commit seguinte. Falta o Murillo ver no navegador.
+
+388. **Sessão 2026-10-29: cultivo pelo painel dá junto o teto de chi das missões (B388).**
+
+    ### a. Pedido
+    O Murillo deu cultivo 8 pelo painel ao WB do 1.2.6: o cultivo mudou, mas a barra de chi ficou como estava, e sem
+    chi as habilidades não saem. Pedido: dar o chi que a missão de cultivo daria.
+
+    ### b. Causa, no original
+    Cultivo e teto de chi são dois prêmios independentes da missão: `m_ulNewPeriod` → `SetCurPeriod` → `SetSecLevel`
+    e `m_ulFuryULimit` → `SetFuryUpperLimit` → `SetMaxAP` (`gs/task/TaskProcess.cpp:1284,1293`,
+    `gs/task/taskman.cpp:251-254,499-502`, `gs/actobject.h:1634-1640`). O painel (B182) só fazia o primeiro.
+    Nos `tasks.data` (exemplos `missoes_de_chi`/`missoes_de_cultivo`): 1.2.6 — 915 cultivo 1 + teto 99, 922 cultivo 3 +
+    199, 925 cultivo 6 + 299, 2804/2818 cultivo 20/30 + 399; 1.5.5 — o 99 vem da 32394 ("Só um Pouco de Progresso"),
+    **mãe** da 32416 que dá o cultivo 1; o resto igual.
+
+    ### c. Correção
+    - `TasksData::teto_de_chi_do_cultivo` (`pw-data-loader/src/tasks.rs`): o maior `m_ulFuryULimit` entre as missões
+      que concedem cultivo de ordem ≤ (`ordem_do_cultivo`: 0–8, 20/30, 21/31, 22/32, pela sequência 2153 → 2804/2818
+      → 3227/3204 → 3273/3244), subindo a cadeia de pais de cada uma. Resultado nos dois realms: 1–2 → 99, 3–5 → 199,
+      6–8 → 299, 20–22/30–32 → 399; fora da progressão → 0.
+    - Online (`jogo.rs`, `EdicaoDePersonagem::Cultivo`): `definir_cultivo` + `definir_teto_de_chi` (o mesmo da missão:
+      chi atual preso ao teto, `SELF_INFO_00` ao próprio). Offline: `definir_cultivo_offline` grava `max_ap` e
+      `ap = LEAST(ap, teto)`; o roteador pede o teto ao mapa (`BusServer::teto_de_chi_do_cultivo`).
+    - Baixar o cultivo pelo painel baixa o teto (o painel define o estado correspondente).
+
+    ### d. Provas
+    - `carga_dos_realms::o_teto_de_chi_de_cada_cultivo`: a tabela acima nos `tasks.data` reais do 1.2.6 e do 1.5.5 (ok,
+      sem aviso de dado ausente).
+    - `canal_administrativo::editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155` (banco): missões de teste no
+      formato das duas versões (mãe com teto 99 + filha cultivo 1; uma com cultivo 3 + 199); online cultivo 5 → `max_ap`
+      199; offline cultivo 8 → (8, 199) no banco, cultivo 1 → 99. Ok.
+    - Suíte inteira com o banco (`--no-fail-fast`, 2 threads): **1265 passaram, 2 falharam**, e as duas falham igual com
+      as mudanças deste bloco guardadas (`git stash`): `carga_dos_realms::a_geracao_de_equipamento_do_126` (os addons da
+      foice 15964 no `elements` do realm agora são 591/415/1323, o teste espera 473/1008/1321 — dado editado depois do
+      teste) e `progressao_do_realm::o_distrito_do_nascimento_no_161…`. Não investigadas.
+
+    ### e. Falta
+    - Publicados a pedido do Murillo, um por vez (`--no-deps`): `pw-world-126` às 23:55 (27.327 monstros, canal na 29110)
+      e `pw-world-155` às 23:57 (mapas 1, 161, 169); `public` conferido antes (vazio), nenhum contêiner parado.
+    - Não commitado. Falta o Murillo ver no WB: cultivo 8 → teto 299.
