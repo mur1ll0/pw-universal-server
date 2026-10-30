@@ -17849,4 +17849,4 @@ comparação lado a lado.
     ### e. Falta
     - Publicados a pedido do Murillo, um por vez (`--no-deps`): `pw-world-126` às 23:55 (27.327 monstros, canal na 29110)
       e `pw-world-155` às 23:57 (mapas 1, 161, 169); `public` conferido antes (vazio), nenhum contêiner parado.
-    - Não commitado. Falta o Murillo ver no WB: cultivo 8 → teto 299.
+    - Código commitado em `dc1f096`, documentação em `933c922`. Falta o Murillo ver no WB: cultivo 8 → teto 299.
