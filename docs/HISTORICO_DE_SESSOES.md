@@ -17850,3 +17850,44 @@ comparação lado a lado.
     - Publicados a pedido do Murillo, um por vez (`--no-deps`): `pw-world-126` às 23:55 (27.327 monstros, canal na 29110)
       e `pw-world-155` às 23:57 (mapas 1, 161, 169); `public` conferido antes (vazio), nenhum contêiner parado.
     - Código commitado em `dc1f096`, documentação em `933c922`. Falta o Murillo ver no WB: cultivo 8 → teto 299.
+
+389. **Sessão 2026-10-31: painel de GM (Ctrl+G) no 1.2.6 — respostas 175/176 e modo de depuração do realm (B389).**
+
+    ### a. Sintoma / pedido
+    - O Murillo usou o Ctrl+G no cliente 1.2.6 e "nenhum comando funcionou"; no 1.5.5 o painel funciona (B159). O log
+      do teste se perdeu (contêineres reiniciados antes da análise).
+
+    ### b. Causa
+    - **O cliente manda o mesmo que o 1.5.5.** O binário 1.2.6 (`F:/Games/perfectworld_126/element/elementclient.exe`)
+      tem as mesmas classes `CGMCommand*` (RTTI em 0x8c1d40–0x8c2478). `CGMCommandInvisible`/`Invincible` (vtables
+      0x848c0c/0x848c24) chamam 0x5a7c60/0x5a7ca0, que alocam 2 B, gravam `0xcc`/`0xcd` (204/205) e mandam pelo
+      `SendGameData`. O link repassa o `GamedataSend` sem filtro e o mundo aplica o `sec_level` na entrada em caminho
+      comum (`bus_server.rs:1764`). Os opcodes GNET de GM no 1.2.6 (construtores): `GMOnlineNum` 350, `GMKickoutUser`
+      354, `GMShutup` 356, `GMKickoutRole` 360, `GMShutupRole` 362, `GMToggleChat` 364 — os do 1.5.5.
+    - **Falta 1 — resposta:** `gm_alternar_invencivel`/`invisivel` respondem por `self.sub.gm_invincible/gm_invisible`, e o
+      `V126Protocol` não os tinha: caía no padrão `None` do `traits.rs:244-251`. O servidor ligava o estado, mas o cliente
+      nunca recebia o 175/176 (sem a mensagem nem o estado do GM). O validador 1.2.6 (VA 0x584610) mede 175 = 176 = 1 B
+      (caso 0x584db6), entre 174 = 5 B e 177 = 14 B — a vizinhança `PLAYER_END_TRAVEL`/`HOST_CORRECT_POS` do IR 1.5.5.
+    - **Falta 2 — dado:** `data/realm_126/config/ptemplate.conf` não tinha `debug_command_mode = active` (o do 155 tem,
+      linha 5); sem ele o 208 (criar monstro) é ignorado calado (`playercmd.cpp:4991`).
+    - O "dar itens" do 1.5.5 é o painel web (B186/B216); o 206 do Ctrl+G (`GM_GENERATE`) é `falta` nas duas versões.
+
+    ### c. Correção
+    - `crates/pw-protocol/src/versions/v126/mod.rs`: `gm_invincible`/`gm_invisible` com o codificador comum (1 B).
+    - `data/realm_126/config/ptemplate.conf` (ignorado pelo git, volume do `pw-world-126`): `debug_command_mode = active`.
+    - Teste `o_gm_alterna_invencivel_e_invisivel` vira `conferir_…(versao)`, com a variante `_126`.
+    - Specs 04 (§ comandos de GM: 1.2.6 incluído; corrigido o "o link ainda não trata nenhum" que o B363 já tornara falso)
+      e 05 (linha do painel de GM).
+
+    ### d. Provas
+    - `subcomandos_no_mundo` com o banco, filtro `o_gm_`: **3 passaram, 0 falharam** — `o_gm_alterna_invencivel_e_invisivel`
+      (1.5.5), `…_126` (novo: 175 com `is_invincible` 1/0 e 176 com `is_visible` 0/1, 3 B cada) e o GOTO do GM. Sem o
+      `gm_invincible` do `v126` a variante 126 esperaria um 175 que nunca sai (não rodado com o código antigo).
+    - `pw-protocol` + `pw-data-loader`: **404 passaram, 2 falharam** — as duas já registradas no B388
+      (`a_geracao_de_equipamento_do_126`, `o_distrito_do_nascimento_no_161…`), sem relação com este bloco.
+
+    ### e. Falta
+    - Publicado a pedido do Murillo: `pw-world-126` às 11:11 (`--no-deps`; 27.327 monstros, canal 29110; o contêiner lê
+      `debug_command_mode = active` na linha 4 do `ptemplate.conf`); `public` conferido antes (vazio). Código não commitado.
+    - Murillo ver em jogo no 1.2.6 (roteiro no §3.3 do estado).
+    - Criar item (206, ler o `GM_GENERATOR_ESSENCE`) e gerador (207) — nas duas versões.

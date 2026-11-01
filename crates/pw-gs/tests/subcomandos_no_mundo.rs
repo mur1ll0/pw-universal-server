@@ -10019,7 +10019,18 @@ async fn esperar_comando_por(link: &mut pw_bus::transport::BusConnection, id: u1
 /// (`gs/playercmd.cpp:4879-4910`).
 #[tokio::test]
 async fn o_gm_alterna_invencivel_e_invisivel() {
-    let (mundo, addr, roleid, _convidado) = cenario!();
+    conferir_gm_alterna_invencivel_e_invisivel(GameVersion::V1_5_5).await;
+}
+
+/// B389 — o 1.2.6 manda os mesmos 204/205 e espera os mesmos 175/176 de 1 byte; antes o
+/// `v126` devolvia `None` e o cliente nunca sabia que o GM ficou invencível ou invisível.
+#[tokio::test]
+async fn o_gm_alterna_invencivel_e_invisivel_126() {
+    conferir_gm_alterna_invencivel_e_invisivel(GameVersion::V1_2_6).await;
+}
+
+async fn conferir_gm_alterna_invencivel_e_invisivel(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
     let repo = mundo.read().await.char_repo.clone();
     let conta = repo
         .get_details_por_role(roleid)

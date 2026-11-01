@@ -296,9 +296,12 @@ Uma captura de 1.2.6 mediu 175 comandos: 106 idênticos ao 1.5.3, **32 diferente
 (`{int tid}`, `falta`), 207 `GM_ACTIVE_SPAWNER` (`{u8 is_active; int sp_id}`, 5 B empacotado,
 `falta`), 208 `GM_GENERATE_MOB` (16 B + nome ≤ 18 B). As respostas S2C são 175 `GM_INVINCIBLE`
 `{u8 is_invincible}` e 176 `GM_INVISIBLE` `{u8 is_visible}`, ambas com 1 byte (IR `gm_cmd_*`).
-Elas existem no 1.5.5 e no 1.5.3; nas outras versões, `None` por falta de evidência. O 203
-`GM_KICK_PLAYER` nunca sai do cliente: expulsar, silenciar e anunciar vão pelo GNET
-(`gm_KickOutRole`, … em `EC_PrtcProc.cpp:276-395`), e o link ainda não trata nenhum deles.
+Elas existem no 1.5.5, no 1.5.3 e, desde o B389, no **1.2.6**: o binário 1.2.6 tem as mesmas
+classes `CGMCommand*` e manda 204/205 só com o cabeçalho (0x5a7c60/0x5a7ca0); o validador mede
+175 = 176 = 1 B entre o 174 `PLAYER_END_TRAVEL` (5 B) e o 177 `HOST_CORRECT_POS` (14 B), a mesma
+vizinhança do IR 1.5.5. O 1.4.8 continua `None`. O 203 `GM_KICK_PLAYER` nunca sai do cliente:
+expulsar, silenciar e contar online vão pelo GNET e são tratados no link (`pw-link/src/gm.rs`,
+B363); no binário 1.2.6 os construtores gravam os mesmos tipos 350/354/356/360/362/364 do 1.5.5.
 
 **Ainda no `gateway.rs` do `pw-link`:** 92 (duelo: só "preparar", sem regra), 118 (preços do
 Mall, tabela vazia), 178 (waypoints). Nenhum id é tratado nos dois lados:
