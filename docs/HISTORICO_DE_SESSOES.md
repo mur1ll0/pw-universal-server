@@ -17888,6 +17888,6 @@ comparação lado a lado.
 
     ### e. Falta
     - Publicado a pedido do Murillo: `pw-world-126` às 11:11 (`--no-deps`; 27.327 monstros, canal 29110; o contêiner lê
-      `debug_command_mode = active` na linha 4 do `ptemplate.conf`); `public` conferido antes (vazio). Código não commitado.
+      `debug_command_mode = active` na linha 4 do `ptemplate.conf`); `public` conferido antes (vazio). Commitado em `e04fac2`.
     - Murillo ver em jogo no 1.2.6 (roteiro no §3.3 do estado).
     - Criar item (206, ler o `GM_GENERATOR_ESSENCE`) e gerador (207) — nas duas versões.
