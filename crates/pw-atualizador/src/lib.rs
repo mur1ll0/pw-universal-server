@@ -10,6 +10,7 @@ pub mod assinatura;
 pub mod cliente;
 pub mod manifesto;
 pub mod nomes;
+pub mod painel;
 pub mod tar_gnu;
 
 pub use cliente::{Origem, Progresso, Servidor};

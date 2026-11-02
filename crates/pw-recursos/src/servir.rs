@@ -61,11 +61,52 @@ async fn versoes(State(dados): State<Arc<PathBuf>>) -> Response {
 }
 
 pub fn rotas(dados: PathBuf) -> Router {
-    Router::new()
+    rotas_com_painel(dados, None)
+}
+
+/// `painel.json` assinado (B391): o modelo da URL do painel web que o launcher abre no botão
+/// "Criar conta / Painel". Montado uma vez ao subir, de `PW_PAINEL_URL`.
+pub struct PainelAssinado {
+    pub json: Vec<u8>,
+    pub assinatura_hex: String,
+}
+
+pub fn painel_assinado(modelo: &str, chave: &crate::assinatura::Chave) -> anyhow::Result<PainelAssinado> {
+    let modelo = modelo.trim();
+    pw_atualizador::painel::validar_modelo(modelo)?;
+    let json = serde_json::to_vec(&pw_atualizador::painel::Painel { formato: 1, url: modelo.to_string() })?;
+    let assinatura_hex = hex::encode(chave.assinar(&json));
+    Ok(PainelAssinado { json, assinatura_hex })
+}
+
+/// As rotas públicas; com `painel`, também `GET /painel.json` e `GET /painel.json.sig`.
+pub fn rotas_com_painel(dados: PathBuf, painel: Option<PainelAssinado>) -> Router {
+    let mut r = Router::new()
         .route("/saude", get(|| async { "ok" }))
         .route("/versoes", get(versoes))
         .route("/atualizacao/{versao}/{*resto}", get(arquivo))
-        .with_state(Arc::new(dados))
+        .with_state(Arc::new(dados));
+    if let Some(p) = painel {
+        use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+        let p = Arc::new(p);
+        let (pj, ps) = (p.clone(), p);
+        r = r
+            .route(
+                "/painel.json",
+                get(move || {
+                    let p = pj.clone();
+                    async move { ([(CONTENT_TYPE, "application/json"), (CACHE_CONTROL, "no-cache")], p.json.clone()) }
+                }),
+            )
+            .route(
+                "/painel.json.sig",
+                get(move || {
+                    let p = ps.clone();
+                    async move { ([(CONTENT_TYPE, "text/plain"), (CACHE_CONTROL, "no-cache")], p.assinatura_hex.clone()) }
+                }),
+            );
+    }
+    r
 }
 
 #[cfg(test)]

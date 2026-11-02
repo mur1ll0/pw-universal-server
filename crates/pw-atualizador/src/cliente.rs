@@ -164,6 +164,32 @@ impl Servidor {
         }
     }
 
+    /// B391: o modelo da URL do painel web (`GET /painel.json`, assinatura conferida), ou `None` quando o
+    /// servidor não anuncia painel (sem `PW_PAINEL_URL`, ou `pw-recursos` anterior ao B391: 404). O
+    /// launcher troca `{host}` com `painel::montar_url`.
+    pub fn painel(&self) -> Result<Option<String>> {
+        let Origem::Http(base) = &self.origem else { return Ok(None) };
+        let url = format!("{base}/painel.json");
+        let bytes = match ureq::get(&url).call() {
+            Ok(r) => {
+                let mut v = Vec::new();
+                r.into_reader().take(64 * 1024).read_to_end(&mut v)?;
+                v
+            }
+            Err(ureq::Error::Status(404, _)) => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("GET {url}")),
+        };
+        let sig = ureq::get(&format!("{url}.sig")).call().with_context(|| format!("GET {url}.sig"))?.into_string()?;
+        let sig = hex::decode(sig.trim()).context("assinatura do painel.json não está em hex")?;
+        assinatura::verificar(&self.chave_publica, &bytes, &sig).context("painel.json")?;
+        let p: crate::painel::Painel = serde_json::from_slice(&bytes)?;
+        if p.formato != 1 {
+            bail!("painel.json no formato {} (o launcher conhece o 1)", p.formato);
+        }
+        crate::painel::validar_modelo(&p.url)?;
+        Ok(Some(p.url))
+    }
+
     fn assinatura_de(&self, versao: &str, rel: &str) -> Result<Vec<u8>> {
         let texto = self.origem.ler(versao, &format!("{rel}.sig"))?;
         hex::decode(String::from_utf8_lossy(&texto).trim()).context("assinatura não está em hex")
