@@ -41,7 +41,7 @@ que produz o layout do `elements.data`. O resto — `npcgen`, `aipolicy`, `gshop
 
 **Estado da carga (B102):** `realm_126` carrega **sem falha** (132 arquivos). Não são lidos,
 em nenhum realm, por falta do sistema: `domain.data`,
-`extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
+`task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
 `rare_item.conf` (os `.clt` e o `task_npc.data` são do **cliente**: o Estúdio os lê e grava — `clt.rs`, `task_npc.rs`,
 B246/B251, spec 07 §6b). Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
 de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
@@ -431,7 +431,7 @@ Estão na pasta do realm e não são pendência nossa, com uma exceção:
 | `task_npc.data` | **do cliente** (`LoadNPCInfoFromPack("data\task_npc.data")`, `Task/EC_TaskInterface.cpp:166`) |
 | `DynamicObjects.data` | **do cliente** (`m_pDynObjPath->Load("configs\DynamicObjects.data")`, `EC_Game.cpp:612`) |
 | `domain.data`, `domain2.data`, `domain2_cross.data` | não aparecem no fonte do `gs` nem no do cliente; provavelmente do `gdeliveryd` (domínios e cruzamento entre servidores) — fora do alvo atual |
-| `extra_drops.sev` | não aparece em nenhum dos dois fontes que temos; origem desconhecida |
+| `extra_drops.sev` | **é do `gs`**: `[Template] DropData` do `gs.conf:59` → `load_extra_drop_tables` (`worldmanager.cpp:884`, `template/extra_drop_table.cpp:7-40`): `u32` versão (=1), `i32` nº de tabelas; por tabela `i32` n + n×`u32` ids de monstro, 256×(`i32` id, `f32` chance), `char[128]` nome (GBK), `i32` tipo (1 substitui, 2 soma — `EDT_TYPE`), 8×`f32` chance do nº de itens. `drop_template::LoadDropList` (`global_drop.cpp:8-61`) descarta a tabela cujas chances não somam 1; `npc.cpp:2591` sorteia ao morrer. Conferido em 2026-11-01: `realm_126` fecha no último byte (39.352 B, 15 tabelas, 1.526 monstros); `realm_155` 2.228 B, 1 tabela. **`testado` (B390)**: `drop_global.rs` (`DropGlobal::ler`, recusa o que faz o GS não subir — versão ≠ 1, tipo fora de 1/2, monstro em duas tabelas — e ignora como o `LoadDropList` as vazias e as que não somam 1) → `GameDataManager::drop_global`; usado pelo drop do `pw-gs` (spec 05) e pelo "Dropado de" do Estúdio (spec 07) |
 | `globalcontroller.conf` | **é do `gs`** (`worldmanager.cpp:1106`) e traz `cash_money_exchange_rate` (1.000.000 no `realm_155`). `falta`, mas só importa quando a **Loja Gold** existir |
 | `airmap/`, `movemap/`, `map.bht`, `.dhmap`/`.rmap` | navegação e colisão do `path_finding`; o mundo hoje não faz pathfinding de criatura por malha |
 

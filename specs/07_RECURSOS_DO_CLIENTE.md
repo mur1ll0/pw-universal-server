@@ -910,6 +910,10 @@ ação.
 - **De onde vem o item (B369, só leitura)** — `GET estudio/origens/{id}?rascunho=` (`Estudio::origens_do_item`; painel
   `GET /api/realms/{r}/estudio/origens/{id}`; id ≤ 0 → 400), tudo do rascunho, até 300 por lista:
   `dropado_de` (`MONSTER_ESSENCE.drop_matters_N_id` = item, com a soma dos `drop_matters_N_probability` das linhas),
+  `dropado_de_global` (B390: as tabelas do `servidor\extra_drops.sev` — o do rascunho, se tiver — com o item: cada
+  monstro delas, `chance` por morte `Σ P(k)·(1−(1−p)^k)` sem a punição de nível, `tabela_global`, `nome_da_tabela`,
+  `tipo` soma/substitui; `indice` nulo se o monstro não está no elements) e `dropado_de_global_erro` (o arquivo que o GS
+  recusaria),
   `recompensa_de` (missões do `tasks.data` com o item num grupo do prêmio de sucesso ou de falha, e nas escalas por
   tempo/itens do v129; `quando`, quantidade, se é sorteado), `vendido_por` (`NPC_SELL_SERVICE.pages_P_goods_G_id` →
   páginas com título e os `NPC_ESSENCE.id_sell_service` = a loja), `loja_gold` (ofertas do `gshop.data`,
@@ -922,7 +926,7 @@ ação.
 Testes: `tests/estudio.rs` (regiões criar/editar/remover e publicar em par; nome do controlador; diagnóstico de
 habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6; B369:
 as origens pelo caminho inverso das telas — item da loja → loja, item da receita → receita e forja, item do drop →
-monstro) e
+monstro; B390: o 12962 do `extra_drops.sev` real do 1.2.6 → 10 chefes da tabela 14, chance 1) e
 `aipolicy_editavel::testes_b365` (os dois realms).
 
 ### Equipáveis: refino explicado, modelo ↔ Blender e peças vestidas (B383)

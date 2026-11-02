@@ -17891,3 +17891,50 @@ comparação lado a lado.
       `debug_command_mode = active` na linha 4 do `ptemplate.conf`); `public` conferido antes (vazio). Commitado em `e04fac2`.
     - Murillo ver em jogo no 1.2.6 (roteiro no §3.3 do estado).
     - Criar item (206, ler o `GM_GENERATOR_ESSENCE`) e gerador (207) — nas duas versões.
+
+390. **Sessão 2026-11-01: drop global do GS (`extra_drops.sev`) — leitor, sorteio no `pw-gs` e "Dropado de" do Estúdio (B390).**
+
+    ### a. Sintoma / pedido
+    - O Murillo abriu no Estúdio (aba Itens, 1.2.6) o "Molde de Gume s/ Corte em Areia" (`MATERIAL_ESSENCE` 15, id 521) e o
+      "Dropado de" vinha vazio: faltava implementar ou nenhum monstro dropa?
+
+    ### b. Diagnóstico
+    - **O 521 não vem de lugar nenhum**, nos dois realms: nenhum `drop_matters`, receita, mina, loja ou missão o cita (busca
+      de todo campo = 521 com o exemplo `campo_com_valor`; `missoes_com_item` vazio). Os moldes 516–525 idem; no 1.5.5 os
+      acertos são o `HOME_ITEM` 521 (outra numeração). Item órfão nos dados.
+    - **Mas havia uma fonte de drop que não líamos:** o `extra_drops.sev`. A spec 03 dizia "origem desconhecida" — errado: é
+      o `[Template] DropData` do `gs.conf:59`, lido por `load_extra_drop_tables` (`worldmanager.cpp:884`,
+      `template/extra_drop_table.cpp:7-40`) e validado por `drop_template::LoadDropList` (`global_drop.cpp:8-61`). Ao morrer,
+      `gnpc_imp::DropItem` chama `DropItemFromGlobal` primeiro (`npc.cpp:2721-2725`, `:2587-2647`).
+    - `realm_126`: 39.352 B, fecha no último byte; 15 tabelas, todas tipo 2 (soma), 1.526 monstros, somas dentro de 1e-6.
+      `realm_155`: 2.228 B, 1 tabela sem itens (o GS a ignora).
+
+    ### c. Correção
+    - `crates/pw-data-loader/src/drop_global.rs` (novo): `DropGlobal::ler` — `Err` no que faz o GS não subir (versão ≠ 1,
+      tipo fora de 1/2, monstro em duas tabelas, arquivo que não fecha), tabelas vazias e com soma ≠ 1 em `ignoradas`;
+      `do_monstro`, `chance_por_morte` (`Σ P(k)·(1−(1−p)^k)`). `GameDataManager::drop_global`, carregado da raiz do config.
+    - `crates/pw-gs/src/economia.rs::gerar_queda`: o drop global antes do normal — um teste de ajuste de item (sem
+      `double_drop`), nº de itens por `drop_num_probability`, cada um sorteado; tipo 1 corta o drop normal e sorteia o
+      dinheiro uma vez (`> 0,7` perde; cai junto, `worldmanager.cpp:541-554`).
+    - `crates/pw-recursos/src/estudio.rs::origens_do_item`: `dropado_de_global` (monstros de cada tabela com o item, chance
+      por morte, tabela, tipo) e `dropado_de_global_erro`; `web-admin/estudio` (`api.ts`, `Origens.svelte`): sublista
+      "Drop global (extra_drops.sev)" no card; build regerado.
+    - Specs 03 (linha do `extra_drops.sev` corrigida; fora da lista de não lidos), 05 (drop de monstro), 06 e 07 (origens).
+
+    ### d. Provas
+    - `pw-data-loader` `drop_global`: 3/3 (aceita/ignora como o `LoadDropList`, recusa o que derruba o GS, os dois arquivos
+      reais). `pw-gs` `tests/drop_global.rs`: 2/2 (monstro da tabela 0 do 1.2.6: itens globais a < 10% de Σ k·P(k) em 40.000
+      mortes e o drop normal continua; tabela tipo 1 sintética: só os itens dela, ≤ 1 monte de dinheiro, ~70% com dinheiro).
+      `pw-recursos` `tests/estudio.rs`: as asserções novas (12962 → 10 chefes da tabela 14, chance 1) passam; o teste cai
+      depois, na Loja Gold (linha 1476: o arquivo tem 670 ofertas, o teste espera 668), porque o `gshop.data` do `realm_126` foi trocado no disco em
+      2026-11-01 23:12 — fora deste bloco. `svelte-check`: 0 erros.
+    - Suítes `pw-data-loader` + `pw-gs` com o banco: **861 passaram, 3 falharam** — as três por dado do realm trocado no
+      disco depois do teste, nenhuma pelo código deste bloco: `gshop_do_realm` (670 ofertas, espera 668; `gshop.data` do
+      126 de 2026-11-01 23:12), `carga_dos_realms::a_geracao_de_equipamento_do_126` (addons da foice `[591, 415, 1323]`,
+      espera `[473, 1008, 1321]`; `elements.data` do 126 de 2026-10-29 21:22) e `progressao_do_realm` (27 distritos na
+      `a61/precinct.sev` do 155, espera 25; arquivo de 2026-10-24 15:02, o alinhamento do B365).
+
+    ### e. Falta
+    - Publicar `pw-world-126`, `pw-world-155`, `pw-recursos` e `pw-admin-api`; o Murillo ver no Estúdio e em jogo (§3.3).
+    - O ajuste do teste de 668 ofertas ao `gshop.data` novo (ou restaurar o arquivo), depois de saber quem o trocou.
+    - O drop global ignora, como o drop normal daqui, `_drop_rate`, `_money_scale` e o bônus global de dinheiro.
