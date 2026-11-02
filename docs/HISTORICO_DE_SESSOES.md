@@ -17935,6 +17935,10 @@ comparação lado a lado.
       `a61/precinct.sev` do 155, espera 25; arquivo de 2026-10-24 15:02, o alinhamento do B365).
 
     ### e. Falta
-    - Publicar `pw-world-126`, `pw-world-155`, `pw-recursos` e `pw-admin-api`; o Murillo ver no Estúdio e em jogo (§3.3).
+    - Commitado na `studio-svelte` em `21bc67f` (código) e `e509d80` (docs); publicados a pedido do Murillo, um por vez:
+      `pw-world-126` 00:41, `pw-world-155` 00:43, `pw-recursos` 00:55, `pw-admin-api` 01:03 (2026-11-02), nenhum contêiner
+      para trás. `pw-world-126`: 133 arquivos carregados (eram 132), sem falha; `/app/data/config/extra_drops.sev` com 39.352 B.
+      O relatório de carga só loga a contagem, não a lista.
+    - O Murillo ver no Estúdio e em jogo (§3.3).
     - O ajuste do teste de 668 ofertas ao `gshop.data` novo (ou restaurar o arquivo), depois de saber quem o trocou.
     - O drop global ignora, como o drop normal daqui, `_drop_rate`, `_money_scale` e o bônus global de dinheiro.
