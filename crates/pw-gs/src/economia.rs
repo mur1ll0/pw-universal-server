@@ -11,6 +11,15 @@
 //! * dinheiro: `drop_times` vezes, `Rand(médio − variação, médio + variação)`; com chance
 //!   `MONEY_DROP_RATE` (0,7, `config.h:82`) cai `money × money_adj`, arredondado.
 //!
+//! Antes disso vem o **drop global** (`extra_drops.sev`, [`pw_data_loader::drop_global`]):
+//! `gnpc_imp::DropItem` chama `DropItemFromGlobal` (`npc.cpp:2587-2647`) e só segue para o drop do
+//! `drop_matters` se a tabela do monstro for do tipo "soma" (ou se ele não tiver tabela,
+//! `npc.cpp:2721-2725`). Na tabela: um teste de `drop_adj` (sem `double_drop`), quantos caem por
+//! `drop_num_probability` e cada um sorteado na lista (`drop_template::GenerateItem`,
+//! `global_drop.h:41-58`). Tabela do tipo "substitui": o dinheiro é um sorteio só,
+//! `Rand(baixo, alto) × money_adj`, perdido se `RandUniform() > MONEY_DROP_RATE` (`npc.cpp:2605-2612`),
+//! e cai junto com os itens (`worldmanager.cpp:541-554`).
+//!
 //! Cada monte cai a ±2 m do monstro no plano, no chão (`world_manager`, `GM_MSG_PRODUCE_*`,
 //! `worldmanager.cpp:512-555`), e fica do dono por 30 s e no chão por 300 s
 //! (`gmatter_item_base_imp(life = 300, belong_time = 30)`, `matter.h:62`).
@@ -68,6 +77,32 @@ fn sortear_indice(r: f32, probs: impl Iterator<Item = f32>) -> usize {
 pub fn gerar_queda<R: Rng>(m: &TemplateDeMonstro, nivel_do_dono: i32, dados: &GameDataManager, taxas: &crate::taxas::Taxas, rng: &mut R) -> Queda {
     let ajuste = dados.progressao.ajuste(nivel_do_dono - m.nivel);
     let mut q = Queda { itens: Vec::new(), montes_de_dinheiro: Vec::new() };
+    let (baixo, alto) = (m.dinheiro_medio - m.dinheiro_variacao, m.dinheiro_medio + m.dinheiro_variacao);
+    // `DropItemFromGlobal` (`npc.cpp:2587-2647`).
+    if let Some(t) = dados.drop_global.do_monstro(m.id) {
+        let substitui = t.tipo == pw_data_loader::drop_global::TipoDeDropGlobal::Substitui;
+        let mut dinheiro = 0;
+        if substitui {
+            let valor = if baixo >= alto { baixo } else { rng.gen_range(baixo..=alto) };
+            dinheiro = (valor as f32 * ajuste.dinheiro + 0.5) as i32;
+            if rng.gen::<f32>() > CHANCE_DE_DINHEIRO {
+                dinheiro = 0;
+            }
+        }
+        if rng.gen::<f32>() <= ajuste.item {
+            let quantos = sortear_indice(rng.gen(), t.chance_de_quantos.iter().copied());
+            for _ in 0..quantos {
+                let idx = sortear_indice(rng.gen(), t.itens.iter().map(|d| d.1));
+                q.itens.push(t.itens[idx].0);
+            }
+        }
+        if dinheiro > 0 {
+            q.montes_de_dinheiro.push(dinheiro as u32);
+        }
+        if substitui {
+            return q;
+        }
+    }
     for _ in 0..crate::taxas::Taxas::sorteios(taxas.drop, rng) {
     if rng.gen::<f32>() <= ajuste.item {
         for rodada in 0..m.rodadas_de_drop.max(0) {
@@ -85,7 +120,6 @@ pub fn gerar_queda<R: Rng>(m: &TemplateDeMonstro, nivel_do_dono: i32, dados: &Ga
         }
     }
     }
-    let (baixo, alto) = (m.dinheiro_medio - m.dinheiro_variacao, m.dinheiro_medio + m.dinheiro_variacao);
     if alto > 0 {
         let vezes = m.rodadas_de_drop.max(0) as u32 * crate::taxas::Taxas::sorteios(taxas.moedas, rng);
         for _ in 0..vezes {

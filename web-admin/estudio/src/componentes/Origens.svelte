@@ -30,13 +30,28 @@
 
 <div class="origens">
   <section class="caixa">
-    <h3>Dropado de {#if o}<span class="mini">{o.dropado_de.length}</span>{/if}</h3>
+    <h3>Dropado de {#if o}<span class="mini">{o.dropado_de.length + o.dropado_de_global.length}</span>{/if}</h3>
     {#if erro}<p class="erro">{erro}</p>{:else if !o}<p class="suave">Carregando…</p>
-    {:else if !o.dropado_de.length}<p class="suave">Nenhum monstro dropa este item.</p>
+    {:else if !o.dropado_de.length && !o.dropado_de_global.length}<p class="suave">Nenhum monstro dropa este item.</p>
     {:else}
-      <ul>{#each o.dropado_de as m (m.indice)}<li>{@render ref(m, `chance na lista ${pct(m.chance)}${m.linhas > 1 ? ` (${m.linhas} linhas)` : ""}`)}</li>{/each}</ul>
-      <p class="mini">Chance = peso do item na lista de drops do monstro (MONSTER_ESSENCE.drop_matters).</p>
+      {#if o.dropado_de.length}
+        <ul>{#each o.dropado_de as m (m.indice)}<li>{@render ref(m, `chance na lista ${pct(m.chance)}${m.linhas > 1 ? ` (${m.linhas} linhas)` : ""}`)}</li>{/each}</ul>
+        <p class="mini">Chance = peso do item na lista de drops do monstro (MONSTER_ESSENCE.drop_matters).</p>
+      {/if}
+      {#if o.dropado_de_global.length}
+        <h4 class="mini">Drop global (extra_drops.sev)</h4>
+        <ul>
+          {#each o.dropado_de_global as m (`${m.tabela_global}-${m.id}`)}
+            <li>
+              {#if m.indice != null}{@render ref({ ...m, indice: m.indice }, `${pct(m.chance)} por morte · tabela ${m.tabela_global}${m.tipo === "substitui" ? " · substitui o drop" : ""}`)}
+              {:else}<span class="linha-simples"><span class="nome">monstro {m.id} (fora do elements)</span><span class="mini">{pct(m.chance)} por morte · tabela {m.tabela_global}</span></span>{/if}
+            </li>
+          {/each}
+        </ul>
+        <p class="mini">Chance por morte = chance de o item cair ao menos uma vez, pelo nº de itens da tabela e o peso dele nela (sem a punição de nível). Tabela: {[...new Set(o.dropado_de_global.map((m) => `${m.tabela_global} “${m.nome_da_tabela}”`))].join(", ")}.</p>
+      {/if}
     {/if}
+    {#if o?.dropado_de_global_erro}<p class="erro">extra_drops.sev recusado: {o.dropado_de_global_erro}</p>{/if}
   </section>
 
   <section class="caixa">

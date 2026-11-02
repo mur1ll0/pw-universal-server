@@ -5420,6 +5420,9 @@ fn pagina_do_campo(nome: &str) -> Option<u32> {
 impl Estudio {
     /// B369 — de onde um item vem (só leitura, para o Estúdio). Tudo do rascunho, se houver:
     /// - `dropado_de`: `MONSTER_ESSENCE.drop_matters_N_id` = item, com o `drop_matters_N_probability` da linha;
+    /// - `dropado_de_global`: as tabelas do `extra_drops.sev` (o drop global do GS, `worldmanager.cpp:884`) que têm o
+    ///   item, com cada monstro delas, a chance de o item cair por morte (`TabelaDeDropGlobal::chance_por_morte`) e o
+    ///   tipo (`soma` ao drop do monstro ou `substitui`); `dropado_de_global_erro` quando o arquivo existe e o GS o recusaria;
     /// - `recompensa_de`: missões do `tasks.data` cujo prêmio (sucesso ou falha, e as escalas por tempo/itens do v129)
     ///   tem o item num grupo (`AWARD_ITEMS_CAND`);
     /// - `vendido_por`: `NPC_SELL_SERVICE.pages_P_goods_G_id` = item → os `NPC_ESSENCE` com `id_sell_service` = a loja;
@@ -5463,6 +5466,39 @@ impl Estudio {
                     v["linhas"] = json!(linhas.len());
                     dropado_de.push(v);
                 }
+            }
+        }
+
+        // Drop global (`extra_drops.sev`): o do rascunho, se ele tiver; sem o arquivo no realm, nada.
+        let mut dropado_de_global = Vec::new();
+        let mut dropado_de_global_erro = Value::Null;
+        if let Ok((_, do_realm, do_rascunho)) = self.item_do_realm(gov, versao, "servidor\\extra_drops.sev".to_string(), rascunho).await {
+            let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+            match pw_data_loader::drop_global::DropGlobal::ler(&bytes) {
+                Ok(dg) => {
+                    if let Ok(t) = e.tabela("MONSTER_ESSENCE") {
+                        let indice_do_id: HashMap<i32, usize> = (0..t.registros.len()).filter_map(|i| t.id(i).map(|id| (id, i))).collect();
+                        for tg in dg.tabelas.iter().filter(|tg| tg.itens.iter().any(|(i, _)| *i as i32 == id)) {
+                            let chance = tg.chance_por_morte(id as u32);
+                            let tipo = if tg.tipo == pw_data_loader::drop_global::TipoDeDropGlobal::Soma { "soma" } else { "substitui" };
+                            for m in &tg.monstros {
+                                if dropado_de_global.len() >= LIMITE {
+                                    break;
+                                }
+                                let mut v = match indice_do_id.get(&(*m as i32)) {
+                                    Some(i) => reg(t, *i),
+                                    None => json!({ "tabela": t.nome, "indice": Value::Null, "id": m, "nome": Value::Null, "icone": Value::Null }),
+                                };
+                                v["chance"] = json!(chance);
+                                v["tabela_global"] = json!(tg.indice);
+                                v["nome_da_tabela"] = json!(tg.nome);
+                                v["tipo"] = json!(tipo);
+                                dropado_de_global.push(v);
+                            }
+                        }
+                    }
+                }
+                Err(err) => dropado_de_global_erro = json!(err.to_string()),
             }
         }
 
@@ -5573,7 +5609,7 @@ impl Estudio {
             }
         }
 
-        Ok(json!({ "id": id, "dropado_de": dropado_de, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
+        Ok(json!({ "id": id, "dropado_de": dropado_de, "dropado_de_global": dropado_de_global, "dropado_de_global_erro": dropado_de_global_erro, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
             "loja_gold": loja_gold, "forjado_por": forjado_por }))
     }
 

@@ -230,6 +230,9 @@ export interface PaginaDeOrigem { pagina: number; titulo: string }
 export interface Origens {
   id: number;
   dropado_de: (RefDeOrigem & { chance: number; linhas: number })[];
+  /* Drop global do GS (`extra_drops.sev`): `indice` nulo = monstro citado na tabela que o elements não tem. */
+  dropado_de_global: (Omit<RefDeOrigem, "indice"> & { indice: number | null; chance: number; tabela_global: number; nome_da_tabela: string; tipo: "soma" | "substitui" })[];
+  dropado_de_global_erro: string | null;
   recompensa_de: { id: number; nome: string; quando: string; quantidade: number; sorteio: boolean }[];
   vendido_por: (RefDeOrigem & { paginas: PaginaDeOrigem[]; npcs: RefDeOrigem[] })[];
   loja_gold: { arquivo: string; indice: number; nome: string; quantidade: number; preco: number }[];

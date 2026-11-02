@@ -271,6 +271,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("tasks.data"), realm.join("tasks.data")).expect("tasks do realm_126");
     // world_targets.sev real do 1.2.6, na raiz do config (B245).
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world_targets.sev"), realm.join("world_targets.sev")).expect("world_targets do realm_126");
+    // extra_drops.sev real do 1.2.6 (drop global do GS), na raiz do config.
+    fs::copy(npcgen.parent().unwrap().parent().unwrap().join("extra_drops.sev"), realm.join("extra_drops.sev")).expect("extra_drops do realm_126");
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
     let res = importar(&Importacao {
         versao: LINHA,
@@ -1067,6 +1069,12 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let o = json_de(pedir("GET", &format!("estudio/origens/{caido}")).call().unwrap());
         assert!(o["dropado_de"].as_array().unwrap().iter().any(|m| m["indice"] == monstro && m["chance"].is_number()), "{o}");
         assert!(o["recompensa_de"].is_array() && o["loja_gold"].is_array(), "{o}");
+        // Drop global: a última tabela do extra_drops.sev do 1.2.6 dá o 12962 a 10 chefes, 1 item por morte, chance 1.
+        let g = json_de(pedir("GET", "estudio/origens/12962").call().unwrap());
+        let gl = g["dropado_de_global"].as_array().unwrap();
+        assert_eq!(gl.len(), 10, "{g}");
+        assert!(gl.iter().all(|m| m["tabela_global"] == 14 && m["tipo"] == "soma" && (m["chance"].as_f64().unwrap() - 1.0).abs() < 1e-6), "{g}");
+        assert!(g["dropado_de_global_erro"].is_null(), "{g}");
         assert_eq!(erro_de(pedir("GET", "estudio/origens/0").call()).0, 400);
         // B280: corrigir — criar 普攻1落 clonando 普攻1起 (no rascunho); a ficha com o rascunho já não acusa a falta.
         let ecm_cam = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
