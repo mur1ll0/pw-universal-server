@@ -14,7 +14,7 @@
 | :--- | :--- |
 | crate | `crates/pw-recursos` (bin + lib) |
 | contêiner | `pw-recursos` (`docker/Dockerfile.recursos`: Rust + Python 3 + `tools/pw-pck-extract`) |
-| porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234) e `GET /saude` |
+| porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234), `GET /painel.json` + `.sig` (URL do painel para o launcher, B391, §5) e `GET /saude` |
 | volume de dados | `data/clientes` → `/dados` (bind) |
 | chave | volume nomeado `pw_recursos_chave` → `/chave/assinatura_ed25519.key`, **montado só aqui** (o painel monta `../data` inteiro) |
 | API administrativa | **8101**, sem `ports:` (só a rede interna; o painel a chama), segredo `PW_RECURSOS_SEGREDO` (de `RECURSOS_SEGREDO` no `docker/.env`) no cabeçalho `x-recursos-segredo`; sem segredo de 16+ caracteres fica desligada. Rotas no §6 |
@@ -122,6 +122,22 @@ que for `127.0.0.1`/`localhost` ou um host que ele mesmo pôs antes (`hosts_jogo
 pelo host atual. Linhas com outro endereço (servidores de terceiros) ficam. Quando: depois de
 instalar/atualizar/adotar/reparar, antes de **Jogar** e ao salvar o servidor (em todas as versões com
 pasta). Mudou o IP: trocar o servidor de atualização no launcher basta.
+
+**Painel web pelo servidor de atualização (B391).** Botão **Criar conta / Painel** no alto da janela (ao lado de
+**Opções do jogo…**, sempre ativo, não trava durante download). O `pw-recursos` publica `GET /painel.json`
+`{"formato":1,"url":"<modelo>"}` + `GET /painel.json.sig` (Ed25519 dos bytes exatos, a mesma chave dos manifestos),
+montados ao subir de `PW_PAINEL_URL`; sem a variável (ou com modelo inválido, que vira aviso no log) as rotas dão 404.
+No compose: `PW_PAINEL_URL: ${PAINEL_URL:-http://{host}:8000/}` — a porta é a publicada pelo `pw-admin-api`.
+`{host}` é trocado **no launcher** pelo host do servidor de atualização configurado nele (`local::host_da_url`, o
+mesmo da `serverlist.txt`): `127.0.0.1` em teste local, o IP na rede, o DNS hospedado. Atrás de proxy/HTTPS,
+`PAINEL_URL` no `docker/.env` com a URL fixa (sem `{host}`). Não se usa o `Host` da requisição: assinatura sobre algo
+que o cliente manda não provaria nada. Núcleo `pw_atualizador::painel` (`validar_modelo`: só `http`/`https`, ASCII
+visível sem aspas/espaço, até 512 bytes, `{host}` uma vez e como host inteiro; `montar_url`: IPv6 entre colchetes,
+host só `[A-Za-z0-9-._:]`) e `Servidor::painel()` (404 → `None`; assinatura errada → erro). Launcher: `acoes::
+endereco_do_painel` numa thread → `ShellExecuteW("open", url)`; mensagem verde com a URL aberta, ou vermelha
+("Este servidor não informa o endereço do painel…", erro de rede, assinatura). O painel abre na tela de login com
+**Criar conta** (B387, `PAINEL_CADASTRO`). Teste: `crates/pw-recursos/tests/painel.rs` (2, sem banco: HTTP real,
+host local/DNS, outra chave recusada, sem painel = `None`) e 3 unitários em `pw-atualizador/src/painel.rs`.
 
 **Lista publicada (B281, versão 1 das duas linhas):** só o realm que existe, com o nome da tabela `realms`:
 1.5.5 = `pw-universal` (grupo, obrigatório no 1.5.5) + `Perfect World Evolved (1.5.5)<TAB>29004:127.0.0.1<TAB>2`;

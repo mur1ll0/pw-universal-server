@@ -17942,3 +17942,47 @@ comparação lado a lado.
     - O Murillo ver no Estúdio e em jogo (§3.3).
     - O ajuste do teste de 668 ofertas ao `gshop.data` novo (ou restaurar o arquivo), depois de saber quem o trocou.
     - O drop global ignora, como o drop normal daqui, `_drop_rate`, `_money_scale` e o bônus global de dinheiro.
+
+391. **Sessão 2026-11-02: botão "Criar conta / Painel" no launcher, com a URL do painel anunciada pelo servidor de atualização (B391).**
+
+    ### a. Pedido
+    O Murillo pediu um botão no launcher para abrir o painel (ou criar conta), com a URL vinda do próprio servidor de
+    atualização conforme o serviço no Docker: em teste local abre pelo endereço local, hospedado abre pelo IP/DNS certo.
+
+    ### b. Decisão
+    - O painel (`pw-admin-api`, porta publicada 8000) já tem login de jogador com "Criar conta" (B387); faltava o launcher
+      saber onde ele está. Quem sabe é a configuração do Docker: `PW_PAINEL_URL` no `pw-recursos`
+      (`${PAINEL_URL:-http://{host}:8000/}` no compose).
+    - `{host}` é trocado **no launcher** pelo host do servidor de atualização configurado nele — o mesmo que já vai para a
+      `serverlist.txt` (B280). Não se usa o cabeçalho `Host` da requisição: o servidor assinaria um valor escolhido pelo
+      cliente, e um intermediário conseguiria uma URL assinada para qualquer host.
+    - `painel.json` assinado (Ed25519, a chave dos manifestos) porque o launcher abre a URL para o jogador digitar senha;
+      HTTP sem TLS não pode trocá-la por uma página falsa. URL validada dos dois lados (só `http`/`https`, ASCII visível
+      sem aspas/espaço, `{host}` uma vez e como host inteiro) antes do `ShellExecuteW`.
+
+    ### c. Correção
+    - `crates/pw-atualizador/src/painel.rs` (novo): `Painel`, `validar_modelo`, `montar_url`; `cliente.rs`:
+      `Servidor::painel()` (404 → `None`).
+    - `crates/pw-recursos/src/servir.rs`: `painel_assinado`, `rotas_com_painel` (`/painel.json`, `/painel.json.sig`);
+      `main.rs` lê `PW_PAINEL_URL` (inválida vira aviso no log, sem painel).
+    - `tools/pw-launcher`: botão "Criar conta / Painel" no alto (título encolhido para 172 px, "Opções do jogo…" para 136),
+      `acoes::endereco_do_painel` numa thread, `WM_PAINEL` → `ShellExecuteW("open")`, mensagem com a URL ou o erro.
+    - `docker/docker-compose.yml`: `PW_PAINEL_URL` no `pw-recursos`. Spec 07 §1 e §5.
+
+    ### d. Provas
+    - `pw-atualizador` 10/10 (3 novos: host local/rede/DNS/IPv6, URL fixa, 9 modelos e 3 hosts recusados);
+      `pw-recursos` lib 26/26; `tests/painel.rs` 2/2 (HTTP real: modelo conferido, `localhost` e IP, chave errada recusada,
+      sem painel = `None`, modelos `file://` e `{host}.mal.com` recusados ao montar). Sem banco: não tocam no Postgres.
+    - `docker compose config`: `PW_PAINEL_URL: http://{host}:8000/`. Launcher 64 bits (`compilar.ps1`) compilado em 27 s,
+      2,7 MB.
+    - A checagem de origem do painel (`seguranca.py:142-155`) compara com a própria requisição: o cadastro funciona por
+      qualquer IP/DNS acessado direto.
+
+    ### e. Falta
+    - `pw-recursos` publicado a pedido do Murillo em 2026-11-02 18:42 (build 6 min 18 s): log `painel anunciado ao launcher:
+      http://{host}:8000/`; `GET /painel.json` = `{"formato":1,"url":"http://{host}:8000/"}` com `.sig`, 200 por
+      `127.0.0.1` e por `192.168.1.13`; painel 8000 responde 200 pelo IP; chave pública do servidor = `chave_publica.txt`.
+    - O Murillo ver o botão no launcher novo (local e por IP). Código no commit `378f2e9` (branch `studio-svelte`).
+    - Atrás de proxy HTTPS: `PAINEL_URL` fixa no `docker/.env`; o `verificar_origem` usa `requisicao.url.scheme`, que sem
+      `--proxy-headers` no uvicorn sai `http` — conferir quando houver proxy.
+    - Launcher 32 bits não recompilado (`compilar.ps1 -Bits 32`).
