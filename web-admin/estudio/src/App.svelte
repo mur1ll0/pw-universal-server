@@ -7,7 +7,8 @@
      #/gshop?loja=<arquivo>            G-Shop: a Loja Gold (gshop*.data)
      #/npcs/NPC_ESSENCE/<indice>       B392: NPC (ficha, onde fica, conversa, serviços, missões)
      #/servicos?tabela=&indice=        B392: serviços de NPC (lojas, forjas, teleportes…)
-     #/missoes[/<id>]                  B392: missões (tasks.data) */
+     #/missoes[/<id>]                  B392: missões (tasks.data)
+     #/mascotes/PET_ESSENCE/<indice>   B394: mascote (ficha, atributos por nível, ovo, modelo 3D, simulador) */
   import { onMount } from "svelte";
   import { contexto, sessao, versaoDoRealm } from "./lib/api";
   import { avisos, definirRascunho, estudio, rota } from "./lib/estado.svelte";
@@ -20,6 +21,7 @@
   import EdicaoItem from "./telas/EdicaoItem.svelte";
   import GShop from "./telas/GShop.svelte";
   import EdicaoNpc from "./telas/EdicaoNpc.svelte";
+  import EdicaoMascote from "./telas/EdicaoMascote.svelte";
   import Servicos from "./telas/Servicos.svelte";
   import Missoes from "./telas/Missoes.svelte";
 
@@ -71,6 +73,10 @@
   {:else if rota.caminho[0] === "npcs" && rota.caminho[1] && rota.caminho[2] !== undefined}
     {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
       <EdicaoNpc tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
+    {/key}
+  {:else if rota.caminho[0] === "mascotes" && rota.caminho[1] && rota.caminho[2] !== undefined}
+    {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
+      <EdicaoMascote tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
     {/key}
   {:else if rota.caminho[0] === "servicos"}
     {#key estudio.rascunho}<Servicos />{/key}

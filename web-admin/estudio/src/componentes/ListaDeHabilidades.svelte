@@ -8,9 +8,10 @@
   import Icone from "./Icone.svelte";
   import Modal from "./Modal.svelte";
 
-  let { titulo, explica = "", maximo, linhas, comChance = false, editavel, aoMudar }:
+  /* B394: `deMonstro` falso (ovo de mascote) — sem o alerta de tipo, que é regra do monstro. */
+  let { titulo, explica = "", maximo, linhas, comChance = false, editavel, aoMudar, deMonstro = true }:
     { titulo: string; explica?: string; maximo: number; linhas: LinhaDeHabilidade[]; comChance?: boolean; editavel: boolean;
-      aoMudar: (l: LinhaDeHabilidade[]) => void } = $props();
+      aoMudar: (l: LinhaDeHabilidade[]) => void; deMonstro?: boolean } = $props();
 
   const TIPOS: Record<number, string> = { 1: "ataque", 2: "bênção", 3: "maldição" };
   let info = $state<Record<number, Habilidade | null>>({});
@@ -49,7 +50,7 @@
   <ul>
     {#each linhas as l, i (i)}
       {@const h = info[l.id]}
-      <li class:alerta={h && !TIPOS[h.type]}>
+      <li class:alerta={deMonstro && h && !TIPOS[h.type]}>
         <button class="nome" type="button" disabled={!editavel} onclick={() => { busca = ""; seletor = { indice: i }; }}>
           <span>{h?.nome ?? `habilidade ${l.id}`}</span>
           <span class="mini">id {l.id}{h ? ` · ${TIPOS[h.type] ?? `tipo ${h.type}: o servidor ignora no monstro`}` : ""}</span>
@@ -76,7 +77,7 @@
     <ul class="achadas">
       {#each achadas as h (h.id)}
         <li><button type="button" ondblclick={() => escolher(h)} onclick={() => escolher(h)}>
-          <span>{h.nome}</span><span class="mini">id {h.id} · {TIPOS[h.type] ?? `tipo ${h.type} (o servidor ignora no monstro)`} · até nível {h.max_level}</span></button></li>
+          <span>{h.nome}</span><span class="mini">id {h.id} · {TIPOS[h.type] ?? (deMonstro ? `tipo ${h.type} (o servidor ignora no monstro)` : `tipo ${h.type}`)} · até nível {h.max_level}</span></button></li>
       {:else}
         <li class="suave">Nada encontrado.</li>
       {/each}

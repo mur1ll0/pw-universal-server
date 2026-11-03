@@ -15,8 +15,11 @@
 
   /* B392: `npc` — modelo de NPC de serviço: o diagnóstico pede as ações `ACT_NPC_*` (parado, ocioso 1/2, andar, correr,
      atacar, morrer, ferido, nascer, sumir; `ecm::pedidos_de_npc`) em vez das de monstro. */
-  let { caminho, habilidades = [], politica = 0, idDoMonstro = 0, aoTrocarModelo, npc = false }:
-    { caminho: string; habilidades?: number[]; politica?: number; idDoMonstro?: number; aoTrocarModelo?: (ecm: string) => Promise<void>; npc?: boolean } = $props();
+  /* B394: `habitat` — modelo de mascote invocado ou com `inhabit_type` 6: o cliente pede as ações com o sufixo do
+     ambiente (`_地面`/`_水中`/`_空中`, `ecm::pedidos_de_mascote`, B281); os outros mascotes pedem os nomes de monstro. */
+  let { caminho, habilidades = [], politica = 0, idDoMonstro = 0, aoTrocarModelo, npc = false, habitat = null }:
+    { caminho: string; habilidades?: number[]; politica?: number; idDoMonstro?: number; aoTrocarModelo?: (ecm: string) => Promise<void>; npc?: boolean;
+      habitat?: number | null } = $props();
   let pastaNova = $state("models\\npcs\\estudio");
   let tituloNovo = $state("");
   /** O que o GLB importado substitui (B380). */
@@ -44,6 +47,7 @@
       if (habilidades.length) q.habilidades = habilidades.join(",");
       if (politica) q.politica = String(politica);
       if (npc) q.npc = "true";
+      if (habitat != null) q.habitat = String(habitat);
       ficha = await fichaDoModelo(caminho, q);
     } catch (e) { erro = (e as Error).message; }
   }
@@ -71,7 +75,7 @@
 
   const combinada = (nome: string) => ficha?.combinadas.find((c) => c.nome === nome);
   /** As ações que o cliente pede ao monstro, cada uma com a combinada que responde (a própria ou a alternativa). */
-  const pedidos = $derived((ficha?.diagnostico_de_monstro ?? []).map((d) => {
+  const pedidos = $derived(((habitat != null ? ficha?.diagnostico_de_mascote : null) ?? ficha?.diagnostico_de_monstro ?? []).map((d) => {
     const c = combinada(d.pedido) ?? (d.alternativa ? combinada(d.alternativa) : undefined);
     return { ...d, combinada: c };
   }));

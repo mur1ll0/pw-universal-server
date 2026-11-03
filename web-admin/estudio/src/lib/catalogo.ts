@@ -53,7 +53,10 @@ export const CATEGORIAS: Categoria[] = [
   { chave: "monstros", nome: "Monstros", icone: "monstro", pronta: true, subcategorias: [
     { chave: "monstros", nome: "Monstros", tabela: "MONSTER_ESSENCE", maior: "MONSTER_TYPE", pronta: true },
   ] },
-  { chave: "mascotes", nome: "Mascotes", icone: "pata", pronta: false, subcategorias: [] },
+  // B394: Mascotes com tela própria (busca pelo tipo: `ModalBuscaDeMascote`).
+  { chave: "mascotes", nome: "Mascotes", icone: "pata", pronta: true, subcategorias: [
+    { chave: "mascotes", nome: "Mascotes", tabela: "PET_ESSENCE", maior: "PET_TYPE", pronta: true },
+  ] },
   // Itens: as tabelas de item que não são Equipáveis, agrupadas (`lib/itens.ts`), e as Minas.
   { chave: "itens", nome: "Itens", icone: "caixa", pronta: true, subcategorias: SUBCATEGORIAS_DE_ITENS },
 ];

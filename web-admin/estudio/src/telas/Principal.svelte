@@ -3,6 +3,7 @@
   import Icone from "../componentes/Icone.svelte";
   import ModalBusca from "../componentes/ModalBusca.svelte";
   import ModalBuscaDeNpc from "../componentes/ModalBuscaDeNpc.svelte";
+  import ModalBuscaDeMascote from "../componentes/ModalBuscaDeMascote.svelte";
   import { ir } from "../lib/estado.svelte";
 
   let aberta = $state<Categoria | null>(null);
@@ -38,6 +39,8 @@
 
 {#if aberta?.chave === "npcs"}
   <ModalBuscaDeNpc aoFechar={() => (aberta = null)} />
+{:else if aberta?.chave === "mascotes"}
+  <ModalBuscaDeMascote aoFechar={() => (aberta = null)} />
 {:else if aberta}
   <ModalBusca categoria={aberta} aoFechar={() => (aberta = null)} />
 {/if}

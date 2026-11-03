@@ -318,6 +318,8 @@ export interface FichaDoModelo {
   combinadas: { nome: string; bases: string[]; bases_ausentes: string[]; filhas: unknown[] }[];
   bases_do_smd: string[] | null;
   diagnostico_de_monstro: { indice: number; pedido: string; estado: string; alternativa: string | null }[] | null;
+  /** B394: mascote invocado ou de ambiente 6 — com `habitat=` na consulta (B281). */
+  diagnostico_de_mascote?: { indice: number; pedido: string; estado: string; alternativa: string | null }[] | null;
   /** B384: nome do cliente → nome legível (a mesma tabela do GLB exportado, `admin.rs::TRADUCOES_DE_ACAO`). */
   nomes_legiveis?: Record<string, string>;
 }

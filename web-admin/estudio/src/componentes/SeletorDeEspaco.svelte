@@ -35,6 +35,8 @@
   let categoria = $state(categoriaInicial);
   let categorias = $state<{ tabela: string; nome: string }[]>([]);
   if (espaco !== "ADDON") tabelas().then((t) => {
+    // B394: com `tabela` fixa (escolher um monstro, um mascote, um ovo) a lista de categorias some — só aquela vale.
+    if (tabela) { categorias = []; return; }
     const l = t.tabelas.filter((x) => x.espaco === espaco && x.registros > 0 && !/_(SERVICE|TYPE)$/.test(x.nome) && serve(x.nome))
       .map((x) => ({ tabela: x.nome, nome: NOMES_DE_CATEGORIA[x.nome] ?? x.nome }));
     l.sort((a, b) => Number(!NOMES_DE_CATEGORIA[a.tabela]) - Number(!NOMES_DE_CATEGORIA[b.tabela]) || a.nome.localeCompare(b.nome, "pt-BR"));
