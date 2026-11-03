@@ -18144,3 +18144,7 @@ comparação lado a lado.
       primeira tag); a compilação do launcher no runner do GitHub não foi vista.
     - O launcher publicado leva a chave pública do `chave_publica.txt` do repositório — só aceita atualização do
       `pw-recursos` do Murillo; o README e as notas do release dizem como trocar.
+    - **Publicado** a pedido do Murillo: commit `9134716` na `main`, tags `blender-v1.1.1` e `launcher-v0.2.0`. Os dois jobs
+      `release` saíram verdes na primeira tentativa; Releases com `pw_estudio-1.1.1.zip` (6.387 B, pelo `zip` do runner) e
+      `pw-launcher-x64.exe`/`pw-launcher-x86.exe` (2.702.848/2.052.608 B). Notas dos releases conferidas (chave Ed25519
+      embutida aparece certa). Falta o Murillo abrir o `.exe` baixado do release contra o `pw-recursos`.

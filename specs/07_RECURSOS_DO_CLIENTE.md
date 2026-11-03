@@ -103,8 +103,8 @@ mostra a pública). O `versao.json` é gravado por último: só aparece quando a
 Distribuição (B395): a tag `launcher-v<versão>` (igual à `version` do `tools/pw-launcher/Cargo.toml`) dispara o
 `.github/workflows/release.yml` (`windows-latest`, `compilar.ps1 -Bits 64` e `-Bits 32`), que publica
 `pw-launcher-x64.exe` e `pw-launcher-x86.exe` nos Releases do GitHub com a chave de `chave_publica.txt` embutida — só servem
-ao `pw-recursos` dono dessa chave; quem sobe outro servidor troca o arquivo e compila. **Ainda não rodou** (falta a
-primeira tag).
+ao `pw-recursos` dono dessa chave; quem sobe outro servidor troca o arquivo e compila. Primeiro release:
+`launcher-v0.2.0` (2026-11-03; x64 2.702.848 bytes, x86 2.052.608), job verde.
 
 Tela (B235; Win32 no B275, versões numa caixa de seleção em vez de abas): ao abrir, busca as versões no servidor e mostra a situação da escolhida, lendo só o
 `versao.json` (`Servidor::versao_anunciada`, sem baixar o manifesto). Conforme a situação:
@@ -701,6 +701,7 @@ blender --command extension install-file -r user_default -e pw_estudio-1.1.1.zip
 Distribuição (B395): a tag `blender-v<versão>` (igual à `version` do manifesto, senão o job falha) dispara o
 `.github/workflows/release.yml`, que publica `pw_estudio-<versão>.zip` nos Releases do GitHub. O zip da 1.1.1 gerado pelo
 `extension build` do Blender 5.1 tem só `blender_manifest.toml` e `__init__.py`, e passa no `extension validate`.
+Primeiro release: `blender-v1.1.1` (2026-11-03), job verde.
 Licença da extensão: GPL-3.0-or-later (manifesto); o resto do repositório é MIT.
 
 O painel "PW Estúdio" fica na barra lateral da vista 3D, com estes botões:
