@@ -1,0 +1,727 @@
+<title>Estúdio de NPC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: documento de proposta em coluna; cada tela desenhada numa "janela" do Estúdio com rolagem lateral própria. */
+/* Tokens: os do próprio Estúdio (web-admin/estudio/src/app.css) — escuro primeiro, claro pelo sistema. */
+:root {
+  --fundo: #0b0f14; --fundo-2: #10161d; --superficie: #141b23; --superficie-2: #19222c;
+  --borda: #232e3a; --borda-forte: #2f3d4c;
+  --texto: #e8edf2; --texto-2: #a9b4c0; --texto-3: #7d8896;
+  --ouro: #e3b65b; --ouro-forte: #f0c66e; --ouro-suave: rgba(227,182,91,.12);
+  --verde: #3ecf8e; --verde-suave: rgba(62,207,142,.12);
+  --vermelho: #f2696b; --vermelho-suave: rgba(242,105,107,.12);
+  --azul: #6aa7ff; --azul-suave: rgba(106,167,255,.12);
+  --jogo-fundo: #0d1117; --jogo-borda: #5a4a2a; --jogo-texto: #f1e6c8;
+  --raio: 10px; --raio-g: 14px;
+  --fonte: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --fonte-titulo: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+  --borda: #ddd5c4; --borda-forte: #c9bea8;
+  --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+  --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176,125,26,.12);
+  --verde: #18895a; --verde-suave: rgba(24,137,90,.12);
+  --vermelho: #c9393b; --vermelho-suave: rgba(201,57,59,.1);
+  --azul: #2f6fd1; --azul-suave: rgba(47,111,209,.1);
+  color-scheme: light; } }
+:root[data-theme="light"] {
+  --fundo: #f4f1ea; --fundo-2: #ebe6db; --superficie: #ffffff; --superficie-2: #f7f4ee;
+  --borda: #ddd5c4; --borda-forte: #c9bea8;
+  --texto: #1d232b; --texto-2: #4c5866; --texto-3: #6f7a87;
+  --ouro: #b07d1a; --ouro-forte: #8a5e0c; --ouro-suave: rgba(176,125,26,.12);
+  --verde: #18895a; --verde-suave: rgba(24,137,90,.12);
+  --vermelho: #c9393b; --vermelho-suave: rgba(201,57,59,.1);
+  --azul: #2f6fd1; --azul-suave: rgba(47,111,209,.1);
+  color-scheme: light; }
+* { box-sizing: border-box; }
+body { background: var(--fundo); color: var(--texto); font-family: var(--fonte); font-size: 15px; line-height: 1.55; }
+.pagina { max-width: 1180px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--fonte-titulo); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.1; letter-spacing: -.01em; }
+h2 { font-size: 24px; display: flex; align-items: baseline; gap: 12px; }
+h2 .n { font-family: var(--mono); font-size: 14px; color: var(--ouro); }
+h3 { font-size: 16px; }
+p { margin: 0; max-width: 70ch; color: var(--texto-2); }
+.etiqueta { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ouro); font-weight: 600; }
+.secao { display: grid; gap: 18px; min-width: 0; }
+.capa { display: grid; gap: 14px; }
+.capa p { font-size: 17px; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+code { background: var(--superficie-2); border: 1px solid var(--borda); padding: 1px 5px; border-radius: 5px; color: var(--texto); }
+.resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.resumo div { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 16px; display: grid; gap: 4px; }
+.resumo b { font-size: 15px; }
+.resumo span { color: var(--texto-2); font-size: 14px; }
+
+/* Janela do Estúdio (moldura das telas desenhadas) */
+.rolagem { overflow-x: auto; border-radius: var(--raio-g); }
+.janela { min-width: 980px; background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: var(--raio-g); overflow: hidden; }
+.janela.estreita { min-width: 760px; }
+.barra { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--superficie); border-bottom: 1px solid var(--borda); font-size: 13px; }
+.barra .marca { font-weight: 700; color: var(--ouro); }
+.barra .migalha { color: var(--texto-2); }
+.barra .esp { flex: 1; }
+.pilula { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--borda-forte); color: var(--texto-2); background: var(--superficie-2); white-space: nowrap; }
+.pilula.ouro { color: var(--ouro); border-color: var(--ouro); background: var(--ouro-suave); }
+.pilula.verde { color: var(--verde); border-color: var(--verde); background: var(--verde-suave); }
+.pilula.verm { color: var(--vermelho); border-color: var(--vermelho); background: var(--vermelho-suave); }
+.pilula.azul { color: var(--azul); border-color: var(--azul); background: var(--azul-suave); }
+.botao { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; font-size: 13px; border: 1px solid var(--borda-forte); background: var(--superficie-2); color: var(--texto); white-space: nowrap; }
+.botao.prim { background: var(--ouro); color: var(--fundo); border-color: var(--ouro); font-weight: 600; }
+.botao.peq { padding: 3px 8px; font-size: 12px; }
+.abas { display: flex; gap: 2px; padding: 0 16px; background: var(--superficie); border-bottom: 1px solid var(--borda); }
+.abas span { padding: 10px 14px; font-size: 13px; color: var(--texto-2); border-bottom: 2px solid transparent; }
+.abas span.on { color: var(--texto); border-color: var(--ouro); font-weight: 600; }
+.abas span .cont { font-family: var(--mono); font-size: 11px; color: var(--texto-3); margin-left: 4px; }
+.corpo { padding: 16px; display: grid; gap: 14px; }
+.box { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio); padding: 12px 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.box > .tit { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+.box > .tit .esp { flex: 1; }
+.campo { display: grid; gap: 3px; font-size: 12px; color: var(--texto-3); }
+.entrada { background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: 6px; padding: 5px 8px; font-size: 13px; color: var(--texto); min-height: 30px; display: flex; align-items: center; gap: 6px; }
+.entrada.area { min-height: 64px; align-items: flex-start; line-height: 1.45; }
+.grade2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grade3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.nota { font-size: 12px; color: var(--texto-3); line-height: 1.45; }
+.nota b { color: var(--texto-2); font-weight: 600; }
+.legenda { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+.legenda div { font-size: 14px; color: var(--texto-2); display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: start; }
+.legenda i { font-style: normal; font-family: var(--mono); font-size: 12px; width: 22px; height: 22px; border-radius: 50%; background: var(--ouro); color: var(--fundo); display: grid; place-items: center; font-weight: 700; }
+.marca-n { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--ouro); color: var(--fundo); font: 700 11px var(--mono); flex: none; }
+
+/* Principal */
+.cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+.card { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio); padding: 14px 12px; display: grid; gap: 6px; justify-items: start; font-size: 13px; }
+.card .ic { width: 34px; height: 34px; border-radius: 9px; background: var(--superficie-2); border: 1px solid var(--borda-forte); display: grid; place-items: center; font: 700 13px var(--mono); color: var(--texto-2); }
+.card.novo { border-color: var(--ouro); background: linear-gradient(var(--ouro-suave), var(--ouro-suave)), var(--superficie); }
+.card.novo .ic { color: var(--ouro); border-color: var(--ouro); }
+.card small { color: var(--texto-3); font-size: 11px; line-height: 1.35; }
+
+/* Tabela da busca */
+.tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tabela th { text-align: left; font-weight: 600; color: var(--texto-3); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--borda-forte); }
+.tabela td { padding: 7px 8px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
+.tabela td.num { font-family: var(--mono); color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.tabela tr.sel td { background: var(--ouro-suave); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Modelo 3D */
+.palco { height: 230px; border-radius: 8px; border: 1px solid var(--borda-forte); background:
+  radial-gradient(ellipse at 50% 85%, rgba(227,182,91,.18), transparent 55%), linear-gradient(var(--fundo-2), var(--fundo)); position: relative; display: grid; place-items: center; }
+.palco svg { width: 120px; height: 180px; }
+.palco .ctl { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; }
+.acoes { display: grid; gap: 4px; }
+.acao { display: grid; grid-template-columns: 110px 1fr 74px; gap: 8px; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 6px; }
+.acao.on { background: var(--ouro-suave); }
+.acao .cn { color: var(--texto-3); font-family: var(--mono); font-size: 11px; }
+
+/* Mapa */
+.mapa { height: 330px; border-radius: 8px; border: 1px solid var(--borda-forte); position: relative; overflow: hidden;
+  background-color: #1b2a22;
+  background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px),
+    radial-gradient(circle at 30% 40%, #2d4433 0 18%, transparent 19%), radial-gradient(circle at 72% 65%, #2b3f4c 0 14%, transparent 15%);
+  background-size: 40px 40px, 40px 40px, 100% 100%, 100% 100%; }
+.mapa svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mapa .zoom { position: absolute; right: 10px; top: 10px; display: grid; gap: 4px; }
+.mapa .coord { position: absolute; left: 10px; bottom: 10px; font: 12px var(--mono); color: #e8edf2; background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 6px; }
+
+/* Conversa */
+.tres { display: grid; grid-template-columns: 250px 1fr 300px; gap: 14px; align-items: start; }
+.fluxo { display: grid; gap: 4px; font-size: 12px; }
+.no { border: 1px solid var(--borda-forte); background: var(--fundo-2); border-radius: 7px; padding: 6px 8px; display: grid; gap: 2px; }
+.no.sel { border-color: var(--ouro); background: var(--ouro-suave); }
+.no .tp { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--texto-3); }
+.no.serv { border-style: dashed; }
+.recuo1 { margin-left: 14px; } .recuo2 { margin-left: 28px; }
+.paleta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.paleta button { width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--borda-forte); cursor: pointer; padding: 0; }
+.paleta button:focus-visible, .ferr button:focus-visible { outline: 2px solid var(--ouro); outline-offset: 1px; }
+.ferr { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ferr button { font: 12px var(--fonte); color: var(--texto); background: var(--superficie-2); border: 1px solid var(--borda-forte); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.editor { width: 100%; min-height: 84px; resize: vertical; background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: 6px; padding: 8px; color: var(--texto); font: 13px/1.5 var(--mono); }
+.editor:focus-visible { outline: 2px solid var(--ouro); outline-offset: 1px; }
+.contador { font: 12px var(--mono); color: var(--texto-3); }
+.contador.estoura { color: var(--vermelho); }
+.opcoes { display: grid; gap: 6px; }
+.opcao { display: grid; grid-template-columns: 16px 1fr 150px 60px; gap: 8px; align-items: center; font-size: 12px; background: var(--fundo-2); border: 1px solid var(--borda); border-radius: 7px; padding: 6px 8px; }
+.opcao .pega { color: var(--texto-3); letter-spacing: -2px; }
+/* Janela do jogo (sempre escura, como as janelas do cliente) */
+.jogo { background: var(--jogo-fundo); border: 2px solid var(--jogo-borda); border-radius: 6px; color: var(--jogo-texto); font-size: 13px; overflow: hidden; }
+.jogo .cab { background: linear-gradient(#3a2f1a, #22190b); padding: 6px 10px; font-weight: 600; color: #f6dc9a; display: flex; justify-content: space-between; }
+.jogo .txt { padding: 10px 12px; min-height: 92px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.jogo ul { list-style: none; margin: 0; padding: 4px 8px 10px; display: grid; gap: 2px; }
+.jogo li { padding: 3px 6px; border-radius: 4px; color: #f6dc9a; }
+.jogo li::before { content: "◆ "; color: #b8923d; font-size: 10px; }
+.jogo li.ativo { background: rgba(246,220,154,.12); }
+
+/* Serviços */
+.grupos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.vaga { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--borda); background: var(--fundo-2); font-size: 12px; }
+.vaga .tp { color: var(--texto-3); font-size: 11px; }
+.vaga b { font-weight: 600; font-size: 13px; }
+.vaga .acoesv { grid-row: span 2; display: flex; gap: 4px; align-items: center; }
+.vaga.vazia { border-style: dashed; color: var(--texto-3); }
+.vaga.vazia b { color: var(--texto-3); font-weight: 400; }
+.chave { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; }
+.chave .sw { width: 28px; height: 16px; border-radius: 999px; background: var(--borda-forte); position: relative; flex: none; }
+.chave .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--texto-2); }
+.chave .sw.on { background: var(--ouro); } .chave .sw.on::after { left: 14px; background: var(--fundo); }
+.chave .bit { font: 11px var(--mono); color: var(--texto-3); width: 30px; }
+
+/* Modal */
+.fundo-modal { padding: 22px; background: rgba(0,0,0,.45); }
+.modal { background: var(--fundo-2); border: 1px solid var(--borda-forte); border-radius: var(--raio-g); overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+.modal .barra { justify-content: space-between; }
+.m3 { display: grid; grid-template-columns: 200px 300px 1fr; min-height: 470px; }
+.m3 > * { border-right: 1px solid var(--borda); padding: 12px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.m3 > *:last-child { border-right: 0; }
+.cat { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 8px; border-radius: 6px; color: var(--texto-2); }
+.cat.on { background: var(--ouro-suave); color: var(--ouro); font-weight: 600; }
+.cat .q { font-family: var(--mono); color: var(--texto-3); }
+.cat-grupo { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-3); margin-top: 6px; }
+.resultado { padding: 8px; border: 1px solid var(--borda); border-radius: 7px; display: grid; gap: 3px; font-size: 12px; background: var(--superficie); }
+.resultado.on { border-color: var(--ouro); }
+.resultado .l1 { display: flex; justify-content: space-between; gap: 6px; }
+.resultado b { font-size: 13px; }
+.slots { display: grid; grid-template-columns: repeat(8, 38px); gap: 4px; }
+.slot { width: 38px; height: 38px; border-radius: 5px; border: 1px solid #3a3122; background: #12161c; display: grid; place-items: center; position: relative; }
+.slot i { width: 28px; height: 28px; border-radius: 4px; display: block; }
+.slot.vazio { border-style: dashed; border-color: #2f3d4c; }
+.slot.alvo { outline: 2px dashed var(--ouro); outline-offset: 1px; }
+.slot .q { position: absolute; right: 2px; bottom: 0; font: 10px var(--mono); color: #fff; text-shadow: 0 0 2px #000; }
+.abas-loja { display: flex; gap: 4px; flex-wrap: wrap; }
+.abas-loja span { font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--borda-forte); color: var(--texto-2); }
+.abas-loja span.on { border-color: var(--ouro); color: var(--ouro); background: var(--ouro-suave); }
+.compartilhado { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--azul); background: var(--azul-suave); font-size: 12px; color: var(--texto); }
+.variantes { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; }
+.mini { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio); padding: 12px 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.mini h3 { display: flex; gap: 8px; align-items: center; }
+.linha-mat { display: grid; grid-template-columns: 34px 1fr 60px; gap: 8px; align-items: center; font-size: 12px; }
+.linha-mat .slot { width: 30px; height: 30px; } .linha-mat .slot i { width: 22px; height: 22px; }
+.barra-chance { height: 8px; border-radius: 999px; background: var(--borda); overflow: hidden; display: flex; }
+.barra-chance span { display: block; height: 100%; }
+
+/* Tabelas de referência */
+.ref { overflow-x: auto; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--superficie); }
+.ref table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 13.5px; }
+.ref th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--texto-3); padding: 10px 12px; border-bottom: 1px solid var(--borda-forte); }
+.ref td { padding: 10px 12px; border-bottom: 1px solid var(--borda); vertical-align: top; color: var(--texto-2); }
+.ref td:first-child { color: var(--texto); }
+.ref tr:last-child td { border-bottom: 0; }
+.ref td.ev { font-family: var(--mono); font-size: 12px; color: var(--texto-3); }
+.relacoes { overflow-x: auto; background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio); padding: 16px; }
+.relacoes svg { min-width: 760px; width: 100%; height: auto; display: block; }
+.relacoes .caixa { fill: var(--superficie-2); stroke: var(--borda-forte); }
+.relacoes .caixa.dest { fill: var(--ouro-suave); stroke: var(--ouro); }
+.relacoes text { fill: var(--texto); font: 13px var(--fonte); }
+.relacoes text.sub { fill: var(--texto-3); font-size: 11px; }
+.relacoes text.lig { fill: var(--texto-2); font-size: 11px; font-family: var(--mono); }
+.relacoes .seta { stroke: var(--texto-3); fill: none; stroke-width: 1.4; }
+.relacoes .ponta { fill: var(--texto-3); }
+@media (max-width: 640px) { .pagina { gap: 40px; padding-block: 24px 56px; } h2 { font-size: 20px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="pagina">
+
+<header class="capa">
+  <span class="etiqueta">Proposta · 3 nov 2026 · a aprovar</span>
+  <h1>Estúdio de NPC</h1>
+  <p>O NPC no mesmo padrão das outras telas do Estúdio: busca, ficha em boxes, modelo 3D com a animação de ocioso e um ponto no mapa com a direção. O diferencial é o editor de conversa e os editores de Serviços e de Missões, que abrem por dentro do NPC e também têm botão próprio na tela principal.</p>
+  <div class="resumo">
+    <div><b>NPC</b><span>5 abas: Ficha, Onde fica, Conversa, Serviços, Missões.</span></div>
+    <div><b>Serviços</b><span>Área própria na Principal e modal dentro do NPC: busca por categoria, edição, criação e vínculo.</span></div>
+    <div><b>Missões</b><span>Área própria (proposta §4.4) e atalho no NPC para as que ele dá e recebe.</span></div>
+    <div><b>Regra de ouro</b><span>Tudo o que a tela mostra vem do cliente e do servidor originais, com arquivo e linha.</span></div>
+  </div>
+</header>
+
+<!-- 1 -->
+<section class="secao">
+  <h2><span class="n">1</span>Onde isso entra no Estúdio</h2>
+  <p>A tela principal ganha três cartões. NPCs já existe na lista (marcado como "não pronto"); Serviços e Missões são novos, porque um serviço é servido por vários NPCs e muitas missões não dependem de NPC.</p>
+  <div class="rolagem"><div class="janela">
+    <div class="barra"><span class="marca">Estúdio</span><span class="migalha">Realm 1.5.5 · rascunho "npc-novos"</span><span class="esp"></span><span class="pilula">Editores</span><span class="pilula ouro">Publicar rascunho</span></div>
+    <div class="corpo">
+      <div class="cards">
+        <div class="card"><span class="ic">EQ</span>Equipáveis<small>armas, armaduras…</small></div>
+        <div class="card"><span class="ic">IT</span>Itens<small>materiais, poções…</small></div>
+        <div class="card"><span class="ic">MO</span>Monstros<small>ficha, drops, spawn</small></div>
+        <div class="card"><span class="ic">GS</span>G-Shop<small>loja gold</small></div>
+        <div class="card novo"><span class="ic">NP</span>NPCs<small>ficha, mapa, conversa</small></div>
+        <div class="card novo"><span class="ic">SV</span>Serviços<small>lojas, forja, teleporte…</small></div>
+        <div class="card novo"><span class="ic">MI</span>Missões<small>tasks.data</small></div>
+      </div>
+    </div>
+  </div></div>
+
+  <h3>Como as peças se ligam no arquivo</h3>
+  <p>É isso que o desenho respeita. O botão que o jogador vê é o <b>nome do serviço</b>; a conversa é ligada pelo serviço de fala ou pelo <code>id_dialog</code> de cada serviço; as missões chegam pelos três serviços de missão.</p>
+  <div class="relacoes">
+    <svg viewBox="0 0 900 290" role="img" aria-label="Relações entre NPC, serviços, conversas e missões">
+      <defs><marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ponta" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="caixa dest" x="20" y="105" width="170" height="74" rx="10"/>
+      <text x="38" y="135">NPC_ESSENCE</text><text class="sub" x="38" y="155">fala inicial (hello_msg)</text><text class="sub" x="38" y="170">31 vagas + 2 máscaras</text>
+      <rect class="caixa" x="330" y="20" width="200" height="64" rx="10"/>
+      <text x="348" y="47">NPC_*_SERVICE</text><text class="sub" x="348" y="67">Name = texto do botão</text>
+      <rect class="caixa" x="330" y="200" width="200" height="64" rx="10"/>
+      <text x="348" y="227">Serviços simples</text><text class="sub" x="348" y="247">bits de combined_services</text>
+      <rect class="caixa dest" x="650" y="20" width="220" height="64" rx="10"/>
+      <text x="668" y="47">TALK_PROC (conversa)</text><text class="sub" x="668" y="67">janelas em árvore + botões</text>
+      <rect class="caixa dest" x="650" y="200" width="220" height="64" rx="10"/>
+      <text x="668" y="227">tasks.data (missões)</text><text class="sub" x="668" y="247">falas próprias (talk_proc)</text>
+      <path class="seta" d="M190,128 C260,128 260,52 328,52" marker-end="url(#p)"/>
+      <text class="lig" x="210" y="88">id_*_service</text>
+      <path class="seta" d="M190,158 C260,158 260,232 328,232" marker-end="url(#p)"/>
+      <text class="lig" x="214" y="214">combined_services</text>
+      <path class="seta" d="M530,52 L648,52" marker-end="url(#p)"/>
+      <text class="lig" x="548" y="44">id_dialog</text>
+      <path class="seta" d="M500,84 C560,150 600,200 648,222" marker-end="url(#p)"/>
+      <text class="lig" x="560" y="150">TASK_OUT / IN / MATTER</text>
+      <path class="seta" d="M760,200 L760,86" marker-end="url(#p)"/>
+      <text class="lig" x="768" y="148">mesmo formato</text>
+    </svg>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="secao">
+  <h2><span class="n">2</span>Busca de NPCs</h2>
+  <p>Mesma busca das outras áreas, com filtros pelo que o NPC <b>faz</b> (derivado das vagas de serviço preenchidas) em vez de só pelo tipo. Clonar e Novo seguem a regra do Estúdio (clona o NPC de menor id e limpa o que não faz sentido).</p>
+  <div class="rolagem"><div class="janela">
+    <div class="barra"><span class="marca">Estúdio</span><span class="migalha">NPCs</span><span class="esp"></span><span class="botao">Clonar</span><span class="botao prim">+ Novo NPC</span></div>
+    <div class="corpo">
+      <div class="ferr" style="gap:10px">
+        <div class="entrada" style="width:320px">Buscar por nome, id, fala ou item vendido…</div>
+        <div class="entrada" style="width:170px">Tipo: todos ▾</div>
+        <div class="entrada" style="width:170px">Mapa: todos ▾</div>
+      </div>
+      <div class="chips">
+        <span class="pilula ouro">Todos 2.140</span><span class="pilula">Lojas</span><span class="pilula">Produção</span><span class="pilula">Teleporte</span><span class="pilula">Missões</span><span class="pilula">Armazém</span><span class="pilula">Mascote</span><span class="pilula">Treinadores</span><span class="pilula">Guardas</span><span class="pilula">Sem serviço</span><span class="pilula">Sem spawn</span>
+      </div>
+      <table class="tabela">
+        <thead><tr><th>Nome</th><th>Id</th><th>Tipo</th><th>Serviços</th><th>Onde está</th><th>Conversa</th></tr></thead>
+        <tbody>
+          <tr class="sel"><td><b>Ferreiro da Cidade</b></td><td class="num">8701</td><td>Comerciante</td><td><div class="chips"><span class="pilula">Loja</span><span class="pilula">Produção</span><span class="pilula">Reparo</span></div></td><td>Mapa 1 · 1 ponto</td><td><span class="pilula verde">própria</span></td></tr>
+          <tr><td>Guia de Teleporte</td><td class="num">8712</td><td>Transportador</td><td><div class="chips"><span class="pilula">Teleporte</span></div></td><td>Mapa 1 · 3 pontos</td><td><span class="pilula">padrão</span></td></tr>
+          <tr><td>Mestre dos Mascotes</td><td class="num">8730</td><td>Treinador</td><td><div class="chips"><span class="pilula">Mascote ×3</span><span class="pilula">Chocar ovo</span></div></td><td>Mapa 1 · 1 ponto</td><td><span class="pilula verde">própria</span></td></tr>
+          <tr><td>Avaliador de Relíquias</td><td class="num">8744</td><td>Comerciante</td><td><div class="chips"><span class="pilula">Avaliar</span></div></td><td><span class="pilula verm">sem spawn</span></td><td><span class="pilula">padrão</span></td></tr>
+        </tbody>
+      </table>
+      <span class="nota">Linhas de exemplo. "Própria" = o NPC tem serviço de fala com conversa; "padrão" = só a fala inicial e os botões dos serviços.</span>
+    </div>
+  </div></div>
+</section>
+
+<!-- 3 -->
+<section class="secao">
+  <h2><span class="n">3</span>Tela do NPC</h2>
+  <p>Cabeçalho fixo com o nome, o id, a prévia pequena do modelo e o estado do rascunho. Cinco abas; a contagem ao lado de cada uma mostra o que já está preenchido.</p>
+
+  <h3>3.1 Ficha</h3>
+  <div class="rolagem"><div class="janela">
+    <div class="barra"><span class="marca">Estúdio</span><span class="migalha">NPCs › Ferreiro da Cidade <span class="mono">#8701</span></span><span class="esp"></span><span class="pilula ouro">alterado no rascunho</span><span class="botao">Abrir nos Editores</span><span class="botao prim">Gravar</span></div>
+    <div class="abas"><span class="on">Ficha</span><span>Onde fica<span class="cont">1</span></span><span>Conversa<span class="cont">4</span></span><span>Serviços<span class="cont">3</span></span><span>Missões<span class="cont">2</span></span></div>
+    <div class="corpo" style="grid-template-columns: 1fr 1fr; align-items:start">
+      <div style="display:grid; gap:14px">
+        <div class="box"><div class="tit"><span class="marca-n">1</span>Principal</div>
+          <div class="grade2">
+            <label class="campo">Nome (32 unidades)<span class="entrada">Ferreiro da Cidade</span></label>
+            <label class="campo">Tipo (NPC_TYPE)<span class="entrada">Comerciante ▾</span></label>
+          </div>
+          <label class="campo">Fala inicial — hello_msg (até 256)<span class="entrada area">Bem-vindo! <span style="color:#ffcc33">Armas novas</span> chegaram hoje. Precisa de reparo?</span></label>
+          <span class="nota">Editor de texto com cor, o mesmo da aba Conversa. Prévia como no jogo ao lado.</span>
+        </div>
+        <div class="box"><div class="tit"><span class="marca-n">2</span>Comportamento</div>
+          <div class="grade3">
+            <label class="campo">Renasce (refresh_time)<span class="entrada">30 s</span></label>
+            <label class="campo">Pode ser atacado<span class="entrada">Não ▾</span></label>
+            <label class="campo">Imposto (tax_rate)<span class="entrada">0,00</span></label>
+          </div>
+          <div class="grade2">
+            <label class="campo">Luta como (id_src_monster)<span class="entrada">— nenhum — <span class="botao peq">escolher</span></span></label>
+            <label class="campo">Descobre (id_to_discover)<span class="entrada">— nenhum —</span></label>
+          </div>
+          <div class="chips"><span class="pilula">Território do clã (domain_related)</span><span class="pilula">Sem colisão (no_collision)</span><span class="pilula">Mina anexa (id_mine)</span></div>
+          <span class="nota">Cada campo com a explicação do que o servidor faz, como em Monstros (texto vem de <code>lib/npc.ts</code> com a evidência).</span>
+        </div>
+      </div>
+      <div class="box"><div class="tit"><span class="marca-n">3</span>Modelo 3D e animações<span class="esp"></span><span class="botao peq">Trocar modelo</span><span class="botao peq">Exportar GLB</span><span class="botao peq">Importar GLB</span></div>
+        <div class="palco">
+          <svg viewBox="0 0 120 180" aria-hidden="true"><ellipse cx="60" cy="170" rx="34" ry="6" fill="rgba(0,0,0,.35)"/><circle cx="60" cy="30" r="15" fill="#c9a874"/><rect x="38" y="48" width="44" height="64" rx="12" fill="#6b4d2e"/><rect x="42" y="110" width="15" height="56" rx="6" fill="#3e2f22"/><rect x="63" y="110" width="15" height="56" rx="6" fill="#3e2f22"/><rect x="22" y="52" width="14" height="52" rx="7" fill="#6b4d2e"/><rect x="84" y="52" width="14" height="52" rx="7" fill="#6b4d2e"/><rect x="92" y="90" width="6" height="40" rx="2" fill="#9aa4ad"/></svg>
+          <div class="ctl"><span class="botao peq">▶ Parado → Ocioso</span><span class="botao peq">Girar</span></div>
+        </div>
+        <span class="nota"><b>O que ele faz em cada ação</b> — escolha a animação do esqueleto que toca em cada uma:</span>
+        <div class="acoes">
+          <div class="acao on"><span>Parado</span><span class="entrada">站立 · parado com martelo ▾</span><span class="botao peq">▶ ver</span></div>
+          <div class="acao on"><span>Ocioso 1</span><span class="entrada">休闲1 · bate na bigorna ▾</span><span class="botao peq">▶ ver</span></div>
+          <div class="acao on"><span>Ocioso 2</span><span class="entrada">休闲2 · olha em volta ▾</span><span class="botao peq">▶ ver</span></div>
+          <div class="acao"><span>Andar · Correr</span><span class="entrada">só se ele anda (patrulha) ▾</span><span class="botao peq">▶ ver</span></div>
+          <div class="acao"><span>Atacar · Morrer</span><span class="entrada">só se pode ser atacado ▾</span><span class="botao peq">▶ ver</span></div>
+        </div>
+        <span class="nota">O cliente deixa o NPC em <b>Parado</b> e a cada <b>25 s</b> sorteia Ocioso 1 ou 2, depois volta ao Parado (<code>EC_NPC.cpp:367, 1907-1922</code>; <code>EC_NPCModel.cpp:722-727</code>). As ações de fala (CHAT) não são tocadas pelo cliente e não aparecem. Os nomes chineses das ações vêm do <code>actions_npc.txt</code> (a levantar: <code>pedidos_de_npc</code>, como o de monstro). Os rótulos das animações acima são exemplos.</span>
+      </div>
+    </div>
+  </div></div>
+  <div class="legenda">
+    <div><i>1</i>Nome e fala inicial com o editor de cor. A fala é o texto da janela do NPC antes dos botões.</div>
+    <div><i>2</i>Campos com significado na tela; o que a versão não tem (v7) some sozinho.</div>
+    <div><i>3</i>Reaproveita o card de modelo dos Monstros. A "animação de ocioso" é trocar a base de Parado e de Ocioso 1/2; o botão ▶ toca a sequência que o jogador verá.</div>
+  </div>
+
+  <h3>3.2 Onde fica</h3>
+  <div class="rolagem"><div class="janela">
+    <div class="abas"><span>Ficha</span><span class="on">Onde fica<span class="cont">1</span></span><span>Conversa</span><span>Serviços</span><span>Missões</span></div>
+    <div class="corpo" style="grid-template-columns: 1fr 300px; align-items:start">
+      <div class="mapa">
+        <svg viewBox="0 0 600 330" preserveAspectRatio="none" aria-hidden="true">
+          <circle cx="250" cy="170" r="34" fill="rgba(227,182,91,.12)" stroke="rgba(227,182,91,.5)" stroke-dasharray="4 4"/>
+          <line x1="250" y1="170" x2="292" y2="140" stroke="#e3b65b" stroke-width="3"/>
+          <circle cx="292" cy="140" r="7" fill="#0b0f14" stroke="#e3b65b" stroke-width="2"/>
+          <circle cx="250" cy="170" r="9" fill="#e3b65b" stroke="#0b0f14" stroke-width="2"/>
+          <circle cx="410" cy="230" r="5" fill="#6aa7ff"/><circle cx="160" cy="90" r="5" fill="#6aa7ff"/><circle cx="470" cy="110" r="5" fill="#6aa7ff"/>
+        </svg>
+        <div class="zoom"><span class="botao peq">+</span><span class="botao peq">−</span></div>
+        <div class="coord">x 512,4 · z −1.204,8 · chão 221,3 · direção 54°</div>
+      </div>
+      <div style="display:grid; gap:12px">
+        <div class="box"><div class="tit">Pontos deste NPC<span class="esp"></span><span class="botao peq">+ Ponto</span></div>
+          <div class="no sel"><span class="tp">Mapa 1 · ponto 1</span>x 512,4 · z −1.204,8</div>
+          <span class="nota">Um NPC pode estar em mais de um lugar. Novo ponto = clone de uma área de NPC do mapa com só este NPC.</span>
+        </div>
+        <div class="box"><div class="tit">Ponto selecionado</div>
+          <div class="grade2"><label class="campo">X<span class="entrada">512,4</span></label><label class="campo">Z<span class="entrada">−1.204,8</span></label></div>
+          <div class="grade2"><label class="campo">Altura (chão pelo .hmap)<span class="entrada">221,3 <span class="pilula">auto</span></span></label><label class="campo">Direção<span class="entrada">54° ↗</span></label></div>
+          <span class="nota"><b>Clique</b> põe o ponto; <b>arrastar a bolinha</b> da seta gira o NPC. Pontos azuis = outros NPCs por perto, para não empilhar. Grava <code>vPos</code> e <code>vDir</code> da área no npcgen, no rascunho.</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <p class="nota">A levantar: como o GS e o cliente usam o <code>vDir</code> de uma área de NPC (<code>npcgenerator.cpp</code> e a direção que vai no S2C do NPC) e se o nosso <code>pw-gs</code> já repassa essa direção. Até lá, a direção é gravada mas marcada "falta ver em jogo".</p>
+
+  <h3>3.3 Conversa — o diferencial</h3>
+  <p>Três colunas: à esquerda o <b>fluxo</b> (tudo o que o jogador pode ver, começando pela janela do NPC), no meio o <b>editor</b> da janela escolhida, à direita a <b>prévia</b> como o jogo desenha, em que dá para clicar nos botões e navegar.</p>
+  <div class="rolagem"><div class="janela">
+    <div class="abas"><span>Ficha</span><span>Onde fica</span><span class="on">Conversa<span class="cont">4</span></span><span>Serviços</span><span>Missões</span></div>
+    <div class="corpo">
+      <div class="tres">
+        <div class="box"><div class="tit"><span class="marca-n">1</span>Fluxo<span class="esp"></span><span class="botao peq">+ Janela</span></div>
+          <div class="fluxo">
+            <div class="no"><span class="tp">Janela do NPC</span>Fala inicial + botões</div>
+            <div class="no recuo1 serv"><span class="tp">botão · serviço de fala</span>"Conversar"</div>
+            <div class="no recuo2 sel"><span class="tp">janela 1 · raiz</span>"Sou ferreiro há 40 anos…"</div>
+            <div class="no recuo2"><span class="tp">janela 2</span>"O minério vem da mina…"</div>
+            <div class="no recuo1 serv"><span class="tp">botão · loja</span>"Comprar armas"</div>
+            <div class="no recuo2"><span class="tp">antes de abrir (id_dialog)</span>"Só aceito moedas!"</div>
+            <div class="no recuo1 serv"><span class="tp">botão · produção</span>"Forjar"</div>
+            <div class="no recuo1 serv"><span class="tp">botão · reparo</span>"Consertar"</div>
+          </div>
+          <span class="nota">Tracejado = botão que vem de um serviço. A ordem desses botões é fixa no cliente; o texto é o nome do serviço.</span>
+        </div>
+
+        <div class="box"><div class="tit"><span class="marca-n">2</span>Janela 1 · texto<span class="esp"></span><span class="pilula">conversa #3120</span></div>
+          <div class="ferr">
+            <div class="paleta" id="paleta" aria-label="Cores">
+              <button type="button" data-cor="ffffff" style="background:#ffffff" aria-label="Branco"></button>
+              <button type="button" data-cor="ffcc33" style="background:#ffcc33" aria-label="Ouro"></button>
+              <button type="button" data-cor="ff6666" style="background:#ff6666" aria-label="Vermelho"></button>
+              <button type="button" data-cor="66ff99" style="background:#66ff99" aria-label="Verde"></button>
+              <button type="button" data-cor="66ccff" style="background:#66ccff" aria-label="Azul"></button>
+              <button type="button" data-cor="cc99ff" style="background:#cc99ff" aria-label="Lilás"></button>
+            </div>
+            <button type="button" id="tirar">Tirar cor</button>
+            <span class="nota">Selecione um trecho e clique numa cor.</span>
+          </div>
+          <textarea class="editor" id="txt" aria-label="Texto da janela" spellcheck="false">Sou ferreiro há 40 anos. Minhas lâminas de ^ffcc33Ferro Celeste^ffffff são as melhores da cidade. Traga ^66ff99minério^ffffff e eu forjo para você.</textarea>
+          <div class="ferr" style="justify-content:space-between"><span class="nota">Os códigos <code>^RRGGBB</code> ficam no arquivo e contam no limite.</span><span class="contador" id="cont"></span></div>
+
+          <div class="tit" style="font-weight:600; font-size:13px; display:flex; gap:8px"><span class="marca-n">3</span>Botões desta janela</div>
+          <div class="opcoes">
+            <div class="opcao"><span class="pega">⋮⋮</span><span>De onde vem o minério?</span><span class="entrada">→ janela 2 ▾</span><span class="contador">22/63</span></div>
+            <div class="opcao"><span class="pega">⋮⋮</span><span>^ffcc33Quero forjar</span><span class="entrada">abre: Produção ▾</span><span class="contador">19/63</span></div>
+            <div class="opcao"><span class="pega">⋮⋮</span><span>Aceitar a missão</span><span class="entrada">dá missão: 2104 ▾</span><span class="contador">16/63</span></div>
+            <div class="opcao"><span class="pega">⋮⋮</span><span>Até mais</span><span class="entrada">fechar ▾</span><span class="contador">8/63</span></div>
+          </div>
+          <span class="nota">O destino é uma lista: outra janela, uma função do jogo (loja, produção, dar/entregar missão, voltar, fechar…, do <code>enum SERVICE_TYPE</code>) com o parâmetro dela, ou "nova janela".</span>
+        </div>
+
+        <div class="box"><div class="tit"><span class="marca-n">4</span>Prévia do jogo</div>
+          <div class="jogo">
+            <div class="cab"><span>Ferreiro da Cidade</span><span>✕</span></div>
+            <div class="txt" id="previa"></div>
+            <ul>
+              <li class="ativo">De onde vem o minério?</li>
+              <li><span style="color:#ffcc33">Quero forjar</span></li>
+              <li>Aceitar a missão</li>
+              <li>Até mais</li>
+            </ul>
+          </div>
+          <span class="nota">A prévia muda enquanto você digita. Clicar num botão leva à janela de destino no fluxo. Os botões de serviço da janela do NPC aparecem na ordem real do cliente.</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="legenda">
+    <div><i>1</i>O fluxo junta a janela do NPC, as conversas do serviço de fala e as conversas "antes de abrir" de cada serviço. Arrastar reorganiza a árvore.</div>
+    <div><i>2</i>Editor com paleta: a cor vira <code>^RRGGBB</code> no texto, como o cliente lê (<code>AUICommon.cpp:870-910</code>). O contador conta as unidades reais, códigos inclusive.</div>
+    <div><i>3</i>Botões com 63 caracteres no máximo (64 com o fim, <code>conversas.rs</code>). Arrastar pela alça muda a ordem.</div>
+    <div><i>4</i>Janela do jogo sempre escura, como no cliente. É o "ver antes de publicar".</div>
+  </div>
+
+  <h3>3.4 Serviços do NPC</h3>
+  <p>Todas as vagas de serviço que o NPC tem no arquivo, agrupadas pelo que fazem, com o que está ligado, o resumo e o aviso quando o serviço é compartilhado. Vincular abre o modal de serviços já filtrado na categoria da vaga.</p>
+  <div class="rolagem"><div class="janela">
+    <div class="abas"><span>Ficha</span><span>Onde fica</span><span>Conversa</span><span class="on">Serviços<span class="cont">3</span></span><span>Missões</span></div>
+    <div class="corpo">
+      <div class="grupos">
+        <div class="box"><div class="tit">Comércio</div>
+          <div class="vaga"><span class="tp">Loja</span><span class="acoesv"><span class="botao peq">Editar</span><span class="botao peq">Trocar</span><span class="botao peq">✕</span></span><b>Armas do Ferreiro · #511</b></div>
+          <div class="nota" style="margin-top:-6px">3 abas · 74 itens · <span style="color:var(--azul)">usado por 6 NPCs</span></div>
+          <div class="vaga vazia"><span class="tp">Comprar do jogador</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+          <div class="vaga"><span class="tp">Reparo</span><span class="acoesv"><span class="botao peq">Trocar</span><span class="botao peq">✕</span></span><b>Consertar · #12</b></div>
+          <div class="vaga vazia"><span class="tp">Consignação</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+        </div>
+        <div class="box"><div class="tit">Fabricação e pedras</div>
+          <div class="vaga"><span class="tp">Produção</span><span class="acoesv"><span class="botao peq">Editar</span><span class="botao peq">Trocar</span><span class="botao peq">✕</span></span><b>Forja de Armas · #530</b></div>
+          <div class="nota" style="margin-top:-6px">habilidade Forja · 2 abas · 41 receitas · <span class="pilula verde">servidor atende</span></div>
+          <div class="vaga vazia"><span class="tp">Decompor</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+          <div class="vaga vazia"><span class="tp">Incrustar · Retirar</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+          <div class="vaga vazia"><span class="tp">Avaliar</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+        </div>
+        <div class="box"><div class="tit">Viagem, personagem e mascote</div>
+          <div class="vaga vazia"><span class="tp">Teleporte</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio · <span style="color:var(--vermelho)">servidor ainda não atende</span></b></div>
+          <div class="vaga vazia"><span class="tp">Armazém</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+          <div class="vaga vazia"><span class="tp">Habilidades</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+          <div class="vaga vazia"><span class="tp">Mascote: nome · aprender · esquecer</span><span class="acoesv"><span class="botao peq">+ Vincular</span></span><b>vazio</b></div>
+        </div>
+      </div>
+      <div class="box"><div class="tit">Serviços simples (sem configuração — só ligar)<span class="esp"></span><span class="nota">combined_services · ExpTypes.h:3763-3775</span></div>
+        <div class="grade3">
+          <div><div class="chave"><span class="bit">bit 1</span><span class="sw on"></span>Furar equipamento</div><div class="chave"><span class="bit">bit 6</span><span class="sw"></span>Correio</div><div class="chave"><span class="bit">bit 7</span><span class="sw"></span>Leilão</div></div>
+          <div><div class="chave"><span class="bit">bit 9</span><span class="sw"></span>Chocar ovo de mascote</div><div class="chave"><span class="bit">bit 10</span><span class="sw"></span>Restaurar mascote em ovo</div><div class="chave"><span class="bit">bit 14</span><span class="sw"></span>Refinar equipamento</div></div>
+          <div><div class="chave"><span class="bit">bit 15</span><span class="sw"></span>Tingir</div><div class="chave"><span class="bit">bit 5</span><span class="sw"></span>Cirurgia (rosto)</div><div class="chave"><span class="bit">bit 4</span><span class="sw"></span>Clã</div></div>
+        </div>
+        <span class="nota">Lista completa (32 + 28 do segundo campo no 1.5.5) com busca, nome em português e "servidor atende / não atende". Cada um vira uma linha fixa na janela do NPC (<code>DlgNPC.cpp:448-620</code>).</span>
+      </div>
+      <div class="ferr"><span class="botao">Abrir a área Serviços</span><span class="nota">Atalho: abre o mesmo editor em tela cheia, em outra aba, já no serviço escolhido.</span></div>
+    </div>
+  </div></div>
+
+  <h3>3.5 Missões do NPC</h3>
+  <p>Atalho para a área Missões: três listas (as que ele dá, as que ele recebe, os itens de missão que ele entrega). Cada missão abre a ficha da missão num painel lateral; "Abrir em Missões" leva para a área inteira.</p>
+  <div class="rolagem"><div class="janela">
+    <div class="abas"><span>Ficha</span><span>Onde fica</span><span>Conversa</span><span>Serviços</span><span class="on">Missões<span class="cont">2</span></span></div>
+    <div class="corpo" style="grid-template-columns: 1fr 1fr 1fr; align-items:start">
+      <div class="box"><div class="tit">Dá a missão<span class="esp"></span><span class="botao peq">+ Missão</span></div>
+        <div class="resultado on"><div class="l1"><b>O minério perdido</b><span class="mono">#2104</span></div><span class="nota">nível 12 · matar 10 Lobos · 3 etapas</span><div class="chips"><span class="botao peq">Editar aqui</span><span class="botao peq">Abrir em Missões</span></div></div>
+        <div class="resultado"><div class="l1"><b>Martelo do aprendiz</b><span class="mono">#2105</span></div><span class="nota">nível 14 · coletar 5 Minérios</span></div>
+        <span class="nota">Serviço "Dar missão" #640 · 2 de 256 vagas</span>
+      </div>
+      <div class="box"><div class="tit">Recebe (entrega)<span class="esp"></span><span class="botao peq">+ Missão</span></div>
+        <div class="resultado"><div class="l1"><b>Carta para o ferreiro</b><span class="mono">#1988</span></div><span class="nota">dada pelo Guarda do Portão</span></div>
+        <span class="nota">Serviço "Receber missão" #641</span>
+      </div>
+      <div class="box"><div class="tit">Itens de missão<span class="esp"></span><span class="botao peq">+ Item</span></div>
+        <div class="linha-mat"><span class="slot"><i style="background:#7a5b33"></i></span><span>Martelo emprestado → missão #2105</span><span class="mono">×1</span></div>
+        <span class="nota">Serviço "Item de missão" · até 144 linhas</span>
+      </div>
+    </div>
+  </div></div>
+  <p class="nota">As falas da missão (oferecer, sem requisito, em andamento, entregar) também são conversas no mesmo formato (<code>talk_proc</code> dentro do <code>tasks.data</code>) e abrem no mesmo editor de conversa da aba 3.3. Adicionar uma missão aqui grava o serviço de missão do NPC; a missão em si é gravada pela área Missões.</p>
+</section>
+
+<!-- 4 -->
+<section class="secao">
+  <h2><span class="n">4</span>Modal de serviços</h2>
+  <p>Abre por cima do NPC (ou ocupa a tela na área Serviços). Esquerda: categorias com contagem. Meio: busca e resultados com resumo e quantos NPCs usam cada um. Direita: o editor do serviço escolhido. Rodapé: vincular ao NPC aberto.</p>
+  <div class="rolagem"><div class="janela" style="background:transparent; border:0">
+    <div class="fundo-modal">
+      <div class="modal">
+        <div class="barra"><span class="marca">Serviços</span><span class="migalha">vinculando a: Ferreiro da Cidade #8701 · vaga Loja</span><span class="botao peq">✕</span></div>
+        <div class="m3">
+          <div>
+            <div class="entrada">Buscar serviço…</div>
+            <span class="cat-grupo">Comércio</span>
+            <span class="cat on">Lojas<span class="q">412</span></span>
+            <span class="cat">Comprar do jogador<span class="q">3</span></span>
+            <span class="cat">Reparo<span class="q">2</span></span>
+            <span class="cat">Consignação<span class="q">2</span></span>
+            <span class="cat-grupo">Fabricação</span>
+            <span class="cat">Produção (forja)<span class="q">96</span></span>
+            <span class="cat">Decompor<span class="q">4</span></span>
+            <span class="cat">Avaliar<span class="q">2</span></span>
+            <span class="cat-grupo">Viagem</span>
+            <span class="cat">Teleporte<span class="q">58</span></span>
+            <span class="cat-grupo">Mascote</span>
+            <span class="cat">Nome · aprender · esquecer<span class="q">9</span></span>
+            <span class="cat">Chocar / restaurar ovo<span class="q">simples</span></span>
+            <span class="cat-grupo">Outros</span>
+            <span class="cat">Habilidades, cura, armazém…<span class="q">…</span></span>
+          </div>
+          <div>
+            <div class="ferr"><div class="entrada" style="flex:1">espada</div><span class="pilula">em uso</span><span class="pilula">sem uso</span></div>
+            <div class="resultado on"><div class="l1"><b>Armas do Ferreiro</b><span class="mono">#511</span></div><span class="nota">3 abas · 74 itens · usado por 6 NPCs</span></div>
+            <div class="resultado"><div class="l1"><b>Espadas Lendárias</b><span class="mono">#518</span></div><span class="nota">1 aba · 12 itens · usado por 1 NPC</span></div>
+            <div class="resultado"><div class="l1"><b>Loja de Espadas (velha)</b><span class="mono">#402</span></div><span class="nota">2 abas · 40 itens · <span style="color:var(--texto-3)">sem uso</span></span></div>
+            <div class="ferr"><span class="botao">+ Novo</span><span class="botao">Duplicar</span></div>
+            <span class="nota">A busca também acha pelo <b>item vendido</b> ("espada" acha lojas que vendem espadas) e pela <b>receita</b> na produção.</span>
+          </div>
+          <div>
+            <div class="ferr" style="justify-content:space-between"><b>Armas do Ferreiro</b><span class="pilula">texto do botão no jogo</span></div>
+            <div class="compartilhado"><span class="pilula azul">6 NPCs</span><span>Este serviço é compartilhado. Ao gravar: <b>mudar em todos</b> ou <b>criar cópia só para este NPC</b>.</span></div>
+            <div class="abas-loja"><span class="on">Espadas</span><span>Lâminas</span><span>Machados</span><span>+ aba</span><span style="border-style:dashed">5 de 8 livres</span></div>
+            <div class="grade2"><label class="campo">Título da aba<span class="entrada">Espadas</span></label><label class="campo">Exige contribuição (v156)<span class="entrada">0</span></label></div>
+            <div class="slots">
+              <span class="slot"><i style="background:linear-gradient(135deg,#b9c3cc,#5f6b75)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#d8b45a,#7c5a1c)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#9ec1ff,#3a5c9b)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#c78f6b,#6e3f22)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#b9c3cc,#5f6b75)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#e07a7a,#7a2a2a)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#9ad7a8,#2f6b40)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#d8b45a,#7c5a1c)"></i></span>
+              <span class="slot"><i style="background:linear-gradient(135deg,#9ec1ff,#3a5c9b)"></i></span><span class="slot"><i style="background:linear-gradient(135deg,#c78f6b,#6e3f22)"></i></span><span class="slot alvo vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span>
+              <span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span>
+              <span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span><span class="slot vazio"></span>
+            </div>
+            <span class="nota"><b>32 vagas por aba, 8 abas.</b> Arraste do seletor de item (o de tabela com filtros, B376) para uma vaga; arraste entre vagas para reordenar; passar o mouse mostra a dica do item com o preço (o preço é do item, não da loja). Clique numa vaga para o custo em contribuição/força (só v156). Arranjo 8×4 a conferir no <code>DlgShop</code> do cliente.</span>
+          </div>
+        </div>
+        <div class="barra" style="border-top:1px solid var(--borda); border-bottom:0"><span class="nota">Alterações vão para o rascunho "npc-novos".</span><span class="esp"></span><span class="botao">Gravar serviço</span><span class="botao prim">Vincular ao Ferreiro da Cidade</span></div>
+      </div>
+    </div>
+  </div></div>
+
+  <h3>O editor muda com a categoria</h3>
+  <div class="variantes">
+    <div class="mini"><h3>Produção (forja)</h3>
+      <div class="grade2"><label class="campo">Habilidade de produção<span class="entrada">Forja de Armas ▾</span></label><label class="campo">Tipo de produção<span class="entrada">produce_type ▾</span></label></div>
+      <div class="abas-loja"><span class="on">Espadas</span><span>Machados</span><span>+ aba</span></div>
+      <span class="nota">8 abas × 32 receitas. Clicar numa receita abre a receita ao lado:</span>
+      <div class="box" style="background:var(--fundo-2)">
+        <div class="tit">Receita: Espada de Ferro Celeste<span class="esp"></span><span class="pilula">usada em 2 serviços</span></div>
+        <span class="nota">Resultado (até 4, chance soma 100% com a falha)</span>
+        <div class="barra-chance"><span style="width:70%; background:var(--verde)"></span><span style="width:20%; background:var(--ouro)"></span><span style="width:10%; background:var(--vermelho)"></span></div>
+        <span class="nota">70% Espada · 20% Espada +1 · 10% falha</span>
+        <span class="nota">Materiais (até 32)</span>
+        <div class="linha-mat"><span class="slot"><i style="background:#7d8896"></i></span><span>Minério de Ferro</span><span class="mono">×8</span></div>
+        <div class="linha-mat"><span class="slot"><i style="background:#6aa7ff"></i></span><span>Pó Celeste</span><span class="mono">×2</span></div>
+        <div class="grade3"><label class="campo">Preço<span class="entrada">1.200</span></label><label class="campo">Tempo<span class="entrada">5 s</span></label><label class="campo">Nível hab.<span class="entrada">3</span></label></div>
+      </div>
+    </div>
+    <div class="mini"><h3>Teleporte <span class="pilula verm">servidor ainda não atende</span></h3>
+      <div class="mapa" style="height:150px">
+        <svg viewBox="0 0 330 150" preserveAspectRatio="none" aria-hidden="true"><path d="M70,110 L170,50 M70,110 L260,95" stroke="#e3b65b" stroke-width="2" stroke-dasharray="5 4" fill="none"/><circle cx="70" cy="110" r="7" fill="#e3b65b"/><circle cx="170" cy="50" r="6" fill="#6aa7ff"/><circle cx="260" cy="95" r="6" fill="#6aa7ff"/></svg>
+      </div>
+      <table class="tabela"><thead><tr><th>Destino</th><th>Custo</th><th>Nível</th></tr></thead><tbody><tr><td>Vila do Porto</td><td class="num">500</td><td class="num">10</td></tr><tr><td>Planície Norte</td><td class="num">800</td><td class="num">20</td></tr></tbody></table>
+      <span class="nota">Até 32 destinos; o destino é um ponto do <code>world_targets.sev</code>, escolhido no mapa.</span>
+    </div>
+    <div class="mini"><h3>Avaliar</h3>
+      <label class="campo">Taxa (fee)<span class="entrada">2.000</span></label>
+      <span class="nota">Taxa negativa = o NPC não avalia (B379, <code>NPC_IDENTIFY_SERVICE.fee</code>). Só um campo: o editor é pequeno e diz isso.</span>
+      <h3 style="margin-top:6px">Chocar / restaurar ovo</h3>
+      <div class="chave"><span class="bit">bit 9</span><span class="sw on"></span>Chocar ovo de mascote</div>
+      <div class="chave"><span class="bit">bit 10</span><span class="sw"></span>Restaurar mascote em ovo</div>
+      <span class="nota">Não têm tabela: são bits do NPC. No modal aparecem na categoria Mascote como "serviço simples"; "Vincular" liga o bit.</span>
+    </div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="secao">
+  <h2><span class="n">5</span>Serviços e Missões fora do NPC</h2>
+  <div class="variantes">
+    <div class="mini"><h3>Área Serviços</h3>
+      <p>O mesmo editor do modal, em tela cheia, aberto pelo cartão da Principal. Sem NPC aberto, o rodapé troca "Vincular" por <b>Usado por</b>: a lista dos NPCs que usam o serviço, cada um com atalho para a ficha, e um botão para ligar o serviço a outro NPC sem sair dali.</p>
+    </div>
+    <div class="mini"><h3>Área Missões</h3>
+      <p>A proposta do §4.4 (lista, cadeia de pré-requisitos, ficha por abas, etapas). A aba "Quem dá e quem recebe" mantém em sincronia os serviços de missão dos NPCs. As falas da missão usam o editor de conversa do NPC.</p>
+    </div>
+    <div class="mini"><h3>Ida e volta</h3>
+      <p>Do NPC para o editor: painel lateral ou nova aba. Do editor de volta: ao criar algo novo, o id volta para a vaga do NPC pelo canal <code>pw-estudio</code> (o mesmo do "Item ligado → Criar").</p>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="secao">
+  <h2><span class="n">6</span>Fatos do original que decidem o desenho</h2>
+  <div class="ref"><table>
+    <thead><tr><th>Fato</th><th>Consequência na tela</th><th>Evidência</th></tr></thead>
+    <tbody>
+      <tr><td>A janela do NPC é a fala inicial mais uma linha por serviço, numa ordem fixa do cliente</td><td>A ordem dos botões de serviço não é editável; a prévia mostra a ordem real</td><td class="ev">DlgNPC.cpp:339-441, 852-1015</td></tr>
+      <tr><td>O texto do botão é o nome do serviço</td><td>"Texto do botão" é editado no serviço, com o aviso de compartilhado</td><td class="ev">DlgNPC.cpp (AddString + pService-&gt;name)</td></tr>
+      <tr><td>Serviço com <code>id_dialog</code> mostra uma conversa antes de abrir</td><td>No fluxo, "antes de abrir" fica pendurado no botão do serviço</td><td class="ev">DlgNPC.cpp:2854-3023</td></tr>
+      <tr><td>Conversa: janelas em árvore, opção de 63 caracteres; bit alto = função do jogo</td><td>Destino do botão: janela, função ou fechar; contador 63</td><td class="ev">ExpTypes.h:3872; conversas.rs (B240)</td></tr>
+      <tr><td>Cor <code>^RRGGBB</code>, <code>^^</code> literal e outros códigos de fonte/sublinhado</td><td>Paleta grava o código; o código ocupa espaço</td><td class="ev">AUICommon.cpp:870-910</td></tr>
+      <tr><td>Parado; a cada 25 s Ocioso 1 ou 2 sorteado; CHAT não é tocado</td><td>Seletores só de Parado, Ocioso 1/2 (e andar/atacar quando cabe)</td><td class="ev">EC_NPC.cpp:367, 1907-1922; EC_NPCModel.cpp:722-727, 912-916</td></tr>
+      <tr><td>Chocar e restaurar ovo são bits 9 e 10, sem tabela</td><td>Interruptores, não editor</td><td class="ev">ExpTypes.h:3763-3768; DlgNPC.cpp (0x200, 0x400)</td></tr>
+      <tr><td>Loja 8×32; produção 8×32 receitas; receita 4 resultados e 32 materiais; teleporte 32 destinos</td><td>Grades e limites das telas</td><td class="ev">specs/elements_layouts/v156.json, v7.json</td></tr>
+      <tr><td>1.2.6 (v7) não tem gravar, atributo aleatório, força, servidor cruzado nem o segundo campo de bits</td><td>Essas vagas e chaves somem no realm 1.2.6</td><td class="ev">v7.json: NPC_ESSENCE com 39 campos (v156: 47)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 7 -->
+<section class="secao">
+  <h2><span class="n">7</span>Fases</h2>
+  <div class="ref"><table>
+    <thead><tr><th>Fase</th><th>Entrega</th><th>A levantar antes</th></tr></thead>
+    <tbody>
+      <tr><td>N1 · Busca e Ficha</td><td>Cartão NPCs, busca com filtros por função, Ficha, modelo com Parado/Ocioso</td><td><code>pedidos_de_npc</code> pelo <code>actions_npc.txt</code></td></tr>
+      <tr><td>N2 · Onde fica</td><td>Mapa com ponto e direção, vários pontos</td><td>Uso do <code>vDir</code> no GS e no S2C do NPC; se o <code>pw-gs</code> repassa</td></tr>
+      <tr><td>N3 · Conversa</td><td>Fluxo, editor com cor, botões com destino, prévia navegável</td><td>Rotas de conversa já existem (B240); falta ligar ao serviço de fala e ao <code>id_dialog</code></td></tr>
+      <tr><td>N4 · Serviços (1)</td><td>Área Serviços + modal; Loja, Avaliar, Reparo, Cura, Armazém, serviços simples; "usado por"</td><td>Arranjo da loja no <code>DlgShop</code>; índice reverso serviço → NPCs</td></tr>
+      <tr><td>N5 · Serviços (2)</td><td>Produção com receitas, Teleporte, Habilidades, Mascote, demais</td><td>Quais o servidor atende (spec 05: teleporte, forja de NPC e decompor em <code>falta</code>)</td></tr>
+      <tr><td>N6 · Missões</td><td>Área Missões (§4.4) e o atalho da aba Missões do NPC</td><td>Escritor de <code>tasks.data</code> por campo; falas da missão no editor de conversa</td></tr>
+    </tbody>
+  </table></div>
+  <p class="nota">Registrado em <code>docs/admin/ESTUDIO_DO_PAINEL.md</code> §9.13. Nada foi implementado ainda.</p>
+</section>
+
+</div>
+
+<script>
+(function () {
+  var txt = document.getElementById("txt");
+  var previa = document.getElementById("previa");
+  var cont = document.getElementById("cont");
+  // Desenha como o cliente: ^RRGGBB troca a cor; ^^ vira ^; os outros códigos (^U, ^u, ^o, ^N, ^Onnn) não mudam a cor na prévia.
+  function desenhar(s) {
+    previa.textContent = "";
+    var cor = null, buf = "";
+    function sai() { if (!buf) return; var e = document.createElement("span"); if (cor) e.style.color = "#" + cor; e.textContent = buf; previa.appendChild(e); buf = ""; }
+    for (var i = 0; i < s.length; i++) {
+      var c = s[i];
+      if (c !== "^") { buf += c; continue; }
+      var n = s[i + 1];
+      if (n === "^" || n === "&") { buf += n; i++; continue; }
+      if (n === "U") { i += 7; continue; }
+      if (n === "u" || n === "o" || n === "N") { i++; continue; }
+      if (n === "O") { i += 4; continue; }
+      var hex = s.substr(i + 1, 6);
+      if (/^[0-9a-fA-F]{6}$/.test(hex)) { sai(); cor = hex.toLowerCase() === "ffffff" ? null : hex; i += 6; continue; }
+      buf += c;
+    }
+    sai();
+  }
+  function atualizar() {
+    var s = txt.value;
+    desenhar(s);
+    cont.textContent = s.length + " unidades (com os códigos)";
+  }
+  document.getElementById("paleta").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button[data-cor]"); if (!b) return;
+    var a = txt.selectionStart, z = txt.selectionEnd, s = txt.value;
+    if (a === z) { txt.value = s.slice(0, a) + "^" + b.dataset.cor + s.slice(a); }
+    else { txt.value = s.slice(0, a) + "^" + b.dataset.cor + s.slice(a, z) + "^ffffff" + s.slice(z); }
+    txt.focus(); atualizar();
+  });
+  document.getElementById("tirar").addEventListener("click", function () {
+    var a = txt.selectionStart, z = txt.selectionEnd, s = txt.value;
+    if (a === z) { a = 0; z = s.length; }
+    txt.value = s.slice(0, a) + s.slice(a, z).replace(/\^[0-9a-fA-F]{6}/g, "") + s.slice(z);
+    atualizar();
+  });
+  txt.addEventListener("input", atualizar);
+  atualizar();
+})();
+</script>

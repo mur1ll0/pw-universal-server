@@ -17986,3 +17986,108 @@ comparação lado a lado.
     - Atrás de proxy HTTPS: `PAINEL_URL` fixa no `docker/.env`; o `verificar_origem` usa `requisicao.url.scheme`, que sem
       `--proxy-headers` no uvicorn sai `http` — conferir quando houver proxy.
     - Launcher 32 bits não recompilado (`compilar.ps1 -Bits 32`).
+
+392. **Sessão 2026-11-03: proposta desenhada do NPC no Estúdio, com Serviços e Missões como áreas próprias (B392, sem código).**
+
+    ### a. Pedido
+    - NPC no padrão das telas do Estúdio (busca, ficha, modelo 3D e animação de ocioso, ponto e rotação no mapa) com o
+      diferencial do editor de conversa (cores, botões) e dos serviços (loja, forja, avaliação, chocar ovo…) num modal de
+      busca/edição/criação/vínculo. Na mesma sessão: Serviços e Missões ganham botão próprio no Estúdio, com atalho no NPC.
+
+    ### b. Evidência levantada
+    - Menu do NPC = `hello_msg` + uma linha por serviço na ordem fixa do cliente, texto = `Name` do serviço
+      (`DlgNPC.cpp:339-441, 852-1015`); bits do `combined_services` (`ExpTypes.h:3763-3775`; chocar ovo = bit 9,
+      restaurar = bit 10; `DlgNPC.cpp:448-620`); `id_dialog` mostra conversa antes do serviço (`DlgNPC.cpp:2854-3023`).
+    - Cor `^RRGGBB` e demais códigos (`AUInterface/AUICommon.cpp:870-910`); opção de conversa com 63 caracteres
+      (`conversas.rs::texto_fixo`).
+    - NPC parado toca `ACT_NPC_STAND` e a cada 25 s `ACT_NPC_IDLE1/2` sorteado (`EC_NPC.cpp:367, 1907-1922`;
+      `EC_NPCModel.cpp:722-727`); CHAT não é tocado (`EC_NPCModel.cpp:912-914`).
+    - Limites dos serviços pelos layouts v156/v7 (loja 8×32, produção 8×32, receita 4 resultados/32 materiais,
+      teleporte 32, missões 256/256/144); `hello_msg` 512 B; v7 com 39 campos no `NPC_ESSENCE` (v156: 47).
+
+    ### c. Entregue
+    - `docs/admin/ESTUDIO_DO_PAINEL.md` §9.13 (proposta, evidência, a levantar, fases N1–N6) e a página desenhada
+      `docs/admin/estudio_npc_proposta.html` (publicada como artefato "Estúdio de NPC").
+
+    ### d. Falta
+    - Aprovação do Murillo e a ordem das fases. A levantar: `pedidos_de_npc`, uso do `vDir` do spawn de NPC no GS/cliente,
+      arranjo da loja no `DlgShop`, índice reverso serviço → NPCs.
+
+    ### e. Implementação (mesmo dia, aprovada pelo Murillo: "pode implementar todo o plano")
+    - **Servidor (`pw-recursos`):** `ecm::pedidos_de_npc` (as ações `ACT_NPC_*`, `EC_NPC.cpp`/`EC_NPCModel.cpp`; teste com a
+      tabela inteira do cliente BR: 站立, 休闲动作1/2, 行走, 跑动, 攻击起/落, 死亡, 受伤叠加→受伤, 出生, 消失); `npc=true` na ficha
+      do modelo; nomes legíveis novos; `Estudio::servicos` (`GET estudio/servicos/{T}`: quantos NPCs usam, resumo, busca
+      pelo item listado, filtro de uso) e `Estudio::missoes_resumo` (`GET estudio/missoes_resumo?ids&npc`); painel Python
+      repassa as duas e o `npc`.
+    - **Estúdio:** NPC em 5 abas (`telas/EdicaoNpc.svelte`), busca por função (`ModalBuscaDeNpc`), ponto e direção
+      (`BoxDePontosDoNpc`, `ModalMapa` com `comDirecao`: grava `vDir` e zera `vExts`, que é o que faz o GS usar a direção
+      — `npcgenerator.cpp:4348-4367`, `pw-gs::entity::direcao_do_gerador`), conversa (`EditorDeConversa`, cores
+      `^RRGGBB` pela regra do `AUICommon.cpp:870-910`), serviços (`PainelDeServicos`/`EditorDeServico`/`EditorDeReceita`,
+      regra da receita `player.cpp:16419-16423`) e missões (`FichaDaMissao`, `lib/missao.ts`); áreas próprias
+      `#/servicos` e `#/missoes`.
+    - **Achados:** v7 com a vaga `id_cross_server_service` sem a tabela; catálogo de referências sem `cita` nas vagas de
+      missão do NPC no 1.2.6 (a tela acha pela tabela da vaga); chave duplicada na lista de ações do modelo (ataque com
+      `起`/`落` no mesmo índice — erro no modo de desenvolvimento, linha reaproveitada no build; corrigido também para os
+      Monstros); spec 05 dizia que teleporte, pedras, forja e item de missão faltavam (corrigido).
+    - **Provas:** vitest 90/0 (marcação, conversa, missão, npc, serviços), svelte-check 0/0, `vite build` ok;
+      `pw-data-loader --lib ecm` 8/0; `pw-recursos --lib` 26/0; painel Python `teste_recursos` 14/0 (no contêiner, schema
+      `test`); `pw-recursos --test estudio` com o banco: as asserções novas (serviços, missões_resumo, `npc=true`) passam e
+      o teste quebra adiante na Loja Gold (espera 668 ofertas; o `gshop.data` do 1.2.6 tem 670, arquivo de 01/11 23:12 —
+      anterior). Navegador (Vite dev → painel publicado): NPC 3517 (ficha, ponto 204°), Domesticadora Rilay (janela do
+      NPC na ordem do cliente, conversa 3317), missão 1173 (diálogos), busca Lojas+Treinadores = 11.
+    - **Falta:** publicar `pw-recursos` e o painel (as rotas novas e o `npc=true` só existem depois) e ver no navegador o
+      painel de serviços; o teste da Loja Gold precisa do número novo (ou do arquivo antigo) — decisão do Murillo.
+
+    ### f. Publicação (2026-11-03)
+    - `pw-recursos` 11:40→11:46; painel 11:49→11:52 e de novo 12:01 (90/90 no build). O primeiro build do painel falhou:
+      o teste da conversa lê `specs/estudio/funcoes_de_conversa.json`, que o Dockerfile não copiava — acrescentado ao
+      `web-admin/backend/Dockerfile`.
+    - Conferido nas rotas publicadas (de dentro do contêiner do painel, API administrativa :8101): `servicos/NPC_SELL_SERVICE`
+      83 em uso, a mais usada ("Produtos à Venda") em 56 NPCs; `missoes_resumo` 1173 com os 8 que o 3517 entrega;
+      `modelos/ficha?npc=true` do `女npc8`: Parado, Ocioso 1 e 2 presentes, o resto ausente — por isso, no NPC, as ações
+      que não sejam parado/ocioso passaram a "opcional" (nascer só toca se existir, `EC_NPC.cpp:638-639`).
+
+393. **Sessão 2026-11-03: ajustes do NPC e dos Serviços pelo teste do Murillo no painel (B393).**
+    - **Pedido:** o Murillo testou o G-Shop do Estúdio no painel e aprovou (B385 → testado). No NPC/Serviços: (1) a
+      grade da forja "Itens Jurássicos" (id 15963) mostrava `???` sem ícone e sem a dica do item; (2) a aba Serviços do
+      Bocchinelson (NPC 15967) misturava o que ele tem com as vagas vazias; (3) o modelo 3D não subia nem descia e (4) o
+      rosto saía sem textura, no visualizador e no GLB do Blender.
+    - **(1) Receita pelo produto.** No cliente a receita é desenhada com o ícone, o nome e a descrição do item de
+      `targets[0].id_to_make` (`CECIvtrRecipe`: `m_pGenItem1 = CreateItem(targets[0].id_to_make)`, `GetIconFile`/`GetName`
+      devolvem os dele, `EC_IvtrMaterial.cpp:165,200-218`; a forja usa esse ícone, `DlgProduce.cpp:487-496`). O
+      `pw-recursos` passou a mandar `produto` {id, nome, ícone} (`estudio::produto_da_receita`) na referência a receita, na
+      ficha, na lista e na busca do espaço RECIPE (que também acha pelo nome do produto). A grade e o seletor mostram o
+      ícone do produto com a dica do item (`mostrarDica` com o id do produto); o lado mostra o produto e o nome da receita.
+    - **(2) Aba Serviços:** no alto "Serviços deste NPC" (vagas ligadas e bits simples ligados) em cartões de 118 px;
+      embaixo "Vincular", uma caixa de 300 px por categoria, com rolagem; os simples com rolagem a partir de 320 px.
+    - **(3) Visualizador (`lib/glb.ts`, vale para todos):** botão direito, do meio ou Shift + arrastar sobe e desce o ponto
+      que a câmera olha (um pixel = a altura que ele cobre na distância, fov 45°; limite ±2 raios); duplo clique recentra.
+    - **(4) Rosto.** O `bocchi.ski` cita `eyes.dds`, `bocchi2.png`, `body.dds`, `face.tga`; as 4 são achadas em
+      `models\npcs\bocchi\textures`, mas o GLB saía com 3 imagens e 4 materiais. O `face.tga` é **TGA tipo 10 (RLE)**,
+      1024×1024 de 24 bits (cabeçalho `00 00 0a … 00 04 00 04 18 00`), e `imagem::tga` só aceitava o tipo 2.
+      Acrescentado o RLE (pacote com bit 7 = repetição); RLE truncado não decodifica. O GLB do Blender é o mesmo
+      construtor, então a textura vai junto.
+    - **Loja Gold:** o teste `estudio` passou a esperar 670 ofertas (as duas a mais vêm da publicação de 01/11 pelo G-Shop,
+      que o Murillo aprovou).
+    - **Provas:** `pw-data-loader --lib imagem` 5/0 (o RLE novo e os TGA reais do cliente BR); `pw-recursos` com o banco
+      32/0 — o `estudio` inteiro volta a passar; vitest 90/0, svelte-check 0/0. Publicado `pw-admin-api` (90/90 no build)
+      e `pw-recursos` às 13:48. Conferido no publicado: GLB do `bocchi.ecm` com 4 imagens (`face.tga` incluída) e nenhum
+      material sem textura, o mesmo no GLB do Blender (`todas=true`); "Itens Jurássicos" (NPC_MAKE_SERVICE 81): 224 receitas,
+      todas com produto, 54 com ícone; a busca RECIPE por "★Espad" acha pelo nome do produto.
+    - **Dado, não falha:** as outras 170 vagas são a receita 1744 `???`, cujo produto é o 13189 (`MATERIAL_ESSENCE`,
+      `Name` `???`, `file_icon` vazio) — enchimento das abas no `elements` do 1.2.6; no jogo também aparecem sem ícone.
+    - **(5) Ordem da loja no 1.2.6 — layout errado.** O Murillo viu na loja 2241 ("Produtos à Venda") os itens em vagas
+      alternadas, com buracos que o jogo não tem. O cliente não compacta (`CECHostPlayer::FillNPCPack` põe o id `i` na vaga
+      `i`, `EC_HostPlayer.cpp:7587-7611`); o erro era o `NPC_SELL_SERVICE` do v7, cortado do v156 (página com
+      `require_*` e itens de 16 B). O 1.2.6 tem a loja antiga: `ID`, `Name`, 8 × {`page_title[8]`, 32 ids} e `id_dialog`
+      (1224 B, o `sizeof` do gs 1.2.6). Medido no registro 0: título 1 em +68 ("Espadas"), ids 36, 37, 39, 40, 41, 151…
+      logo depois, e o texto "Lanças" em +212 (lido como `goods_8_contrib_cost` = `0x0061004C`…). Corrigido no
+      `generate_v7.py` (que também passou a reproduzir o `combined_services` do B163, antes só no JSON); no `v7.json` só
+      o `NPC_SELL_SERVICE` muda (282 → 267 campos). O GS não lê essa lista; quem lia errado era o Estúdio (grade, "Vendido
+      por", resumo dos serviços) — e gravar uma loja do 1.2.6 pelo Estúdio antes disto mexia em ids pelos campos de custo.
+      Testes: `pw-recursos` 32/0; `pw-data-loader` (`--no-fail-fast`) 282/3 — as 3 do §390, todas dado de realm: foice
+      15964 (`elements.data` do 126), distrito do 161 (`a61/precinct.sev` do 155) e o `gshop` do 126 com 670 ofertas, que
+      passou a esperar 670 (3/0 no `gshop_do_realm`). `pw-recursos` publicado às 14:18; conferido no publicado: a loja
+      2241 com as 7 abas (Espadas, Lanças, Mach., Punhos, Dist., Instr., Munição; 24/18/24/12/18/24/9 itens) — antes o
+      Estúdio via 3 abas e 13 itens em Espadas.
+    - **Commit:** código em `cb6d5fd` (B392 e B393 juntos, na `studio-svelte`); documentação no commit seguinte.

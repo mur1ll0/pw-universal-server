@@ -821,3 +821,56 @@ npcgen: só minas.
 Importar só o modelo / só as animações / tudo (modelo novo em `models\matters\estudio`), Conferir sem gravar, relatório. Os
 outros `file_model*` da tabela (Daimon, arremessável) ficam no Visual 3D só para ver. Fogos são um `.gfx` (não modelo) e
 nada pende no personagem ao usar item.
+
+### 9.13 NPCs, Serviços e Missões (B392, aprovado e implementado em 2026-11-03)
+
+Pedido do Murillo: o NPC no Estúdio, no padrão das outras telas (busca, ficha em boxes, modelo 3D com a animação de
+ocioso, onde nasce num mapa — só ponto e rotação), com o diferencial do **editor de conversa** (textos com cor, botões)
+e dos **serviços** (lojas, forja, avaliação, chocar ovo…). **Serviços e Missões ganham botão próprio na Principal**
+(serviço servido por vários NPCs, missão que não depende de NPC) e, dentro do NPC, um atalho que abre o mesmo editor
+num painel. Página desenhada: artefato "Estúdio de NPC" (link no histórico B392).
+
+**Como o cliente monta o NPC (evidência que decide o desenho):**
+
+| fato | evidência |
+| :--- | :--- |
+| A janela do NPC é o `hello_msg` (até 256 caracteres) + uma linha por serviço ligado, **na ordem fixa do cliente** (fala, loja, compra, incrustar, retirar, habilidade, cura, teleporte, transporte, consignação, armazém, produção, decompor, avaliar, torre, restaurar atributos, mascote ×3, vínculo/destruir ×3, Daimon, gravar, atributo aleatório, força); o **texto do botão é o `Name` do serviço** | `DlgNPC.cpp:339-441` e o laço `:852-1015` |
+| `combined_services` (bits 0–31) e `combined_services2` (só v156) ligam serviços sem tabela: furar (1), clã (4), cirurgia (5), correio (6), leilão (7), **chocar ovo de mascote (9)**, **restaurar ovo (10)**, ouro (13), refino (14), tingir (15)… | `ExpTypes.h:3763-3775`; `DlgNPC.cpp:448-620` |
+| Serviço com `id_dialog` > 0 mostra antes a conversa (`TALK_PROC`); o serviço de fala é só `id_dialog` | `DlgNPC.cpp:2854-3023`; `NPC_TALK_SERVICE` = `ID, Name, id_dialog` |
+| Conversa = janelas em árvore (`id_parent`, -1 raiz) com opções de 64 unidades; opção com o bit alto = função (`SERVICE_TYPE`), senão vai para outra janela | `ExpTypes.h:3872`; `pw_data_loader::conversas` (B240); `specs/estudio/funcoes_de_conversa.json` |
+| Cor no texto: `^RRGGBB`; `^^` é o `^`; `^U`+6 sublinhado com cor, `^u`, `^o`, `^N`, `^Onnn` fonte — **os códigos ocupam as 64 unidades** da opção | `AUInterface/AUICommon.cpp:870-910` |
+| NPC parado toca `ACT_NPC_STAND`; a cada 25 s sorteia `ACT_NPC_IDLE1`/`IDLE2` e volta ao parado; `CHAT1/2/LOOP` não são tocados (−1 na tabela) | `EC_NPC.cpp:367, 1907-1922`; `EC_NPCModel.cpp:722-727, 912-916` |
+| Loja: 8 abas × 32 itens (título, requisito de contribuição/força por aba, custo por item só no v156); produção: `id_make_skill`, `produce_type`, 8 abas × 32 receitas; receita: 4 resultados com chance, 32 materiais; teleporte: 32 destinos (custo, nível) | layouts `specs/elements_layouts/v156.json` e `v7.json` |
+| Missões do NPC: `NPC_TASK_OUT_SERVICE` (dá, 256 + depósito do v156), `NPC_TASK_IN_SERVICE` (recebe, 256), `NPC_TASK_MATTER_SERVICE` (itens de missão, 144); as falas da missão são `talk_proc` do próprio `tasks.data` | layouts; `tasks_editavel.rs` (B266) |
+| Spawn de NPC: área do npcgen com `vPos` e `vDir` | `npcgen_editavel.rs:181` |
+
+**Telas propostas.** NPC com cinco abas: **Ficha** (principal, comportamento, modelo 3D com as ações Parado/Ocioso 1/
+Ocioso 2/Andar/Correr/Atacar/Morrer e o seletor da animação-base, reaproveitando o `ModeloDoMonstro`), **Onde fica**
+(mapa com ponto e seta de direção), **Conversa** (menu inicial como o jogo + fluxo das janelas + editor com cores +
+prévia navegável), **Serviços** (vagas por grupo na ordem do cliente + serviços simples) e **Missões** (dá/recebe/itens).
+Serviço compartilhado avisa "usado por N NPCs" e oferece **mudar em todos** ou **cópia só para este NPC**.
+
+**A levantar antes de cada fase:** `pedidos_de_npc` (nomes das ações de NPC no `actions_npc.txt`, como o
+`pedidos_de_monstro`); como o GS e o cliente usam o `vDir` do spawn de NPC (`npcgenerator.cpp`, info do NPC no S2C);
+arranjo visual da loja no cliente (`DlgShop`); quais serviços o nosso servidor atende (spec 05: teleporte, forja de
+NPC, decompor ainda `falta`) — a tela marca o serviço que o servidor não atende.
+
+**Fases propostas:** N1 busca + Ficha + modelo; N2 Onde fica; N3 Conversa; N4 Serviços (área + modal) com Loja,
+Avaliação, Cura, Armazém e serviços simples; N5 Produção + receitas, Teleporte, Habilidades, demais; N6 Missões (área
+própria, §4.4) com o atalho do NPC.
+
+**Implementado (B392), todas as fases N1–N6:**
+
+| peça | arquivos | nota |
+| :--- | :--- | :--- |
+| ações do NPC | `ecm::pedidos_de_npc`, `admin.rs` (`npc=true` na ficha do modelo; nomes legíveis 休闲动作/跑动/攻击/消失) | o `ModeloDoMonstro` com `npc` mostra a regra do ocioso |
+| NPC | `telas/EdicaoNpc.svelte`, `componentes/ModalBuscaDeNpc.svelte`, `lib/npc.ts` | vagas de serviço resolvidas pela tabela da vaga (o catálogo não tem `cita` nas vagas de missão do 1.2.6) |
+| Onde fica | `BoxDePontosDoNpc.svelte`, `ModalMapa` com `comDirecao` | grava `vPos`, `vDir`, `vExts` = 0; separa de área compartilhada; rastreador só no mapa 1 |
+| Conversa | `ConversasDoNpc`, `EditorDeConversa`, `EditorDeTexto`, `TextoDoJogo`, `JanelaDoNpc`, `lib/conversa.ts`, `lib/marcacao.ts` | dar conversa a quem não tem cria o serviço de fala (clone) |
+| Serviços | `PainelDeServicos`, `EditorDeServico`, `EditorDeReceita`, `CamposSimples`, `ServicosDoNpc`, `telas/Servicos.svelte`, `lib/servicos.ts`; rota `servicos/{T}` | "cópia só para este NPC" quando compartilhado |
+| Missões | `FichaDaMissao`, `MissoesDoNpc`, `SeletorDeMissao`, `telas/Missoes.svelte`, `lib/missao.ts`; rota `missoes_resumo` | diálogos de missão convertidos em operações do `tasks_editavel` (vitest) |
+
+Achados: (1) o v7 tem a vaga `id_cross_server_service` sem a tabela (a tela esconde a vaga); (2) a lista de ações do modelo
+usava o índice como chave — o ataque tem dois nomes no mesmo índice (`起`/`落`), corrigido (também nos Monstros); (3) a
+linha "demais serviços de NPC" da spec 05 estava desatualizada (corrigida).
+

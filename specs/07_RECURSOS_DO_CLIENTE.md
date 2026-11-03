@@ -528,7 +528,10 @@ triângulos, ou `erro`), e o GLB junta as peles (com as texturas de cada uma) e 
 `acoes_descartadas`; `GET estudio/modelos/glb?caminho&acao=<nome>` traz a animação dessa ação (trilhas do `.bon` v5 ou
 o `.stck`; ação inexistente ou descartada → 400). Painel: seletor de ação na ficha; o visualizador toca a animação em
 laço, com a pele deformada na CPU a cada quadro. **Diagnóstico (B277):** a lista traz também os `.ecm` (primeiro); a
-ficha do `.ecm` traz o `.smd`, as ações combinadas (com as ações-base ausentes no `.smd`) e `diagnostico_de_monstro`:
+ficha do `.ecm` traz o `.smd`, as ações combinadas (com as ações-base ausentes no `.smd`) e `diagnostico_de_monstro`
+(B392: com `npc=true`, os nomes do NPC de serviço — `ecm::pedidos_de_npc`, índices 19/17/18/20/21/22 起落/23/13→26/24/25
+da mesma tabela: parado, ocioso 1/2, andar, correr, atacar, morrer, ferido, nascer, sumir; `EC_NPC.cpp:367, 638-639,
+1160-1192, 1351-1355, 1694-1724, 1907-1922`, `EC_NPCModel.cpp:722-737, 755, 912-916`; nome legível "Ocioso 1 · 休闲动作1"):
 para cada nome pedido (tabela `configs\actions_npc.txt` **do próprio cliente da versão** + `起`/`落`), `ok`, "sem ação
 combinada no .ecm", "só existe como ação-base no .smd" (o motor 1.5.5 só toca combinadas, `EC_Model.h:577-583`),
 "ação combinada sem ação-base (não anima)" ou "ação-base ausente no .smd" (spec 03 §3.10d). Medido em 40 monstros por
@@ -1044,6 +1047,35 @@ monstro; B390: o 12962 do `extra_drops.sev` real do 1.2.6 → 10 chefes da tabel
   `.smd` (as outras saem da lista, como no equipamento) ou, sem pele no `.smd`, a `<.smd>.ski`. Nada disso pende no personagem: os fogos
   tocam o `.gfx` `file_fw` na frente dele (`EC_Player.cpp:9022-9024`) e o `TOSSMATTER.file_model` o cliente não carrega.
 
+### NPCs, serviços e missões (B392)
+
+Duas rotas novas, só leitura, para o Estúdio (painel: `GET /api/realms/{r}/estudio/servicos/{T}` e `…/missoes_resumo`):
+
+- `GET estudio/servicos/{T}?busca&uso&pagina&por_pagina` (`Estudio::servicos`): só tabelas `NPC_*_SERVICE` (outra → 400).
+  Cada registro com `npcs` (quantos `NPC_ESSENCE` o citam em algum `id_*_service` — é o que monta a janela do NPC,
+  `DlgNPC.cpp:339-441`), até 5 `nomes_dos_npcs` e `resumo` {`itens` (ids não nulos das listas que citam outro espaço:
+  item vendido, receita, pedra…), `abas` (títulos não vazios), `destinos` (`targets_K_idTarget`), `lista` (`id_tasks_K`,
+  `id_skills_K`, `tasks_K_id_task`)}. A busca acha pelo id, pelo nome ou pelo **nome do que o serviço lista** (marca
+  `achado_na_lista`). `uso` = `em_uso` | `sem_uso`.
+- `GET estudio/missoes_resumo?ids=a,b&npc=N` (`Estudio::missoes_resumo`): nome, tipo, níveis, mãe, filhas e os NPCs de
+  entrega/prêmio de até 600 missões (inexistente → `ausente`); com `npc`, as missões do tasks.data cujo
+  `npc_que_entrega`/`npc_que_premia` é ele (até 300 cada).
+
+Medido nos layouts: o `NPC_ESSENCE` do v7 tem `id_cross_server_service`, mas o v7 não tem a tabela
+`NPC_CROSS_SERVER_SERVICE` (teste `npc.test.ts`). No 1.2.6 o catálogo de referências (`specs/estudio/referencias.json`)
+não resolve as vagas `id_task_*_service` do NPC (sem `cita`): a tela acha o serviço pelo id na tabela da vaga.
+
+**Receita mostrada pelo produto (B393).** O cliente desenha a receita com o ícone, o nome e a descrição do item de
+`targets[0].id_to_make` (`CECIvtrRecipe`, `EC_IvtrMaterial.cpp:165,200-218`; sem produto, `Unknown.dds`). Por isso a
+`referencia` de um campo que cita `RECIPE_ESSENCE`, a ficha de uma receita, a lista de `RECIPE_ESSENCE` e a busca no
+espaço RECIPE trazem `produto` {`id`, `nome`, `icone`} (`estudio::produto_da_receita`); a busca no espaço RECIPE acha
+também pelo nome do produto. A grade da forja mostra o ícone do produto, com a dica do item ao passar o mouse.
+
+**Tela (B393).** Aba Serviços do NPC: no alto, os serviços que ele tem (vagas ligadas e bits simples ligados) em
+cartões do mesmo tamanho; embaixo, "Vincular" por categoria, em caixas de altura fixa com rolagem. Visualizador 3D
+(`lib/glb.ts`): botão direito, do meio ou Shift + arrastar sobe e desce o ponto que a câmera olha; duplo clique
+recentra.
+
 ## 7. Testes
 
 `cargo test -p pw-recursos` — 16 de unidade (inclui a limpeza de objetos) (tar GNU com nome longo e 2º byte 0x5C, GBK, exclusões,
@@ -1067,7 +1099,7 @@ Destinos (B252): `.txt` gerado do `.sev` do 1.2.6; remover destino usado → 400
 posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625).
 Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `alinhamento` acusa → `alinhar` refaz só o
 `precinct.sev` e o par volta a ser equivalente; de novo, nada a fazer. `clt::testes_do_servidor` (os 200 pares reais;
-falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668 ofertas, ≥ 90% com o item no
+falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (670 ofertas desde a publicação de 01/11 pelo G-Shop — B393; eram 668, ≥ 90% com o item no
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar
