@@ -1,0 +1,110 @@
+# Publica os dois entregáveis para quem não vai compilar nada: a extensão do Blender (PW Estúdio) e o
+# launcher. Cada um tem a sua tag, porque as versões andam separadas:
+#
+#   git tag blender-v1.1.1   && git push origin blender-v1.1.1    -> pw_estudio-1.1.1.zip
+#   git tag launcher-v0.2.0  && git push origin launcher-v0.2.0   -> pw-launcher-x64.exe + pw-launcher-x86.exe
+#
+# A versão da tag tem de ser a do arquivo (blender_manifest.toml / tools/pw-launcher/Cargo.toml); se não for, o job
+# falha antes de publicar. O launcher sai com a chave pública de `tools/pw-launcher/chave_publica.txt` embutida
+# (spec 07 §4-§5): só aceita atualizações assinadas pelo `pw-recursos` dono dessa chave.
+name: release
+
+on:
+  push:
+    tags:
+      - "blender-v*"
+      - "launcher-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  blender:
+    if: startsWith(github.ref_name, 'blender-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conferir a versão da tag contra o manifesto
+        run: |
+          manifesto=$(sed -n 's/^version = "\(.*\)"/\1/p' tools/blender/pw_estudio/blender_manifest.toml)
+          tag="${GITHUB_REF_NAME#blender-v}"
+          echo "manifesto=$manifesto tag=$tag"
+          test "$manifesto" = "$tag"
+          echo "VERSAO=$manifesto" >> "$GITHUB_ENV"
+
+      - name: Empacotar a extensão (manifesto na raiz do zip, como o Blender 4.2+ espera)
+        run: |
+          mkdir -p dist
+          cd tools/blender/pw_estudio
+          zip -r "../../../dist/pw_estudio-${VERSAO}.zip" . -x '__pycache__/*' '*.pyc'
+          cd ../../..
+          unzip -l "dist/pw_estudio-${VERSAO}.zip"
+
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notas.md <<EOF
+          **PW Estúdio ${VERSAO}** — Blender extension (Blender 4.2 or newer) for the Studio of pw-universal-server.
+
+          Install: Blender → Edit → Preferences → Get Extensions → ⌄ → *Install from Disk…* → \`pw_estudio-${VERSAO}.zip\`.
+          The panel appears in the 3D Viewport sidebar (N) under **PW Estúdio**.
+
+          Or from the command line: \`blender --command extension install-file -r user_default -e pw_estudio-${VERSAO}.zip\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" "dist/pw_estudio-${VERSAO}.zip" \
+            --title "PW Estúdio (Blender) ${VERSAO}" --notes-file notas.md
+
+  launcher:
+    if: startsWith(github.ref_name, 'launcher-v')
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conferir a versão da tag contra o Cargo.toml
+        run: |
+          $versao = (Select-String -Path tools/pw-launcher/Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          $tag = $env:GITHUB_REF_NAME -replace '^launcher-v', ''
+          Write-Host "Cargo.toml=$versao tag=$tag"
+          if ($versao -ne $tag) { exit 1 }
+          "VERSAO=$versao" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Rust estável com os alvos do Windows 7
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rust-src
+
+      - name: Compilar 64 bits
+        run: ./tools/pw-launcher/compilar.ps1 -Bits 64
+
+      - name: Compilar 32 bits
+        run: ./tools/pw-launcher/compilar.ps1 -Bits 32
+
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item tools/pw-launcher/target/x86_64-win7-windows-msvc/release/pw-launcher.exe dist/pw-launcher-x64.exe
+          Copy-Item tools/pw-launcher/target/i686-win7-windows-msvc/release/pw-launcher.exe dist/pw-launcher-x86.exe
+          $chave = (Get-Content tools/pw-launcher/chave_publica.txt -Raw).Trim()
+          @"
+          **pw-launcher $env:VERSAO** — install, update, repair and play the Perfect World client served by a pw-universal-server.
+
+          - ``pw-launcher-x64.exe`` — Windows 7 to 11, 64-bit
+          - ``pw-launcher-x86.exe`` — Windows 7 to 11, 32-bit
+
+          Native Win32, single executable, no installer and no runtime to install. Put it in any folder, open it, set the
+          update server (``host:8100``) at the bottom and choose *Download the game* or *I already have it installed*.
+
+          Built-in update signing key (Ed25519): ``$chave``.
+          Running your own server? Replace ``tools/pw-launcher/chave_publica.txt`` with the output of ``pw-recursos chave``
+          and build with ``tools/pw-launcher/compilar.ps1``.
+          "@ | Out-File -FilePath notas.md -Encoding utf8
+          gh release create $env:GITHUB_REF_NAME dist/pw-launcher-x64.exe dist/pw-launcher-x86.exe `
+            --title "pw-launcher $env:VERSAO" --notes-file notas.md

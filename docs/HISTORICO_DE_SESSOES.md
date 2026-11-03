@@ -18126,3 +18126,21 @@ comparação lado a lado.
       Filhote no nível 30 com 332 de dano, Lobo-rei vence 100% das 400 lutas, ranking no nível 40 com o Raptor de Combate em
       primeiro.
     - **Commit:** código em `15581e4`, documentação em `6f4ff2b` (na `studio-svelte`).
+
+395. **Sessão 2026-11-03: README do GitHub em inglês e publicação do launcher e da extensão do Blender (B395).**
+    - **Pedido do Murillo:** README em inglês, no padrão de projeto do GitHub (o que é, o que resolve, diferencial, como
+      rodar, requisitos, estado e o que falta, convite a contribuir, pedido de estrela), com o launcher e a extensão do
+      Blender como os dois entregáveis cruciais, publicados como deploy.
+    - **README.md** reescrito em inglês a partir do `ESTADO_E_RETOMADA.md` §0/§1/§5 e das specs 02 e 07: diferenciais,
+      downloads (launcher e PW Estúdio), o que cada versão faz, arquitetura em Mermaid, requisitos, início rápido
+      (dados em `data/`, `docker/.env` só com os nomes das variáveis, compose, `pw-recursos importar`/`chave`, cliente),
+      testes com banco, estado e falta, organização, documentação (em português), contribuição, aviso legal e licença
+      (MIT; a extensão é GPL-3.0-or-later pelo manifesto).
+    - **`.github/workflows/release.yml`** (novo): tag `blender-v*` empacota `tools/blender/pw_estudio` e publica o zip; tag
+      `launcher-v*` compila o launcher 64 e 32 bits pelo `compilar.ps1` no `windows-latest` e publica os dois `.exe`. A
+      versão da tag tem de bater com o manifesto/`Cargo.toml`, senão o job falha antes de publicar.
+    - **Conferido:** o zip da 1.1.1 pelo `extension build` do Blender 5.1 (só `blender_manifest.toml` e `__init__.py`,
+      6.312 bytes) passa no `extension validate`. **Não conferido:** o workflow nunca rodou (falta commit, push e a
+      primeira tag); a compilação do launcher no runner do GitHub não foi vista.
+    - O launcher publicado leva a chave pública do `chave_publica.txt` do repositório — só aceita atualização do
+      `pw-recursos` do Murillo; o README e as notas do release dizem como trocar.

@@ -100,6 +100,12 @@ mostra a pública). O `versao.json` é gravado por último: só aparece quando a
 | núcleo | `crates/pw-atualizador` (lib, sem banco nem axum; também usado pelo `pw-recursos conferir`) | `Servidor::versoes`, `versao_remota` (assinaturas + SHA-256 do manifesto), `instalar`, `verificar`, `reparar`, `atualizar`, `jogar`, `conferir_range` |
 | app | `tools/pw-launcher` (Win32 puro via `windows-sys` 0.52, fora do workspace; **compilar com `compilar.ps1`** na pasta — alvo `x86_64-win7-windows-msvc`, ou `-Bits 32` para `i686-win7-windows-msvc`) | janela `src/janela.rs` (era Tauri/WebView2 até o B275, que exigia Windows 10); roda do **Windows 7 ao 11**; `pw-launcher.json` ao lado do `.exe` guarda o servidor, a última versão escolhida e **uma pasta por versão** (`pastas`); chave pública embutida de `chave_publica.txt` (trocar ao publicar com outra chave) |
 
+Distribuição (B395): a tag `launcher-v<versão>` (igual à `version` do `tools/pw-launcher/Cargo.toml`) dispara o
+`.github/workflows/release.yml` (`windows-latest`, `compilar.ps1 -Bits 64` e `-Bits 32`), que publica
+`pw-launcher-x64.exe` e `pw-launcher-x86.exe` nos Releases do GitHub com a chave de `chave_publica.txt` embutida — só servem
+ao `pw-recursos` dono dessa chave; quem sobe outro servidor troca o arquivo e compila. **Ainda não rodou** (falta a
+primeira tag).
+
 Tela (B235; Win32 no B275, versões numa caixa de seleção em vez de abas): ao abrir, busca as versões no servidor e mostra a situação da escolhida, lendo só o
 `versao.json` (`Servidor::versao_anunciada`, sem baixar o manifesto). Conforme a situação:
 
@@ -689,8 +695,13 @@ melhor que outro para um monstro. Por isso o painel tem o campo "molde .ecm" (ex
 
 ```
 blender --command extension build --source-dir tools/blender/pw_estudio
-blender --command extension install-file -r user_default -e pw_estudio-1.0.0.zip
+blender --command extension install-file -r user_default -e pw_estudio-1.1.1.zip
 ```
+
+Distribuição (B395): a tag `blender-v<versão>` (igual à `version` do manifesto, senão o job falha) dispara o
+`.github/workflows/release.yml`, que publica `pw_estudio-<versão>.zip` nos Releases do GitHub. O zip da 1.1.1 gerado pelo
+`extension build` do Blender 5.1 tem só `blender_manifest.toml` e `__init__.py`, e passa no `extension validate`.
+Licença da extensão: GPL-3.0-or-later (manifesto); o resto do repositório é MIT.
 
 O painel "PW Estúdio" fica na barra lateral da vista 3D, com estes botões:
 - **Importar GLB do Estúdio:** põe a cena a 15 (ou 30) quadros/s e importa.
