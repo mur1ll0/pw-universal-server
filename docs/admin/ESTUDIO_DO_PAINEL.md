@@ -874,3 +874,43 @@ Achados: (1) o v7 tem a vaga `id_cross_server_service` sem a tabela (a tela esco
 usava o índice como chave — o ataque tem dois nomes no mesmo índice (`起`/`落`), corrigido (também nos Monstros); (3) a
 linha "demais serviços de NPC" da spec 05 estava desatualizada (corrigida).
 
+
+### 9.14 Mascotes (B394, 2026-11-03)
+
+Última área do planejamento do Estúdio. Card **Mascotes** na Principal → `ModalBuscaDeMascote` (tipo por faixa de `id_type`,
+ambiente, nível exigido/máximo ordenáveis; Novo = cópia do de menor id do tipo, "Novo mascote") → `telas/EdicaoMascote.svelte`
+(`#/mascotes/PET_ESSENCE/<i>?aba=ficha|atributos|ovo|modelo|simulador`). Significados e contas em `lib/mascote.ts`.
+
+| o quê | como aparece | evidência |
+| :--- | :--- | :--- |
+| `id_type` | cartões: Combate 8782, Montaria 8781, Companhia 8783, Invocação 28752, Planta 28913, Evolução 37698 (os três últimos só no 1.5.5) | `pet_dataman::LoadTemplate`; `pw_data_loader::pet::carregar_modelos` |
+| `inhabit_type`, `stand_mode`, `food_mask`, `plant_group`, `immune_type`, `character_combo_id` | lista, lista, botões de comida (forragem, carne, verduras, frutas, água), lista, máscara, máscara de classes | `ExpTypes.h:2983-3060` (struct `PET_ESSENCE`, comentários); o 1.2.6 só aceita ambiente 0–2 |
+| recusa ao carregar | faixa vermelha: atraso do dano fora de 2–200 tiques, intervalo ≤ 2 tiques, visão < 0,1, `hp_a` ≤ 0 (no 1.2.6 só o de combate é conferido) | `petdataman.cpp:120-133` |
+| fórmulas `hp/hp_gen/damage/attack/armor/physic_defence/magic_defence/speed_*` | aba Atributos: a, b, c, d, valor no nível e curva 1→máx.; contas em `float` (Math.fround) e `(int)` | `petdataman.h:23-76`; `ModeloDeMascote::atributos` |
+| `mp_a`, `mp_gen_a`, `attack/defence_degree_a` | "só invocação e planta", `a × (nível + 5)` | `petdataman.cpp:79-82` (`GenerateBaseProp2`) |
+| ovo | os `PET_EGG_ESSENCE` com `id_pet` = este mascote (faixa na listagem); edição do escolhido; usar outro ovo = gravar o `id_pet` dele; criar = clonar um ovo e apontar | `pet::carregar_ovos`; `hatch_pet_service_executor` (`serviceprovider.cpp:3160`) |
+| `honor_point` | lealdade com a faixa: ≤50 −40%, ≤150 −20%, ≤500 0, ≤999 +20% no dano | `pet_filter.cpp:8`; `mascote::nivel_de_lealdade` |
+| modelo | `ModeloDoMonstro` com `habitat` quando é invocado ou de ambiente 6 (o cliente pede as ações com `_地面/_水中/_空中`) | `EC_Pet.cpp:285-288`, `EC_NPCModel.cpp:588-620`; `ecm::pedidos_de_mascote` (B281) |
+
+**Simulador de combate** (`componentes/SimuladorDeCombate.svelte`) — o pedido de 2026-11-03 de ter no painel a análise que
+se fez com script de rascunho para "qual mascote aguenta o Lobo-rei de Hades (4359)" (sessão "Problemas item WB 1.2.6",
+2026-09-30). O mascote no nível e lealdade escolhidos é montado como `corpo_do_mascote` (`CreatePetBase`,
+`npcgenerator.cpp:2021-2040`: dano × lealdade com divisão inteira, graus 0, alcance + corpo, intervalo `(int)(s×20+0,1)`); o
+monstro como `MonsterEntity::do_template` (intervalo `(int)(s×20+0,5)`, dano físico uniforme e elemental `RandNormal`, sem o
+addon do `MONSTER_TYPE`, como o nosso GS). O golpe é o `combat::resolver` para NPC contra NPC: acerto
+`rate/(rate+(armor>>1))` com piso 0,05, defesa `def/(def+40×nível de quem bate−25)` com teto 0,95, imunidades por classe,
+graus, +0,5 e piso 1 — sem crítico, punição de nível nem camada (`IS_HUMANSIDE` é só jogador). A luta anda em tiques de
+50 ms: golpe a cada `intervalo`, dano chega `atraso` depois se quem bateu está vivo, regeneração `hp_gen` a cada segundo
+(`gnpc_imp::OnHeartbeat`, `npc.cpp:1946-1958`), limite de 10 min (empate). Mostra: o esperado pela média em cada sentido
+(com aviso quando um golpe só derruba de vida cheia — a média engana), 400 lutas (vitórias, duração, vida que sobra) e a luta
+de exemplo em gráfico; **"Qual mascote vai melhor contra este?"** roda 40 lutas de cada mascote de combate/evolução no mesmo
+nível (a listagem dá até 12 colunas por pedido, `estudio.rs:208`: os campos vão em 3 pedidos juntados pelo registro).
+**Não entram:** habilidades (do mascote e do monstro), os adicionais do dono (`pet_enhance`) e a perseguição/fuga.
+Invocação e planta não são simuladas (dependem dos atributos do dono, `GenerateBaseProp2`).
+
+Conferência: `lib/mascote.test.ts` (8) com os campos reais do realm_126 — dano no nível 30 = o "Atq" da janela do mascote
+no jogo (Vespão Pequeno 466, Filhote de Lobo Feroz 332, B135) — e o Lobo-rei: no nível 40 nenhum mascote vence sozinho,
+como na análise antiga (no navegador: todos caem em ~5–7 s; o Raptor de Combate é o que mais tira vida dele).
+
+Mudanças em comum: `SeletorDeEspaco` com `tabela` fixa esconde a lista de categorias; `ListaDeHabilidades` ganhou
+`deMonstro` (sem o alerta de tipo no ovo); `ModeloDoMonstro` ganhou `habitat`.

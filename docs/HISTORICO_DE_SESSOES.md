@@ -18091,3 +18091,37 @@ comparação lado a lado.
       2241 com as 7 abas (Espadas, Lanças, Mach., Punhos, Dist., Instr., Munição; 24/18/24/12/18/24/9 itens) — antes o
       Estúdio via 3 abas e 13 itens em Espadas.
     - **Commit:** código em `cb6d5fd` (B392 e B393 juntos, na `studio-svelte`); documentação no commit seguinte.
+
+394. **Sessão 2026-11-03: Mascotes no Estúdio, com o simulador de combate (B394).**
+    - **Pedido do Murillo:** a aba Mascotes do Estúdio (a última do planejamento) com os campos editáveis, o editor de modelo
+      3D como o dos monstros (importar), o ovo que gera o mascote com um seletor fácil, e uma parte para simular o mascote num
+      nível contra outro mascote do mesmo nível ou um monstro — o recurso do script de rascunho usado para achar o mascote
+      mais forte contra o **Lobo-rei de Hades** (4359, sessão "Problemas item WB 1.2.6", 2026-09-30: nível 42, 146.772 de
+      vida, 925–2.157 a cada 1,75 s, defesa 1.782, acerto 21.850; "nenhum aguenta sozinho no nível 40"). Layout amigável.
+    - **O script antigo não ficou no repositório** (era de rascunho; os exemplos `ranking_de_mascotes` e `simula_golpe` são
+      vizinhos). Reconstruído sobre o que o GS já faz: `ModeloDeMascote::atributos` (`petdataman.h:23-76`),
+      `corpo_do_mascote` (`CreatePetBase`, `npcgenerator.cpp:2021-2040`), `MonsterEntity::do_template` e
+      `combat::resolver` (NPC contra NPC: sem crítico, punição de nível ou camada), regeneração em combate
+      (`npc.cpp:1946-1958`). Em TypeScript (`web-admin/estudio/src/lib/mascote.ts`) para responder na hora a cada campo
+      editado, com as contas em `float` (Math.fround) e o `(int)` do original.
+    - **Tela** (`telas/EdicaoMascote.svelte`, `ModalBuscaDeMascote`, `OvoDoMascote`, `SimuladorDeCombate`): busca por tipo e
+      ambiente; abas Ficha, Atributos por nível, Ovo, Modelo 3D, Simulador. Detalhe e evidência de cada campo em
+      `docs/admin/ESTUDIO_DO_PAINEL.md` §9.14 (campos do `ExpTypes.h:2983-3060`; recusas do `petdataman.cpp:120-133`;
+      lealdade do `pet_filter.cpp:8`; ações por ambiente do B281).
+    - **Achados no navegador:** (1) a listagem do `pw-recursos` devolve até 12 colunas por pedido (`estudio.rs:208`) — o
+      ranking pede os 34 campos em 3 grupos e junta pelo registro, sem mexer no servidor; (2) a conta "pela média" dizia que o
+      Lobo-rei nunca derruba o Raptor de Combate (regenera 420/s contra 405/s de dano médio), mas um golpe de até 1.009
+      mata os 924 de vida de uma vez: o ranking usa o tempo das lutas sorteadas e o painel do esperado avisa quando um golpe
+      só derruba; (3) os floats apareciam como `0.100000001` — mostrados com 7 algarismos (digitar 0,1 grava o mesmo float).
+    - **Testes:** vitest 98/98 (8 novos em `lib/mascote.test.ts`, com os campos reais do realm_126: dano no nível 30 =
+      Vespão Pequeno 466 e Filhote de Lobo Feroz 332, o "Atq" da janela do mascote no jogo do B135; vida 780 e defesa 1.921
+      do Vespão pela conta à mão; nenhum mascote vence o Lobo-rei no nível 40); svelte-check 0 erros, 0 avisos; build ok.
+      Navegador (servidor de desenvolvimento do Estúdio com o proxy para o painel publicado, só leitura): 1.2.6 — busca (414
+      de combate), Filhote de Lobo Feroz em todas as abas, o Lobo-rei vence 100% das 400 lutas contra ele no nível 30, o
+      ranking no nível 40 (todos caem em ~5–7 s; o Raptor de Combate é o primeiro), Filhote × Vespão no nível 30 (60% a
+      40%); 1.5.5 — Rei Macaco (Evolução, ambiente 6): ficha com a parte de evolução e o modelo com as ações `_地面/_水中/_空中`
+      (consulta com `habitat=6`). Gravar no rascunho não foi exercitado (sem rascunho aberto nesta sessão).
+    - **Publicado** a pedido do Murillo: `pw-admin-api` reconstruído e no ar em 2026-11-03 17:26 (o Estúdio vai no Dockerfile
+      do painel; nenhum serviço Rust mudou; nenhum contêiner ficou para trás). Conferido no publicado (`localhost:8000`):
+      Filhote no nível 30 com 332 de dano, Lobo-rei vence 100% das 400 lutas, ranking no nível 40 com o Raptor de Combate em
+      primeiro. **Não commitado.**
