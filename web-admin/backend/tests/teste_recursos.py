@@ -325,6 +325,18 @@ class TesteRecursos(unittest.IsolatedAsyncioTestCase):
         r = await self.cliente.get("/api/realms/realm_155/estudio/modelos/glb", params={"caminho": "a.ecm", "como": "npc"})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(len(RecursosFalso.pedidos), antes)
+        # B392: NPC no Estúdio — `npc` na ficha do modelo, serviços de NPC (uso só em_uso/sem_uso) e resumo de missões.
+        await self.cliente.get("/api/realms/realm_155/estudio/modelos/ficha", params={"caminho": "a.ecm", "npc": "true"})
+        self.assertEqual(RecursosFalso.pedidos[-1]["consulta"], {"caminho": ["a.ecm"], "npc": ["true"]})
+        await self.cliente.get("/api/realms/realm_126/estudio/servicos/NPC_SELL_SERVICE", params={"busca": "espada", "uso": "em_uso"})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual(p["caminho"], "/admin/1.2.6/estudio/servicos/NPC_SELL_SERVICE")
+        self.assertEqual((p["consulta"]["busca"], p["consulta"]["uso"]), (["espada"], ["em_uso"]))
+        await self.cliente.get("/api/realms/realm_126/estudio/servicos/NPC_SELL_SERVICE", params={"uso": "qualquer"})
+        self.assertNotIn("uso", RecursosFalso.pedidos[-1]["consulta"])
+        await self.cliente.get("/api/realms/realm_126/estudio/missoes_resumo", params={"ids": "1173,abc,7", "npc": 3517})
+        p = RecursosFalso.pedidos[-1]
+        self.assertEqual((p["caminho"], p["consulta"]), ("/admin/1.2.6/estudio/missoes_resumo", {"ids": ["1173,7"], "npc": ["3517"]}))
 
     async def test_area_do_npcgen_repassa_e_recusa_o_que_nao_e_area(self):
         """B243: salvar área do npcgen passa de 8 KiB (geradores) só na rota dela; tipo fora do padrão fica no painel."""

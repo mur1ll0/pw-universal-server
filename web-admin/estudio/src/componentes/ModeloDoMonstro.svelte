@@ -13,8 +13,10 @@
   import { avisar, estudio } from "../lib/estado.svelte";
   import Icone from "./Icone.svelte";
 
-  let { caminho, habilidades = [], politica = 0, idDoMonstro = 0, aoTrocarModelo }:
-    { caminho: string; habilidades?: number[]; politica?: number; idDoMonstro?: number; aoTrocarModelo?: (ecm: string) => Promise<void> } = $props();
+  /* B392: `npc` — modelo de NPC de serviço: o diagnóstico pede as ações `ACT_NPC_*` (parado, ocioso 1/2, andar, correr,
+     atacar, morrer, ferido, nascer, sumir; `ecm::pedidos_de_npc`) em vez das de monstro. */
+  let { caminho, habilidades = [], politica = 0, idDoMonstro = 0, aoTrocarModelo, npc = false }:
+    { caminho: string; habilidades?: number[]; politica?: number; idDoMonstro?: number; aoTrocarModelo?: (ecm: string) => Promise<void>; npc?: boolean } = $props();
   let pastaNova = $state("models\\npcs\\estudio");
   let tituloNovo = $state("");
   /** O que o GLB importado substitui (B380). */
@@ -41,6 +43,7 @@
       const q: Record<string, string> = {};
       if (habilidades.length) q.habilidades = habilidades.join(",");
       if (politica) q.politica = String(politica);
+      if (npc) q.npc = "true";
       ficha = await fichaDoModelo(caminho, q);
     } catch (e) { erro = (e as Error).message; }
   }
@@ -72,6 +75,9 @@
     const c = combinada(d.pedido) ?? (d.alternativa ? combinada(d.alternativa) : undefined);
     return { ...d, combinada: c };
   }));
+  /** B392: no NPC só parado (19) e ocioso (17/18) sempre tocam; o resto só se ele anda, luta ou morre, e nascer (24)
+      só toca se o modelo tiver (`HasAction`, `EC_NPC.cpp:638-639`) — a falta deles não é erro. */
+  const opcional = (indice: number) => npc && ![17, 18, 19].includes(indice);
   const outras = $derived((ficha?.combinadas ?? []).filter((c) => !pedidos.some((p) => p.combinada?.nome === c.nome)));
 
   async function mudarBase(acao: string, base: string) {
@@ -142,7 +148,7 @@
 <section class="caixa visual">
   <h3>Modelo 3D</h3>
   <canvas bind:this={tela} width="560" height="420"></canvas>
-  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada — escolha uma animação")} · arraste para girar, roda para aproximar.</p>
+  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || (tocando ? `Tocando: ${traduzir(tocando)} (${tocando})` : "Pose parada — escolha uma animação")} · arraste para girar; botão direito (ou Shift) sobe e desce; roda aproxima; duplo clique recentra.</p>
   <div class="linha">
     <a class="botao pequeno" href={rotaDoGlb(caminho, undefined, true)} download={arquivoDoGlb}><Icone nome="abrir" tamanho={16} /> Exportar GLB (Blender)</a>
   </div>
@@ -177,9 +183,12 @@
 {:else}
   <section class="caixa">
     <h3>O que ele faz em cada ação</h3>
+    {#if npc}<p class="mini">O NPC fica em Parado e a cada 25 s toca Ocioso 1 ou 2 (sorteado) e volta ao Parado (EC_NPC.cpp:367, 1907-1922;
+      EC_NPCModel.cpp:722-727). Escolha a animação de cada uma; ▶ mostra. Atacar e morrer só importam se ele luta.</p>{/if}
     <ul class="acoes">
-      {#each pedidos as p (p.indice)}
-        <li class:falta={!p.combinada}>
+      <!-- a chave é o nome pedido: o ataque tem duas ações (起/落) com o mesmo índice da tabela -->
+      {#each pedidos as p (`${p.indice}:${p.pedido}`)}
+        <li class:falta={!p.combinada && !opcional(p.indice)}>
           <div class="cab">
             <strong>{traduzir(p.pedido)}</strong> <span class="mini">{p.pedido}{p.alternativa ? ` → usa ${p.alternativa}` : ""}</span>
           </div>
@@ -196,7 +205,8 @@
             <span class="mini">Sequência de {p.combinada.bases.length} animações ({p.combinada.bases.map(traduzir).join(" → ")}): edite nos Editores → Modelos.</span>
           {:else}
             <div class="linha">
-              <span class="erro mini">Falta: o cliente pede e o modelo não tem.</span>
+              {#if opcional(p.indice)}<span class="mini">Opcional: o modelo não tem — só faz falta se ele {p.indice === 24 ? "tiver de nascer com animação" : p.indice === 25 ? "sumir com animação" : "andar, lutar ou morrer"}.</span>
+              {:else}<span class="erro mini">Falta: o cliente pede e o modelo não tem.</span>{/if}
               <select class="campo" disabled={!editavel || ocupado} aria-label="Criar {p.pedido}" onchange={(e) => criarAcao(p.pedido, (e.target as HTMLSelectElement).value)}>
                 <option value="">criar com a animação…</option>
                 {#each ficha.bases_do_smd ?? [] as b (b)}<option value={b}>{traduzir(b)} · {b}</option>{/each}

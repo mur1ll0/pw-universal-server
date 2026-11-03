@@ -19,6 +19,14 @@
     check: "M5 12l5 5 9-10",
     olho: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
     loja: "M4 8h16l-1.5 12h-13zM9 8V6a3 3 0 0 1 6 0v2M9.5 13.5h5",
+    // B392: serviços, missões, conversa, mapa, setas
+    servico: "M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+    missao: "M7 3h10v18l-5-3-5 3zM10 8h4M10 12h4",
+    conversa: "M4 5h16v11H9l-5 4zM8 9h8M8 12h5",
+    mapa: "M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11zM12 8a2 2 0 1 0 0 4a2 2 0 1 0 0-4",
+    cima: "M6 15l6-6 6 6",
+    baixo: "M6 9l6 6 6-6",
+    seta: "M5 12h14M13 6l6 6-6 6",
   };
   let { nome, tamanho = 20 }: { nome: string; tamanho?: number } = $props();
 </script>

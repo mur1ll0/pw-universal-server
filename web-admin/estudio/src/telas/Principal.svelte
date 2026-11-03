@@ -2,6 +2,7 @@
   import { CATEGORIAS, type Categoria } from "../lib/catalogo";
   import Icone from "../componentes/Icone.svelte";
   import ModalBusca from "../componentes/ModalBusca.svelte";
+  import ModalBuscaDeNpc from "../componentes/ModalBuscaDeNpc.svelte";
   import { ir } from "../lib/estado.svelte";
 
   let aberta = $state<Categoria | null>(null);
@@ -21,10 +22,23 @@
     <span class="nome">G-Shop</span>
     <span class="mini">Loja Gold: abas, vitrine e ofertas</span>
   </button>
+  <!-- B392: serviços e missões têm área própria (um serviço serve a vários NPCs; há missões sem NPC). -->
+  <button class="categoria" type="button" onclick={() => ir("servicos")}>
+    <Icone nome="servico" tamanho={44} />
+    <span class="nome">Serviços</span>
+    <span class="mini">lojas, forjas, teleportes, treinadores</span>
+  </button>
+  <button class="categoria" type="button" onclick={() => ir("missoes")}>
+    <Icone nome="missao" tamanho={44} />
+    <span class="nome">Missões</span>
+    <span class="mini">tasks.data: falas, objetivos, prêmios</span>
+  </button>
 </section>
 <p class="suave">O Estúdio grava pelas mesmas rotas dos <a href="/">Editores</a>, no rascunho escolhido no alto. O que não está aqui continua nos Editores.</p>
 
-{#if aberta}
+{#if aberta?.chave === "npcs"}
+  <ModalBuscaDeNpc aoFechar={() => (aberta = null)} />
+{:else if aberta}
   <ModalBusca categoria={aberta} aoFechar={() => (aberta = null)} />
 {/if}
 

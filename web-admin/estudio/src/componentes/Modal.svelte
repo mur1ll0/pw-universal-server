@@ -2,8 +2,9 @@
   import type { Snippet } from "svelte";
   import Icone from "./Icone.svelte";
 
-  let { titulo, aoFechar, largo = false, children, rodape }:
-    { titulo: string; aoFechar: () => void; largo?: boolean; children: Snippet; rodape?: Snippet } = $props();
+  /* B392: `cheio` — quase a tela toda (o painel de serviços dentro do NPC). */
+  let { titulo, aoFechar, largo = false, cheio = false, children, rodape }:
+    { titulo: string; aoFechar: () => void; largo?: boolean; cheio?: boolean; children: Snippet; rodape?: Snippet } = $props();
 
   function tecla(e: KeyboardEvent) {
     if (e.key === "Escape") aoFechar();
@@ -13,7 +14,7 @@
 <svelte:window onkeydown={tecla} />
 
 <div class="fundo" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) aoFechar(); }}>
-  <div class="janela" class:largo role="dialog" aria-modal="true" aria-label={titulo}>
+  <div class="janela" class:largo class:cheio role="dialog" aria-modal="true" aria-label={titulo}>
     <header>
       <h2>{titulo}</h2>
       <button class="botao fantasma" type="button" onclick={aoFechar} aria-label="Fechar"><Icone nome="fechar" /></button>
@@ -28,6 +29,7 @@
   .janela { background: var(--superficie); border: 1px solid var(--borda); border-radius: var(--raio-g); box-shadow: var(--sombra);
     width: min(560px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
   .janela.largo { width: min(900px, 100%); }
+  .janela.cheio { width: min(1500px, 100%); height: calc(100vh - 32px); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--borda); }
   h2 { margin: 0; font-size: 16px; }
   .corpo { padding: 16px; overflow: auto; }

@@ -42,7 +42,7 @@ fn o_gshop_do_126_fecha_com_o_layout_de_12_bytes_por_opcao() {
     let Some(g) = ler("realm_126", "gshop.data") else { return };
     assert_eq!(g.formato, Some(FormatoDoGshop::V126));
     assert_eq!(g.timestamp, 1_206_433_535);
-    assert_eq!(g.ofertas.len(), 668);
+    assert_eq!(g.ofertas.len(), 670); // B393: 668 até a publicação de 01/11 pelo G-Shop do Estúdio (aprovado pelo Murillo)
     let o = &g.ofertas[0];
     assert_eq!((o.item_id, o.quantidade, o.opcoes[0].preco), (4276, 1, 10));
     // Uma opção só em todas as ofertas; 3 com validade de 7 dias; nenhuma data absoluta.

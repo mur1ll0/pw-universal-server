@@ -207,7 +207,13 @@
           <tr class:ativo={escolhido === r}>
             {#if espaco !== "ADDON"}
               <td class="ic">
-                {#if comPrevia(r)}
+                {#if r.produto}
+                  <!-- B393: a receita aparece com o item que produz (EC_IvtrMaterial.cpp:165,200-218). -->
+                  <span class="icone-dica" role="img" aria-label="Prévia de {r.produto.nome}"
+                    onmouseenter={(e) => mostrarDica(r.produto!.id, r.produto!.nome, e.currentTarget as HTMLElement)} onmouseleave={esconderDica}>
+                    <IconeItem hex={r.produto.icone} nome={r.produto.nome} tamanho={28} />
+                  </span>
+                {:else if comPrevia(r)}
                   <!-- B376: a prévia do item (a mesma dos cartões de chance), logo acima do ícone. -->
                   <span class="icone-dica" role="img" aria-label="Prévia de {r.nome}"
                     onmouseenter={(e) => mostrarDica(r.id!, r.nome, e.currentTarget as HTMLElement)} onmouseleave={esconderDica}>
@@ -220,8 +226,8 @@
             {/if}
             <td>
               <button class="linha-botao" type="button" onclick={() => selecionar(r)} ondblclick={() => { esconderDica(); aoEscolher(r); aoFechar(); }}>
-                <span class="nome">{r.texto || r.nome || "(sem nome)"}</span>
-                {#if r.texto}<span class="mini">{r.nome}</span>{/if}
+                <span class="nome">{r.texto || r.produto?.nome || r.nome || "(sem nome)"}</span>
+                {#if r.texto || r.produto}<span class="mini">{r.produto ? `receita ${r.nome}` : r.nome}</span>{/if}
                 {#if !categoria}<span class="mini">{r.tabela}</span>{/if}
               </button>
             </td>

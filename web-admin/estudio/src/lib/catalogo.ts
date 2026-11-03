@@ -46,7 +46,10 @@ export const CATEGORIAS: Categoria[] = [
       { chave: "daimon", nome: "Equipamento de Daimon", tabela: "GOBLIN_EQUIP_ESSENCE", maior: "GOBLIN_EQUIP_TYPE", so: "1.5.5", pronta: true },
     ],
   },
-  { chave: "npcs", nome: "NPCs", icone: "npc", pronta: false, subcategorias: [] },
+  // B392: NPCs com tela própria (busca pelo que fazem: `ModalBuscaDeNpc`).
+  { chave: "npcs", nome: "NPCs", icone: "npc", pronta: true, subcategorias: [
+    { chave: "npcs", nome: "NPCs", tabela: "NPC_ESSENCE", maior: "NPC_TYPE", pronta: true },
+  ] },
   { chave: "monstros", nome: "Monstros", icone: "monstro", pronta: true, subcategorias: [
     { chave: "monstros", nome: "Monstros", tabela: "MONSTER_ESSENCE", maior: "MONSTER_TYPE", pronta: true },
   ] },

@@ -38,7 +38,7 @@
       <label class="mini"><input type="checkbox" disabled /> efeito do refino</label>
     </div>
     <canvas bind:this={tela} width="560" height="420"></canvas>
-    <p class="mini">{carregando ? "Carregando…" : erro || "Arraste para girar, roda para aproximar."} · {validos[escolha]?.caminho}</p>
+    <p class="mini">{carregando ? "Carregando…" : erro || "Arraste para girar; botão direito (ou Shift) sobe e desce; roda aproxima; duplo clique recentra."} · {validos[escolha]?.caminho}</p>
     <p class="mini">Efeito do refino: falta — é um GFX do cliente (EC_Player.cpp:9299), não está no GLB.</p>
   {:else}
     <p class="suave">Sem modelo na ficha.</p>

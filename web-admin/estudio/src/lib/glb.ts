@@ -154,7 +154,7 @@ export function desenharGlb(tela: HTMLCanvasElement, buf: ArrayBuffer): () => vo
   if (!objs.length && !linhas) throw new Error("Nada a desenhar: sem malha e sem esqueleto.");
   const centro = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
   const raio = Math.max(1e-3, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2);
-  const estado = { yaw: 0.6, pitch: 0.3, dist: raio * 2.8, t0: performance.now(), parar: false };
+  const estado = { yaw: 0.6, pitch: 0.3, dist: raio * 2.8, alto: 0, t0: performance.now(), parar: false };
   const deformar = (t: number) => {
     if (linhas) { gl.bindBuffer(gl.ARRAY_BUFFER, linhas.buf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, linhasDoEsqueleto(esqueleto, t)); return; }
     const J = matrizesDasJuntas(esqueleto, t);
@@ -183,7 +183,7 @@ export function desenharGlb(tela: HTMLCanvasElement, buf: ArrayBuffer): () => vo
     const proj = new Float32Array([f / a, 0, 0, 0, 0, f, 0, 0, 0, 0, (lo + pe) / (pe - lo), -1, 0, 0, (2 * lo * pe) / (pe - lo), 0]);
     const cy = Math.cos(estado.yaw), sy = Math.sin(estado.yaw), cp = Math.cos(estado.pitch), spp = Math.sin(estado.pitch);
     const rot = new Float32Array([cy, spp * sy, -cp * sy, 0, 0, cp, spp, 0, sy, -spp * cy, cp * cy, 0, 0, 0, 0, 1]);
-    const tr = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -centro[0], -centro[1], -centro[2], 1]);
+    const tr = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -centro[0], -(centro[1] + estado.alto), -centro[2], 1]);
     const cam = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -estado.dist, 1]);
     const mvp = multiplicar4(proj, multiplicar4(cam, multiplicar4(rot, tr)));
     gl.uniformMatrix4fv(loc.mvp, false, mvp); gl.uniformMatrix4fv(loc.mdl, false, rot);
@@ -203,12 +203,23 @@ export function desenharGlb(tela: HTMLCanvasElement, buf: ArrayBuffer): () => vo
       gl.drawArrays(gl.LINES, 0, linhas.n);
     }
   };
+  // B393: arrastar gira; botão direito, do meio ou Shift + arrastar sobe e desce o ponto que a câmera olha;
+  // duplo clique volta ao enquadramento inicial.
   let arrasto: [number, number] | null = null;
+  let subir = false;
   const soltar = () => { arrasto = null; };
-  tela.onmousedown = (e) => { arrasto = [e.clientX, e.clientY]; };
+  tela.oncontextmenu = (e) => e.preventDefault();
+  tela.onmousedown = (e) => { arrasto = [e.clientX, e.clientY]; subir = e.button !== 0 || e.shiftKey; };
+  tela.ondblclick = () => { Object.assign(estado, { yaw: 0.6, pitch: 0.3, dist: raio * 2.8, alto: 0 }); desenhar(); };
   window.addEventListener("mouseup", soltar);
   tela.onmousemove = (e) => {
     if (!arrasto) return;
+    if (subir) {
+      // um pixel = a altura que ele cobre na distância da câmera (fov de 45°, `f = 1/tan(π/8)`)
+      const porPixel = (2 * Math.tan(Math.PI / 8) * estado.dist) / Math.max(1, tela.clientHeight);
+      estado.alto = Math.max(-raio * 2, Math.min(raio * 2, estado.alto + (e.clientY - arrasto[1]) * porPixel));
+      arrasto = [e.clientX, e.clientY]; desenhar(); return;
+    }
     estado.yaw += (e.clientX - arrasto[0]) * 0.01;
     estado.pitch = Math.max(-1.5, Math.min(1.5, estado.pitch + (e.clientY - arrasto[1]) * 0.01));
     arrasto = [e.clientX, e.clientY]; desenhar();

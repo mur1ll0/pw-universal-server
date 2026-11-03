@@ -4,7 +4,10 @@
      #/equipaveis/<tabela>/<indice>   edição (Armas: tela própria)
      #/itens/novo?retorno=<código>    item novo para a aba de origem (BroadcastChannel)
      #/itens/<tabela>/<indice>         edição de Item (materiais, poções, pedras… e minas)
-     #/gshop?loja=<arquivo>            G-Shop: a Loja Gold (gshop*.data) */
+     #/gshop?loja=<arquivo>            G-Shop: a Loja Gold (gshop*.data)
+     #/npcs/NPC_ESSENCE/<indice>       B392: NPC (ficha, onde fica, conversa, serviços, missões)
+     #/servicos?tabela=&indice=        B392: serviços de NPC (lojas, forjas, teleportes…)
+     #/missoes[/<id>]                  B392: missões (tasks.data) */
   import { onMount } from "svelte";
   import { contexto, sessao, versaoDoRealm } from "./lib/api";
   import { avisos, definirRascunho, estudio, rota } from "./lib/estado.svelte";
@@ -16,6 +19,9 @@
   import NovoItem from "./telas/NovoItem.svelte";
   import EdicaoItem from "./telas/EdicaoItem.svelte";
   import GShop from "./telas/GShop.svelte";
+  import EdicaoNpc from "./telas/EdicaoNpc.svelte";
+  import Servicos from "./telas/Servicos.svelte";
+  import Missoes from "./telas/Missoes.svelte";
 
   let pronto = $state(false);
 
@@ -62,6 +68,14 @@
     {/key}
   {:else if rota.caminho[0] === "gshop"}
     <GShop />
+  {:else if rota.caminho[0] === "npcs" && rota.caminho[1] && rota.caminho[2] !== undefined}
+    {#key `${rota.caminho[1]}/${rota.caminho[2]}/${estudio.rascunho}`}
+      <EdicaoNpc tabela={rota.caminho[1]} indice={Number(rota.caminho[2])} />
+    {/key}
+  {:else if rota.caminho[0] === "servicos"}
+    {#key estudio.rascunho}<Servicos />{/key}
+  {:else if rota.caminho[0] === "missoes"}
+    {#key estudio.rascunho}<Missoes />{/key}
   {:else}
     <Principal />
   {/if}

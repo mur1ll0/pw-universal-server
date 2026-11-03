@@ -787,6 +787,24 @@ def registrar_reinicio(app):
             raise HTTPException(404, "Loja inválida.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
 
+    # B392: serviços de NPC de uma tabela NPC_*_SERVICE, com quantos NPCs usam cada um (o modal de serviços do Estúdio).
+    @app.get("/api/realms/{realm}/estudio/servicos/{tabela}")
+    async def estudio_servicos(realm: str, tabela: str, requisicao: Request, rascunho: int | None = None, busca: str = "",
+                               uso: str = "", pagina: int = 0, por_pagina: int = 50):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/servicos/{_tabela(tabela)}", {
+            "rascunho": rascunho, "busca": busca[:100], "uso": uso if uso in ("em_uso", "sem_uso") else None,
+            "pagina": max(0, pagina), "por_pagina": max(1, min(por_pagina, 200))})
+
+    # B392: nomes das missões listadas por um serviço de NPC e as que o tasks.data liga a um NPC (só leitura).
+    @app.get("/api/realms/{realm}/estudio/missoes_resumo")
+    async def estudio_missoes_resumo(realm: str, requisicao: Request, ids: str = "", npc: int | None = None,
+                                     rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        lista = ",".join(x for x in ids.split(",")[:600] if x.strip().isdigit())
+        return await _repassar("GET", f"/admin/{v}/estudio/missoes_resumo", {
+            "rascunho": rascunho, "ids": lista or None, "npc": npc if npc and npc > 0 else None})
+
     # Missões (B255, só leitura): o tasks.data do realm.
     @app.get("/api/realms/{realm}/estudio/missoes")
     async def estudio_missoes(realm: str, requisicao: Request, busca: str = "", topo: bool = True, pagina: int = 0,
@@ -941,7 +959,8 @@ def registrar_reinicio(app):
 
     @app.get("/api/realms/{realm}/estudio/modelos/ficha")
     async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None,
-                             voo: int | None = None, habilidades: str | None = None, politica: int | None = None):
+                             voo: int | None = None, habilidades: str | None = None, politica: int | None = None,
+                             npc: bool = False):
         v = await _versao_do_realm(requisicao, realm)
         # B283: `voo` (0 espada, 1 asa, 2 rodas) — o diagnóstico de voo.
         # B365: `habilidades` (ids separados por vírgula) e `politica` (common_strategy) — diagnóstico de habilidades.
@@ -949,7 +968,9 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho,
                                "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None,
                                "voo": voo if voo is not None and 0 <= voo <= 2 else None,
-                               "habilidades": ids, "politica": politica if politica and politica > 0 else None})
+                               "habilidades": ids, "politica": politica if politica and politica > 0 else None,
+                               # B392: modelo de NPC de serviço — o diagnóstico usa as ações ACT_NPC_*.
+                               "npc": "true" if npc else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
     # B373: trocar a animação-base de uma ação combinada do .ecm (o que o monstro executa parado, andando, atacando…).

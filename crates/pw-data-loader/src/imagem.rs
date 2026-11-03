@@ -5,7 +5,7 @@
 //! Formatos públicos: DDS (`DDS_HEADER` de 124 bytes depois de `"DDS "`, `DDS_PIXELFORMAT` em +76: tamanho, flags,
 //! FourCC, bits por pixel e as máscaras R, G, B, A) e S3TC/BCn — bloco 4×4 com duas cores RGB565 e índices de 2 bits
 //! (DXT1; com `c0 <= c1` o índice 3 é transparente), alfa explícito de 4 bits (DXT3) ou interpolado de 8 valores
-//! (DXT5). TGA tipo 2 (RGB sem compressão), 24 ou 32 bits, origem embaixo salvo o bit 5 do descritor.
+//! (DXT5). TGA tipo 2 (RGB sem compressão) e tipo 10 (o mesmo em RLE, B393), 24 ou 32 bits, origem embaixo salvo o bit 5 do descritor.
 
 #[derive(Clone)]
 pub struct Imagem {
@@ -152,7 +152,9 @@ pub fn dds(b: &[u8]) -> Option<Imagem> {
 }
 
 pub fn tga(b: &[u8]) -> Option<Imagem> {
-    if b.len() < 18 || b[2] != 2 {
+    // B393: tipo 2 (sem compressão) e tipo 10 (RLE). O 10 existe no cliente: `models/npcs/bocchi/textures/face.tga`
+    // do 1.2.6 (cabeçalho `00 00 0a … 00 04 00 04 18 00`: 1024×1024, 24 bits, origem embaixo) — o rosto do Bocchinelson.
+    if b.len() < 18 || !matches!(b[2], 2 | 10) {
         return None;
     }
     let id = b[0] as usize;
@@ -165,7 +167,33 @@ pub fn tga(b: &[u8]) -> Option<Imagem> {
     }
     let inicio = 18 + id + if b[1] == 1 { u16::from_le_bytes([b[5], b[6]]) as usize * (b[7] as usize / 8) } else { 0 };
     let (w, h) = (largura as usize, altura as usize);
-    let dados = b.get(inicio..inicio + w * h * bpp)?;
+    let descomprimido;
+    let dados = if b[2] == 10 {
+        // Pacotes: 1 byte de cabeçalho; bit 7 = repetição (1 pixel × (n&0x7f)+1), senão (n+1) pixels crus.
+        let total = w * h * bpp;
+        let mut d = Vec::with_capacity(total);
+        let mut i = inicio;
+        while d.len() < total {
+            let c = *b.get(i)? as usize;
+            i += 1;
+            let n = (c & 0x7f) + 1;
+            if c & 0x80 != 0 {
+                let p = b.get(i..i + bpp)?;
+                for _ in 0..n {
+                    d.extend_from_slice(p);
+                }
+                i += bpp;
+            } else {
+                d.extend_from_slice(b.get(i..i + n * bpp)?);
+                i += n * bpp;
+            }
+        }
+        d.truncate(total);
+        descomprimido = d;
+        &descomprimido[..]
+    } else {
+        b.get(inicio..inicio + w * h * bpp)?
+    };
     let mut rgba = vec![0u8; w * h * 4];
     for y in 0..h {
         let origem = if de_cima { y } else { h - 1 - y };
@@ -605,5 +633,11 @@ mod testes {
         t[16] = 24;
         t.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
         assert_eq!(tga(&t).unwrap().rgba, vec![6, 5, 4, 255, 3, 2, 1, 255]);
+        // B393: o mesmo TGA em RLE (tipo 10): um pacote de repetição (2 pixels iguais) e um cru (1 pixel), 3×1.
+        let mut r = vec![0u8, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 1, 0, 24, 0x20];
+        r.extend_from_slice(&[0x81, 1, 2, 3, 0x00, 4, 5, 6]);
+        assert_eq!(tga(&r).unwrap().rgba, vec![3, 2, 1, 255, 3, 2, 1, 255, 6, 5, 4, 255]);
+        // RLE truncado não decodifica (nada de imagem pela metade).
+        assert!(tga(&r[..r.len() - 1]).is_none());
     }
 }

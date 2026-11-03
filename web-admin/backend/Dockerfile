@@ -15,6 +15,8 @@ RUN npm ci --no-audit --no-fund
 COPY web-admin/estudio/ ./
 # Os layouts do elements das duas versões: o teste dos grupos de Itens confere cada tabela neles (lib/itens.test.ts).
 COPY specs/elements_layouts/v156.json specs/elements_layouts/v7.json /build/specs/elements_layouts/
+# B392: o teste da conversa confere as funções de opção (`enum SERVICE_TYPE`) do mesmo arquivo que o pw-recursos usa.
+COPY specs/estudio/funcoes_de_conversa.json /build/specs/estudio/
 RUN npm test && npm run build
 
 FROM python:3.11-slim-bookworm

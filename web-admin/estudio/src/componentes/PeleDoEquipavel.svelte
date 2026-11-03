@@ -110,7 +110,7 @@
     <label class="mini"><input type="checkbox" bind:checked={comCorpo} /> com o corpo</label>
   </div>
   <canvas bind:this={tela} width="560" height="420"></canvas>
-  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || "Arraste para girar, roda para aproximar."} · local {local} · {peca[0] ?? ""}</p>
+  <p class="mini">{carregando ? "Carregando…" : erroDoGlb || "Arraste para girar; botão direito (ou Shift) sobe e desce; roda aproxima; duplo clique recentra."} · local {local} · {peca[0] ?? ""}</p>
   {#if existe.length && !existe.every(Boolean)}
     <p class="erro mini">Faltam níveis desta pele ({peca.filter((_, k) => !existe[k]).map((c) => c.split("\\").pop()).join(", ")}): o cliente não veste a peça e usa a roupa padrão.</p>
   {/if}

@@ -172,6 +172,8 @@ struct QCaminho {
     habilidades: Option<String>,
     /// B365: a política do monstro (`common_strategy`): as habilidades que ela manda usar entram no diagnóstico.
     politica: Option<u32>,
+    /// B392: o modelo é de um NPC de serviço — o diagnóstico usa as ações `ACT_NPC_*` (`ecm::pedidos_de_npc`).
+    npc: Option<bool>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -415,7 +417,11 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             };
             json!({ "indice": i, "pedido": pedido, "alternativa": alternativa, "estado": estado })
         }).collect() };
-        let diagnostico = diagnosticar(pw_data_loader::ecm::pedidos_de_monstro(&tabela));
+        let diagnostico = diagnosticar(if q.npc == Some(true) {
+            pw_data_loader::ecm::pedidos_de_npc(&tabela)
+        } else {
+            pw_data_loader::ecm::pedidos_de_monstro(&tabela)
+        });
         // B281: mascote (invocado, de combate ou evolutivo) — os nomes com o ambiente do habitat.
         let de_mascote = q.habitat.filter(|h| *h <= 6).map(|h| diagnosticar(pw_data_loader::ecm::pedidos_de_mascote(&tabela, h)));
         // B283: voo — o encaixe no esqueleto e as ações que os modelos de jogador mandam aos filhos.
@@ -576,6 +582,8 @@ const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[
     ("飞行悬停", "voando parado"), ("飞行前进", "voando para frente"), ("飞行落地", "pousando"), ("飞行下降", "descendo"),
     ("翅膀收起", "asas recolhidas"), ("飞剑", "espada voadora: "), ("展开", "abrindo"), ("收起", "recolhendo"), ("起飞", "decolando"),
     ("滑翔", "planando"), ("前进", "para frente"), ("悬停", "parado no ar"), ("落地", "pousando"), ("静止", "parada"),
+    // B392: as do NPC de serviço (`actions_npc.txt` 17–25): 休闲动作1/2, 跑动, 攻击, 消失.
+    ("休闲动作", "Ocioso "), ("跑动", "Correndo"), ("消失", "Sumindo"), ("攻击", "Atacando"),
     ("站立", "Parado"), ("休闲", "Ocioso"), ("戒备", "Em guarda"), ("慢速移动", "Andando"), ("快速移动", "Correndo"),
     ("普攻", "Ataque "), ("魔攻", "Ataque mágico "), ("技能", "Habilidade "), ("施放", "lançar "), ("吟唱", "concentrar "), ("死亡", "Morrendo"),
     ("受伤", "Apanhando"), ("叠加", " (sobreposto)"), ("起", " — início"), ("落", " — golpe"), ("挂点", "Ponto de encaixe"), ("飞行", "Voando"),
@@ -1670,6 +1678,38 @@ async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, 
     Ok(Json(e.estudio.remover_oferta(&e.gov, &v, &arquivo, r, indice).await?))
 }
 
+// ------------------------------------------------------------------ serviços de NPC e resumo de missões (B392)
+
+#[derive(Deserialize)]
+struct QServicos {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+    uso: Option<String>,
+    pagina: Option<usize>,
+    por_pagina: Option<usize>,
+}
+
+async fn estudio_servicos(State(e): State<Arc<Estado>>, Path((v, tabela)): Path<(String, String)>, Query(q): Query<QServicos>) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = e.estudio.servicos(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.uso.as_deref(),
+        q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50)).await.map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?;
+    Ok(Json(r))
+}
+
+#[derive(Deserialize)]
+struct QResumoDeMissoes {
+    rascunho: Option<i64>,
+    ids: Option<String>,
+    npc: Option<u32>,
+}
+
+async fn estudio_missoes_resumo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QResumoDeMissoes>) -> R<Json<Value>> {
+    validar(&v)?;
+    let ids: Vec<u32> = q.ids.as_deref().unwrap_or("").split(',').filter_map(|x| x.trim().parse().ok()).filter(|&x| x > 0).take(600).collect();
+    Ok(Json(e.estudio.missoes_resumo(&e.gov, &v, q.rascunho, &ids, q.npc).await?))
+}
+
 // ------------------------------------------------------------------ missões (S7, B255)
 
 #[derive(Deserialize)]
@@ -2129,6 +2169,8 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
+        .route("/admin/{v}/estudio/missoes_resumo", get(estudio_missoes_resumo))
+        .route("/admin/{v}/estudio/servicos/{tabela}", get(estudio_servicos))
         .route("/admin/{v}/estudio/comportamentos", get(estudio_comportamentos))
         .route("/admin/{v}/estudio/modelos", get(estudio_modelos))
         .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
@@ -2194,6 +2236,11 @@ mod testes_b380 {
         assert_eq!(super::nome_legivel_da_acao("战斗站立"), "Parado em combate · 战斗站立");
         assert_eq!(super::nome_legivel_da_acao("普攻1起"), "Ataque 1 — início · 普攻1起");
         assert_eq!(super::nome_legivel_da_acao("andar"), "andar");
+        // B392: ações do NPC de serviço.
+        assert_eq!(super::nome_legivel_da_acao("休闲动作1"), "Ocioso 1 · 休闲动作1");
+        assert_eq!(super::nome_legivel_da_acao("攻击起"), "Atacando — início · 攻击起");
+        assert_eq!(super::nome_legivel_da_acao("跑动"), "Correndo · 跑动");
+        assert_eq!(super::nome_legivel_da_acao("消失"), "Sumindo · 消失");
         assert_eq!(super::nome_legivel_da_acao("受伤叠加"), "Apanhando (sobreposto) · 受伤叠加");
         // Sem tradução de tudo, só o original (antes: "— golpe石术lançar — golpe").
         assert_eq!(super::nome_legivel_da_acao("落石术施放落"), "落石术施放落");

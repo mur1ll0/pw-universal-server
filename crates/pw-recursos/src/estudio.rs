@@ -384,7 +384,7 @@ impl Estudio {
         // do ESSENCE, como `WEAPON_ESSENCE` — `espaco_de_id`).
         let espaco = espaco_de_id(tabela);
         let de_id: Vec<&String> = colunas.iter().filter(|c| c.starts_with("id_")).collect();
-        let ids = if de_id.is_empty() || espaco.is_none() { HashMap::new() } else { mapa_de_ids(&e) };
+        let ids = if (de_id.is_empty() || espaco.is_none()) && tabela != "RECIPE_ESSENCE" { HashMap::new() } else { mapa_de_ids(&e) };
         let nome_de = |v: f64| -> Option<String> {
             let &(ti, ri) = ids.get(&(espaco.clone()?, v as i32))?;
             (ti != CONVERSAS).then(|| nome_do_registro(&e.tabelas[ti], ri))
@@ -409,6 +409,9 @@ impl Estudio {
             .take(por_pagina)
             .map(|(i, id, nome, valores)| {
                 let mut r = json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) });
+                if let Some(p) = produto_da_receita(&e, &ids, t, i) {
+                    r["produto"] = p;
+                }
                 if !colunas.is_empty() {
                     r["campos"] = Value::Object(colunas.iter().map(|c| (c.clone(), json!(valores.get(c)))).collect());
                 }
@@ -424,6 +427,154 @@ impl Estudio {
             "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista,
             "colunas": colunas, "ordem": ordem.map(|c| if decrescente { format!("-{c}") } else { c }), "opcoes": opcoes,
         }))
+    }
+
+    /// B392: os serviços de NPC de uma tabela `NPC_*_SERVICE` para o modal de serviços do Estúdio. Cada um com quantos NPCs
+    /// o usam (os campos `id_*_service` do `NPC_ESSENCE` que valem o id dele; o menu do NPC é montado por eles,
+    /// `DlgNPC.cpp:339-441`), até 5 nomes desses NPCs e um resumo das listas (itens das abas, receitas, destinos,
+    /// missões). A busca acha pelo id, pelo nome do serviço ou pelo nome do que ele lista (item vendido, receita).
+    /// `uso`: "em_uso" ou "sem_uso".
+    #[allow(clippy::too_many_arguments)]
+    pub async fn servicos(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        rascunho: Option<i64>,
+        tabela: &str,
+        busca: &str,
+        uso: Option<&str>,
+        pagina: usize,
+        por_pagina: usize,
+    ) -> Result<Value> {
+        if !(tabela.starts_with("NPC_") && tabela.ends_with("_SERVICE")) {
+            bail!("{tabela} não é tabela de serviço de NPC");
+        }
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let t = e.tabela(tabela)?;
+        // Quem usa: id do serviço → (quantos NPCs, nomes).
+        let mut usuarios: HashMap<i32, (usize, Vec<String>)> = HashMap::new();
+        if let Ok(npcs) = e.tabela("NPC_ESSENCE") {
+            let campos: Vec<String> = npcs
+                .campos()
+                .into_iter()
+                .map(|(_, _, f)| f.name.clone())
+                .filter(|n| n.starts_with("id_") && n.ends_with("_service"))
+                .collect();
+            for i in 0..npcs.registros.len() {
+                let r = npcs.ler(i)?;
+                let mut vistos = HashSet::new();
+                for c in &campos {
+                    if let Some(FieldValue::Int(v)) = r.get(c) {
+                        if *v > 0 && vistos.insert(*v) {
+                            let u = usuarios.entry(*v).or_default();
+                            u.0 += 1;
+                            if u.1.len() < 5 {
+                                u.1.push(nome_do_registro(npcs, i));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let ids = mapa_de_ids(&e);
+        let nome_citado = |espaco: &str, v: i32| -> Option<String> {
+            let &(ti, ri) = ids.get(&(espaco.to_string(), v))?;
+            (ti != CONVERSAS).then(|| nome_do_registro(&e.tabelas[ti], ri))
+        };
+        // As listas do serviço: o campo com índice que cita outro espaço (item, receita…); o `id_dialog` não conta.
+        let eh_lista = |n: &str| n.chars().any(|c| c.is_ascii_digit());
+        let listas: Vec<(String, &'static str)> = t
+            .campos()
+            .into_iter()
+            .filter_map(|(_, _, f)| Some((f.name.clone(), espaco_citado(tabela, &f.name)?)))
+            .filter(|(n, _)| n != "id_dialog" && eh_lista(n))
+            .collect();
+        let busca = busca.trim().to_lowercase();
+        let mut achados = Vec::new();
+        for i in 0..t.registros.len() {
+            let id = t.id(i).unwrap_or(0);
+            let r = t.ler(i)?;
+            let nome = match r.get("Name") {
+                Some(FieldValue::Text(s)) => s.clone(),
+                _ => String::new(),
+            };
+            let (npcs, nomes_dos_npcs) = usuarios.get(&id).cloned().unwrap_or_default();
+            match uso {
+                Some("em_uso") if npcs == 0 => continue,
+                Some("sem_uso") if npcs > 0 => continue,
+                _ => {}
+            }
+            // Resumo: abas com título, destinos, a lista de missões ou habilidades (sem espaço no catálogo) e os itens
+            // citados pelas listas.
+            let mut abas = 0usize;
+            let mut destinos = 0usize;
+            let mut outros = 0usize;
+            for (n, v) in r.iter() {
+                let numero = valor_numerico(v).unwrap_or(0.0) as i64;
+                if n.ends_with("page_title") {
+                    if matches!(v, FieldValue::Text(s) if !s.trim().is_empty()) {
+                        abas += 1;
+                    }
+                } else if n.starts_with("targets_") && n.ends_with("_idTarget") {
+                    destinos += usize::from(numero != 0);
+                } else if (n.starts_with("id_tasks_") || n.starts_with("id_skills_") || (n.starts_with("tasks_") && n.ends_with("_id_task")))
+                    && eh_lista(n)
+                {
+                    outros += usize::from(numero > 0);
+                }
+            }
+            let mut itens = 0usize;
+            let mut casa_na_lista = false;
+            for (n, esp) in &listas {
+                let Some(v) = r.get(n).and_then(valor_numerico) else { continue };
+                let v = v as i32;
+                if v <= 0 {
+                    continue;
+                }
+                itens += 1;
+                if !busca.is_empty() && !casa_na_lista {
+                    casa_na_lista = nome_citado(esp, v).is_some_and(|x| x.to_lowercase().contains(&busca));
+                }
+            }
+            let no_nome = nome.to_lowercase().contains(&busca);
+            if !(busca.is_empty() || id.to_string() == busca || no_nome || casa_na_lista) {
+                continue;
+            }
+            achados.push(json!({
+                "indice": i, "id": id, "nome": nome, "npcs": npcs, "nomes_dos_npcs": nomes_dos_npcs,
+                "resumo": { "itens": itens, "abas": abas, "destinos": destinos, "lista": outros },
+                "achado_na_lista": casa_na_lista && !no_nome,
+            }));
+        }
+        let por_pagina = por_pagina.clamp(1, 200);
+        let total = achados.len();
+        Ok(json!({
+            "tabela": tabela, "total": total, "pagina": pagina, "por_pagina": por_pagina,
+            "registros": achados.into_iter().skip(pagina * por_pagina).take(por_pagina).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// B392: nome e dados de lista de várias missões pelo id (o que um serviço de missão de NPC lista) e, com `npc`, as
+    /// missões do `tasks.data` que dizem que esse NPC as entrega (`npc_que_entrega`) ou premia (`npc_que_premia`).
+    pub async fn missoes_resumo(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, ids: &[u32], npc: Option<u32>) -> Result<Value> {
+        let t = self.missoes_do_realm(gov, versao, rascunho).await?;
+        let linha = |id: u32| match t.tasks.get(&id) {
+            Some(m) => json!({ "id": id, "nome": m.name, "tipo": m.tipo, "nivel_min": m.min_level, "nivel_max": m.max_level,
+                "mae": m.parent, "filhas": m.sub_tasks.len(), "npc_entrega": m.npc_que_entrega, "npc_premio": m.npc_que_premia }),
+            None => json!({ "id": id, "nome": null, "ausente": true }),
+        };
+        let mut do_npc = Value::Null;
+        if let Some(n) = npc.filter(|&n| n > 0) {
+            let mut entrega: Vec<u32> = t.tasks.values().filter(|m| m.npc_que_entrega == n).map(|m| m.id).collect();
+            let mut premia: Vec<u32> = t.tasks.values().filter(|m| m.npc_que_premia == n).map(|m| m.id).collect();
+            entrega.sort_unstable();
+            premia.sort_unstable();
+            do_npc = json!({
+                "entrega": entrega.iter().take(300).map(|&i| linha(i)).collect::<Vec<_>>(),
+                "premia": premia.iter().take(300).map(|&i| linha(i)).collect::<Vec<_>>(),
+            });
+        }
+        Ok(json!({ "missoes": ids.iter().take(600).map(|&i| linha(i)).collect::<Vec<_>>(), "do_npc": do_npc }))
     }
 
     /// B283: os modelos de voo do elements e o modo de cada um (`ecm::encaixe_de_voo`): `FLYSWORD_ESSENCE.file_model`
@@ -488,7 +639,8 @@ impl Estudio {
                                 }),
                                 Some(&(ti, ri)) => {
                                     let alvo = &e.tabelas[ti];
-                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) })
+                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri),
+                                        "produto": produto_da_receita(&e, &ids, alvo, ri) })
                                 }
                                 None => json!({ "ausente": true, "id": v }),
                             };
@@ -506,7 +658,8 @@ impl Estudio {
         };
         Ok(json!({
             "tabela": tabela, "indice": indice, "id": t.id(indice), "espaco": espaco_de_id(tabela),
-            "nome": nome_do_registro(t, indice), "icone": icone_do_registro(t, indice), "campos": campos, "usado_por": usado_por,
+            "nome": nome_do_registro(t, indice), "icone": icone_do_registro(t, indice), "produto": produto_da_receita(&e, &ids, t, indice),
+            "campos": campos, "usado_por": usado_por,
         }))
     }
 
@@ -535,6 +688,8 @@ impl Estudio {
             }
             return Ok(json!(achados));
         }
+        // B393: a receita se acha também pelo nome do item que produz (é o nome que o jogo mostra).
+        let ids = if espaco == "RECIPE" { mapa_de_ids(&e) } else { HashMap::new() };
         'tabelas: for t in &e.tabelas {
             if espaco_de_id(&t.nome).as_deref() != Some(espaco) {
                 continue;
@@ -542,8 +697,14 @@ impl Estudio {
             for i in 0..t.registros.len() {
                 let id = t.id(i);
                 let nome = nome_do_registro(t, i);
-                if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
+                let produto = produto_da_receita(&e, &ids, t, i);
+                let do_produto = produto.as_ref().and_then(|p| p["nome"].as_str()).is_some_and(|n| n.to_lowercase().contains(&busca));
+                if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) || do_produto {
+                    let mut r = json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) });
+                    if let Some(p) = produto {
+                        r["produto"] = p;
+                    }
+                    achados.push(r);
                     if achados.len() >= limite.clamp(1, 200) {
                         break 'tabelas;
                     }
@@ -706,6 +867,27 @@ pub fn espaco_citado(tabela: &str, campo: &str) -> Option<&'static str> {
 /// (`/api/icones/<m|f>/<hex>.png`, B188) procura no atlas: a célula é só o nome do arquivo, como o
 /// cliente faz (`SetCover`, `EC_GameUIMan.cpp:6204-6208`). O corte é no texto decodificado: um 2º
 /// byte GBK pode ser 0x5C (`\`).
+/// B393: a receita aparece no cliente com o ícone, o nome e a descrição do item que ela produz em `targets[0]`
+/// (`CECIvtrRecipe`: `m_pGenItem1 = CreateItem(targets[0].id_to_make)`, `GetIconFile`/`GetName` devolvem os dele —
+/// `EC_IvtrMaterial.cpp:165,200-218`; sem produto, "Unknown.dds"). Devolve `{id, nome, icone}` desse item.
+fn produto_da_receita(
+    e: &ElementsEditavel,
+    ids: &HashMap<(String, i32), (usize, usize)>,
+    t: &pw_data_loader::elements_editavel::TabelaEditavel,
+    i: usize,
+) -> Option<Value> {
+    if t.nome != "RECIPE_ESSENCE" {
+        return None;
+    }
+    let id = inteiro_do_campo(&t.ler(i).ok()?, "targets_1_id_to_make").filter(|&x| x > 0)?;
+    let &(ti, ri) = ids.get(&("ESSENCE".to_string(), i32::try_from(id).ok()?))?;
+    if ti == CONVERSAS {
+        return None;
+    }
+    let alvo = &e.tabelas[ti];
+    Some(json!({ "id": id, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) }))
+}
+
 fn icone_do_registro(t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize) -> Option<String> {
     match t.ler(i).ok()?.get("file_icon")? {
         FieldValue::Raw(b) if !b.is_empty() => {

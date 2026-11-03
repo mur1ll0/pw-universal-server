@@ -877,6 +877,26 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(mi["ficha"]["npc_que_entrega"], 3517, "{}", mi["ficha"]["name"]);
         assert!(mi["nomes"]["3517"]["nome"].is_string(), "o NPC 3517 tem nome: {}", mi["nomes"]);
         assert_eq!(erro_de(pedir("GET", "estudio/missoes/999999999").call()).0, 400);
+        // B392: resumo de missões por id e as que o tasks.data liga ao NPC (a 1173 é entregue pelo 3517).
+        let rm = json_de(pedir("GET", "estudio/missoes_resumo").query("ids", "1173,999999").query("npc", "3517").call().unwrap());
+        assert_eq!(rm["missoes"][0]["id"], 1173);
+        assert!(rm["missoes"][0]["nome"].is_string() && rm["missoes"][1]["ausente"] == json!(true), "{rm}");
+        assert!(rm["do_npc"]["entrega"].as_array().unwrap().iter().any(|m| m["id"] == 1173), "{}", rm["do_npc"]);
+        // B392: serviços de NPC com quem usa cada um e a busca pelo item vendido.
+        let lojas = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("por_pagina", "200").call().unwrap());
+        let regs = lojas["registros"].as_array().unwrap();
+        assert!(lojas["total"].as_u64().unwrap() > 10, "{}", lojas["total"]);
+        let usada = regs.iter().find(|r| r["npcs"].as_u64().unwrap() > 0 && r["resumo"]["itens"].as_u64().unwrap() > 0).expect("uma loja usada e com itens");
+        assert!(!usada["nomes_dos_npcs"].as_array().unwrap().is_empty());
+        let fl = json_de(pedir("GET", &format!("estudio/tabelas/NPC_SELL_SERVICE/{}", usada["indice"])).call().unwrap());
+        let item = fl["campos"].as_array().unwrap().iter().find_map(|c| c["referencia"]["nome"].as_str().filter(|n| n.chars().count() >= 2 && c["nome"].as_str().unwrap().contains("goods"))).expect("item com nome").to_string();
+        let pelo_item = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("busca", &item).query("por_pagina", "200").call().unwrap());
+        assert!(pelo_item["registros"].as_array().unwrap().iter().any(|r| r["indice"] == usada["indice"]), "busca por {item}");
+        let sem_uso = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("uso", "sem_uso").query("por_pagina", "200").call().unwrap());
+        assert!(sem_uso["registros"].as_array().unwrap().iter().all(|r| r["npcs"] == 0));
+        assert_eq!(erro_de(pedir("GET", "estudio/servicos/MONSTER_ESSENCE").call()).0, 400, "só tabelas NPC_*_SERVICE");
+        let tele = json_de(pedir("GET", "estudio/servicos/NPC_TRANSMIT_SERVICE").query("uso", "em_uso").call().unwrap());
+        assert!(tele["registros"].as_array().unwrap().iter().any(|r| r["resumo"]["destinos"].as_u64().unwrap() > 0), "{tele}");
         // Editar no lugar (B256): campos de tamanho fixo; publicar grava o mesmo tasks.data no cliente e no realm.
         assert!(mi["editaveis"].as_array().unwrap().iter().any(|c| c[0] == "min_level"));
         let r12 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "missão", "operacao_id": "t_p4_r12"})).unwrap())["id"].as_i64().unwrap();
@@ -1010,6 +1030,9 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(estado("站立").unwrap().contains("sem ação-base"), "{fe}");
         assert!(estado("普攻1起").unwrap().contains("ausente no .smd"), "{fe}");
         assert!(estado("普攻1落").unwrap().contains("sem ação combinada"), "{fe}");
+        // B392: com `npc=true` o diagnóstico pede as ações ACT_NPC_* (índices 13–26): a tabela de teste só tem 7 nomes.
+        let fn_ = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("npc", "true").call().unwrap());
+        assert_eq!(fn_["diagnostico_de_monstro"].as_array().map(Vec::len), Some(0), "{}", fn_["diagnostico_de_monstro"]);
         // B365: ações de habilidade — o nome nativo do habilidades.pwsk (火球) + 吟唱/施放起/施放落; a 99 não está no .pwsk.
         let fh = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("habilidades", "1,99,0").call().unwrap());
         let dh = fh["diagnostico_de_habilidades"].as_array().unwrap_or_else(|| panic!("{fh}"));
@@ -1472,10 +1495,11 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.
+        // B393: 670 desde 2026-11-01 23:12 (publicação pelo G-Shop do Estúdio; o Murillo testou o G-Shop e aprovou em 2026-11-03).
         let lj = json_de(pedir("GET", "estudio/loja/gshop.data").call().unwrap());
-        assert_eq!((lj["formato"].as_str(), lj["ofertas"].as_array().unwrap().len(), lj["categorias"].as_array().unwrap().len()), (Some("V126"), 668, 8), "{}", lj["formato"]);
+        assert_eq!((lj["formato"].as_str(), lj["ofertas"].as_array().unwrap().len(), lj["categorias"].as_array().unwrap().len()), (Some("V126"), 670, 8), "{}", lj["formato"]);
         let comitem = lj["ofertas"].as_array().unwrap().iter().filter(|o| o[7].is_string()).count();
-        assert!(comitem * 10 >= 668 * 9, "{comitem} ofertas com o item no elements");
+        assert!(comitem * 10 >= 670 * 9, "{comitem} ofertas com o item no elements");
         assert_eq!(erro_de(pedir("GET", "estudio/loja/outra.data").call()).0, 400);
         let of0 = json_de(pedir("GET", "estudio/loja/gshop.data/0").call().unwrap());
         let carimbo0 = lj["carimbo"].as_u64().unwrap();
@@ -1484,8 +1508,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"szName": "x".repeat(40)}}))).0, 400);
         pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"buy_0_price": 777, "szName": "Oferta do Estúdio"}})).unwrap();
         let cl = json_de(pedir("POST", &em11("estudio/loja/gshop.data")).send_json(json!({"base": 0})).unwrap());
-        assert_eq!(cl["resultado"]["indice"], 668);
-        pedir("DELETE", &em11("estudio/loja/gshop.data/668")).call().unwrap();
+        assert_eq!(cl["resultado"]["indice"], 670);
+        pedir("DELETE", &em11("estudio/loja/gshop.data/670")).call().unwrap();
         let of1 = json_de(pedir("GET", &em11("estudio/loja/gshop.data/0")).call().unwrap());
         assert_eq!((of1["campos"]["buy_0_price"].as_u64(), of1["campos"]["szName"].as_str()), (Some(777), Some("Oferta do Estúdio")));
         assert_eq!(of1["campos"]["id"], of0["campos"]["id"]);
@@ -1502,7 +1526,7 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let no_realm = fs::read(realm2.join("gshop.data")).unwrap();
         assert_eq!(no_realm, baixar("data\\gshop.data"), "cliente e realm com o mesmo arquivo");
         let g = pw_data_loader::gshop_editavel::GshopEditavel::ler(&no_realm).unwrap();
-        assert_eq!((g.ofertas.len(), g.carimbo as u64), (668, carimbo0));
+        assert_eq!((g.ofertas.len(), g.carimbo as u64), (670, carimbo0));
         let loja_do_gs = pw_data_loader::gshop::GShopData::load_from_bytes(&no_realm).unwrap();
         assert_eq!(loja_do_gs.ofertas[0].opcoes[0].preco, 777, "o leitor do GS vê o preço novo");
 
@@ -1526,15 +1550,15 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             Ok(r) => json_de(r),
             Err(e) => panic!("nova oferta recusada: {:?}", erro_de(Err(e))),
         };
-        assert_eq!(nova["resultado"]["indice"], 668);
+        assert_eq!(nova["resultado"]["indice"], 670);
         assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data")).send_json(json!({"base": 0, "campos": {"main_type": 9}}))).0, 400, "aba inexistente");
-        pedir("PUT", &em15("estudio/loja/gshop.data/668")).send_json(json!({"campos": {"main_type": 2, "sub_type": 1}})).unwrap();
+        pedir("PUT", &em15("estudio/loja/gshop.data/670")).send_json(json!({"campos": {"main_type": 2, "sub_type": 1}})).unwrap();
         let movida = json_de(pedir("GET", &em15("estudio/loja/gshop.data")).call().unwrap());
-        assert_eq!((movida["ofertas"][668][1].as_i64(), movida["ofertas"][668][2].as_i64()), (Some(2), Some(1)));
-        assert_eq!(erro_de(pedir("PUT", &em15("estudio/loja/gshop.data/668")).send_json(json!({"campos": {"sub_type": 40}}))).0, 400, "subaba inexistente");
+        assert_eq!((movida["ofertas"][670][1].as_i64(), movida["ofertas"][670][2].as_i64()), (Some(2), Some(1)));
+        assert_eq!(erro_de(pedir("PUT", &em15("estudio/loja/gshop.data/670")).send_json(json!({"campos": {"sub_type": 40}}))).0, 400, "subaba inexistente");
         let conf = json_de(pedir("POST", "estudio/loja/gshop.data/0/conferir").send_json(json!({"campos": {"main_type": 8}})).unwrap());
         assert!(conf["erros"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("aba 8")), "{conf}");
-        let fim = json_de(pedir("DELETE", &em15("estudio/loja/gshop.data/668")).call().unwrap());
+        let fim = json_de(pedir("DELETE", &em15("estudio/loja/gshop.data/670")).call().unwrap());
         assert_eq!(fim["igual_ao_publicado"], true, "adicionar, mover e remover volta ao arquivo publicado byte a byte");
         // Subaba nova além dos 8 botões do diálogo: recusada (a aba 1 do 1.2.6 já tem 8).
         assert_eq!(lj3["categorias"][1]["subcategorias"].as_array().unwrap().len(), 8);

@@ -34,6 +34,8 @@ export async function api<T = any>(caminho: string, opcoes: RequestInit = {}): P
 
 /* ---- tipos do que o pw-recursos devolve (`crates/pw-recursos/src/estudio.rs`) ---- */
 
+export interface Produto { id: number; nome: string; icone: string | null }
+
 export interface Referencia {
   tabela?: string;
   indice?: number;
@@ -41,6 +43,8 @@ export interface Referencia {
   nome?: string;
   icone?: string | null;
   ausente?: boolean;
+  /** B393: receita — o item de `targets_1_id_to_make`, que o jogo mostra no lugar dela. */
+  produto?: Produto | null;
 }
 
 export interface Campo {
@@ -62,6 +66,7 @@ export interface Ficha {
   espaco: string | null;
   nome: string;
   icone: string | null;
+  produto?: Produto | null;
   campos: Campo[];
   usado_por: unknown[];
 }
@@ -71,6 +76,7 @@ export interface Registro {
   id: number | null;
   nome: string;
   icone: string | null;
+  produto?: Produto | null;
   tabela?: string;
   /** B376: valores das `colunas` pedidas e, nas colunas `id_*`, o nome do registro citado. */
   campos?: Record<string, number | null>;
@@ -304,7 +310,7 @@ export const urlDaPeca = (caminho: string, peca: string) =>
   `/api/realms/${encodeURIComponent(contexto.realm)}/estudio/mapas/${encodeURIComponent(caminho)}/pecas/${peca}.png`;
 
 /** Ponto (centro) e tamanho da área de um spawner, em unidades do mundo (`vPos_x/z`, `vExts_x/z`). */
-export interface EscolhaNoMapa { x: number; z: number; largura: number; altura: number }
+export interface EscolhaNoMapa { x: number; z: number; largura: number; altura: number; /** B392: graus (0 = +x, 90 = +z) */ direcao?: number }
 
 /* ---- B373: modelo e ações do monstro (rotas dos Editores, B272-B300; `modelos/base` nova) ---- */
 export interface FichaDoModelo {
@@ -385,3 +391,67 @@ export async function importarPeleDoEquipamento(realname: string, genero: number
   if (!r.ok) throw new ErroDaApi(d?.mensagem || d?.detail || `HTTP ${r.status}`, r.status);
   return d;
 }
+
+/* ---- B392: NPCs, serviços, conversas e missões ---- */
+
+export interface ServicoListado {
+  indice: number; id: number; nome: string; npcs: number; nomes_dos_npcs: string[];
+  resumo: { itens: number; abas: number; destinos: number; lista: number }; achado_na_lista: boolean;
+}
+/** Serviços de uma tabela `NPC_*_SERVICE` com quantos NPCs usam cada um (`Estudio::servicos`). */
+export const listarServicos = (tabela: string, busca: string, uso: "" | "em_uso" | "sem_uso", pagina: number, porPagina = 50) =>
+  api<{ total: number; pagina: number; por_pagina: number; registros: ServicoListado[] }>(
+    rota(`servicos/${tabela}`, { busca, pagina, por_pagina: porPagina, ...(uso ? { uso } : {}) }));
+
+export interface MissaoResumida {
+  id: number; nome: string | null; ausente?: boolean; tipo?: number; nivel_min?: number; nivel_max?: number;
+  mae?: number | null; filhas?: number; npc_entrega?: number; npc_premio?: number;
+}
+/** Nome e dados de lista de missões pelo id e as que o tasks.data liga ao NPC (`Estudio::missoes_resumo`). */
+export const resumoDeMissoes = (ids: number[], npc?: number) =>
+  api<{ missoes: MissaoResumida[]; do_npc: null | { entrega: MissaoResumida[]; premia: MissaoResumida[] } }>(
+    rota("missoes_resumo", { ids: ids.join(","), ...(npc ? { npc } : {}) }));
+
+export interface OpcaoDeConversa { id: number; texto: string; param: number; funcao?: string }
+export interface JanelaDeConversa { id: number; id_pai: number; texto: string; opcoes: OpcaoDeConversa[] }
+export interface Conversa { indice: number; id: number; texto: string; janelas: JanelaDeConversa[]; usado_por?: { tabela: string; indice: number; id: number; nome: string; campo?: string }[] }
+export interface FuncaoDeConversa { codigo: number; nome: string; rotulo: string }
+
+export const funcoesDeConversa = () => api<FuncaoDeConversa[]>(rota("funcoes", {}, false));
+export const listarConversas = (busca: string, pagina = 0, porPagina = 50) =>
+  api<{ total: number; registros: { indice: number; id: number; nome: string; janelas: number }[] }>(rota("conversas", { busca, pagina, por_pagina: porPagina }));
+export const lerConversa = (indice: number) => api<Conversa>(rota(`conversas/${indice}`));
+export const salvarConversa = (indice: number, c: Pick<Conversa, "texto" | "janelas">) =>
+  api<{ resultado?: { id: number; mudou: boolean }; igual_ao_publicado?: boolean }>(rota(`conversas/${indice}`), {
+    method: "PUT", body: JSON.stringify({ conversa: c }) });
+export async function novaConversa(base?: number): Promise<{ indice: number; id: number }> {
+  const r = await api<{ indice?: number; id?: number; resultado?: { indice: number; id: number } }>(rota("conversas", base != null ? { base } : {}), { method: "POST" });
+  return { indice: r.resultado?.indice ?? r.indice ?? -1, id: r.resultado?.id ?? r.id ?? 0 };
+}
+/** O índice da conversa de um id (a busca do servidor acha pelo id exato). */
+export async function conversaPorId(id: number): Promise<Conversa | null> {
+  const r = await listarConversas(String(id), 0, 50);
+  const achada = r.registros.find((x) => x.id === id);
+  return achada ? lerConversa(achada.indice) : null;
+}
+
+export interface LinhaDeMissao { id: number; nome: string; tipo: number; nivel_min: number; nivel_max: number; mae: number | null; filhas: number; npc_entrega: number; npc_premio: number }
+export async function listarMissoes(busca: string, topo: boolean, pagina: number, porPagina = 100) {
+  const r = await api<{ missoes: number; de_topo: number; total: number; pagina: number; versao_do_arquivo: number; linhas: unknown[][] }>(
+    rota("missoes", { busca, topo: topo ? "true" : "false", pagina, por_pagina: porPagina }));
+  const linhas: LinhaDeMissao[] = r.linhas.map((l) => ({ id: l[0] as number, nome: l[1] as string, tipo: l[2] as number, nivel_min: l[3] as number,
+    nivel_max: l[4] as number, mae: (l[5] as number | null) ?? null, filhas: l[6] as number, npc_entrega: l[7] as number, npc_premio: l[8] as number }));
+  return { ...r, linhas };
+}
+export const lerMissao = (id: number) => api<any>(rota(`missoes/${id}`));
+export const editarMissao = (id: number, campos: Record<string, unknown>) =>
+  api<{ resultado?: unknown }>(rota(`missoes/${id}`), { method: "PUT", body: JSON.stringify({ campos }) });
+export const clonarMissao = (id: number) => api<{ resultado?: { id: number }; id?: number }>(rota(`missoes/${id}/clonar`), { method: "POST" });
+
+/** Posição do NPC no rastreador de missões do cliente (`task_npc.data`; o cliente só o consulta no mapa principal). */
+export const posicaoNoRastreador = (id: number, pos: [number, number, number]) =>
+  api(rota(`rastreador/${id}`), { method: "PUT", body: JSON.stringify({ campos: { pos } }) });
+
+export interface PontoDeTeleporte { id: number; nome: string | null; dominio: number; pos: number[]; usado_por: { nome: string; indice: number }[] }
+export const teleportesDoMapa = (caminho: string) =>
+  api<{ mapa: number; pontos: PontoDeTeleporte[] }>(rota(`mapas/${encodeURIComponent(caminho)}/teleportes`));

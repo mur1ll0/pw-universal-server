@@ -137,6 +137,30 @@ pub fn pedidos_de_monstro(tabela: &[String]) -> Vec<(usize, String, Option<Strin
     r
 }
 
+/// B392: os nomes que o cliente pede a um NPC de serviço (`CECNPCServer`; `IsMonsterOrPet()` falso). O código toca as
+/// ações `ACT_NPC_*` (índices do enum de `EC_NPC.h:94-120`, nomes pela mesma tabela `actions_npc.txt`):
+/// parado (19, `StartWork_Stand`, `EC_NPC.cpp:1694-1701`), ocioso 1 e 2 (17/18, sorteados a cada 25 s parado,
+/// `EC_NPC.cpp:367, 1907-1922`, e a fila volta ao parado, `EC_NPCModel.cpp:722-727`), andar e correr (20/21,
+/// `EC_NPC.cpp:1160-1192`), atacar (22 com `起`/`落`, `EC_NPCModel.cpp:728-737, 755`), morrer (23, `EC_NPC.cpp:1718-1724`),
+/// ferido (13, alternativa 26 — `Damaged` toca `ACT_WOUNDED` em qualquer NPC, `EC_NPC.cpp:1360-1387`), nascer (24, só se
+/// o modelo tiver, `HasAction`, `EC_NPC.cpp:638-639`) e sumir (25, `Disappear`, `EC_NPC.cpp:1351-1355`). As de conversa
+/// (14–16) estão mapeadas a −1 e o código nunca as toca (`EC_NPCModel.cpp:912-914`). Devolve `(índice, nome, alternativa)`.
+pub fn pedidos_de_npc(tabela: &[String]) -> Vec<(usize, String, Option<String>)> {
+    let mut r = Vec::new();
+    for i in [19usize, 17, 18, 20, 21, 22, 23, 13, 24, 25] {
+        let Some(nome) = tabela.get(i) else { continue };
+        match i {
+            22 => {
+                r.push((i, format!("{nome}起"), None));
+                r.push((i, format!("{nome}落"), None));
+            }
+            13 => r.push((i, nome.clone(), tabela.get(26).cloned())),
+            _ => r.push((i, nome.clone(), None)),
+        }
+    }
+    r
+}
+
 /// As linhas em bytes (sem a marca `MOXT`), cada uma com o seu fim de linha (B280: trabalhar nos bytes deixa o resto do
 /// arquivo idêntico — decodificar e recodificar o GBK poderia mudar bytes que ele não representa).
 fn linhas_com_fim(b: &[u8]) -> Vec<&[u8]> {
@@ -641,6 +665,21 @@ mod testes {
         assert!(!p.iter().any(|x| x.1 == "技能1"), "ACT_SKILL1 não é tocada");
         let m = pedidos_de_mascote(&t, 4);
         assert!(m.iter().any(|x| x.1 == "普攻1起_地面") && m.iter().any(|x| x.1 == "站立_空中") && !m.iter().any(|x| x.1.ends_with("_水中")), "habitat 4 = chão + ar");
+    }
+
+    /// B392: a tabela inteira do cliente 1.5.5 BR (`configs\actions_npc.txt`, 27 nomes) e o que o NPC de serviço pede.
+    #[test]
+    fn pedidos_do_npc() {
+        let nomes = ["站立", "休闲", "戒备", "技能1", "慢速移动", "普攻1", "普攻2", "快速移动", "死亡", "跳跃起", "跳跃落", "跳跃循环", "魔攻1",
+            "受伤叠加", "抱胸交谈", "伸手交谈", "交谈循环", "休闲动作1", "休闲动作2", "站立", "行走", "跑动", "攻击", "死亡", "出生", "消失", "受伤"];
+        let fonte: String = std::iter::once("#_begin".to_string()).chain(nomes.iter().map(|n| format!("\"{n}\""))).collect::<Vec<_>>().join("\n");
+        let t = tabela_de_nomes(&encoding_rs::GBK.encode(&fonte).0);
+        assert_eq!(t.len(), 27);
+        let p = pedidos_de_npc(&t);
+        let nomes_pedidos: Vec<&str> = p.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(nomes_pedidos, ["站立", "休闲动作1", "休闲动作2", "行走", "跑动", "攻击起", "攻击落", "死亡", "受伤叠加", "出生", "消失"]);
+        assert_eq!(p.iter().find(|x| x.0 == 13).unwrap().2.as_deref(), Some("受伤"), "ferido: alternativa 26");
+        assert!(!nomes_pedidos.iter().any(|n| n.contains("交谈")), "as ações de conversa nunca são tocadas");
     }
 
     /// B283: as ações filhas (com o `HHName:` de modelo filho do `.ecm` fora delas) e o diagnóstico de voo.

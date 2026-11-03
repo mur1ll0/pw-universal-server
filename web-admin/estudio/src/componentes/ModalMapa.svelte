@@ -4,20 +4,23 @@
      unidades; a imagem tem 512 px por bloco, em peças de 256 px (`pecas/LLCC.png`); px = (x + colunas·512)/2,
      py = (linhas·512 − z)/2.
      Área: o servidor sorteia o nascimento no retângulo `vPos ± vExts/2` (`npcgenerator.cpp:4348-4367`) — o formato só
-     tem retângulo alinhado aos eixos, então é isso que se desenha (não há polígono livre no npcgen). */
+     tem retângulo alinhado aos eixos, então é isso que se desenha (não há polígono livre no npcgen).
+     B392: `comDirecao` (NPC) — só o ponto (área sem tamanho) e uma seta: com a área num ponto o GS usa a direção do
+     `vDir`, `atan2(z, x) × 128/π` (`npcgenerator.cpp:4348-4367`); com tamanho sorteia. A seta se arrasta pela bolinha. */
   import { onMount } from "svelte";
   import { urlDaPeca, type EscolhaNoMapa as Escolha, type MapaDoRealm } from "../lib/api";
   import Modal from "./Modal.svelte";
 
-  let { mapa, inicial, outros = [], aoAplicar, aoFechar }:
+  let { mapa, inicial, outros = [], aoAplicar, aoFechar, comDirecao = false, titulo = "" }:
     { mapa: MapaDoRealm; inicial: Escolha | null; outros?: { x: number; z: number; largura: number; altura: number; rotulo: string }[];
-      aoAplicar: (e: Escolha) => void; aoFechar: () => void } = $props();
+      aoAplicar: (e: Escolha) => void; aoFechar: () => void; comDirecao?: boolean; titulo?: string } = $props();
 
   const LARGURA = mapa.colunas * 512, ALTURA = mapa.linhas * 512; // px da imagem inteira
   let caixa = $state<HTMLDivElement | null>(null);
   let w = $state(800), h = $state(560);
   let escala = $state(1), ox = $state(0), oy = $state(0);
-  let ponto = $state<Escolha | null>(inicial ? { ...inicial } : null);
+  let ponto = $state<Escolha | null>(inicial ? { ...inicial, ...(comDirecao ? { largura: 0, altura: 0, direcao: inicial.direcao ?? 0 } : {}) } : null);
+  const RAIO_DA_SETA = 46; // px na tela
 
   const pxDe = (x: number) => (x + mapa.colunas * 512) / 2;
   const pyDe = (z: number) => (mapa.linhas * 512 - z) / 2;
@@ -30,7 +33,7 @@
     w = caixa.clientWidth; h = caixa.clientHeight;
     if (ponto) {
       // Começa perto do ponto, com a área ocupando uma boa parte da tela.
-      escala = Math.min(4, Math.max(0.25, Math.min(w, h) / Math.max(200, ponto.largura * 3)));
+      escala = Math.min(4, Math.max(0.25, Math.min(w, h) / Math.max(200, (comDirecao ? 60 : ponto.largura) * 3)));
       ox = w / 2 - pxDe(ponto.x) * escala; oy = h / 2 - pyDe(ponto.z) * escala;
     } else {
       escala = Math.min(w / LARGURA, h / ALTURA); ox = (w - LARGURA * escala) / 2; oy = (h - ALTURA * escala) / 2;
@@ -57,8 +60,8 @@
   });
 
   // Arrastar (mover o mapa), alça (tamanho da área) e clique (ponto).
-  let arrasto: null | { tipo: "mapa" | "alca"; x: number; y: number; moveu: boolean } = null;
-  function baixar(e: PointerEvent, tipo: "mapa" | "alca") {
+  let arrasto: null | { tipo: "mapa" | "alca" | "seta"; x: number; y: number; moveu: boolean } = null;
+  function baixar(e: PointerEvent, tipo: "mapa" | "alca" | "seta") {
     e.preventDefault(); e.stopPropagation();
     arrasto = { tipo, x: e.clientX, y: e.clientY, moveu: false };
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -68,6 +71,13 @@
     const dx = e.clientX - arrasto.x, dy = e.clientY - arrasto.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) arrasto.moveu = true;
     if (arrasto.tipo === "mapa") { ox += dx; oy += dy; }
+    else if (arrasto.tipo === "seta" && ponto) {
+      // Ângulo na tela (y para baixo = −z) → graus do mundo: 0 = +x, 90 = +z.
+      const r = caixa!.getBoundingClientRect();
+      const [cx, cy] = tela(pxDe(ponto.x), pyDe(ponto.z));
+      const g = (Math.atan2(-(e.clientY - r.top - cy), e.clientX - r.left - cx) * 180) / Math.PI;
+      ponto.direcao = Math.round(((g % 360) + 360) % 360);
+    }
     else if (ponto) {
       // A alça fica no canto inferior direito: a meia-largura é a distância do centro, em unidades do mundo (2 por px).
       const r = caixa!.getBoundingClientRect();
@@ -82,7 +92,7 @@
       const r = caixa!.getBoundingClientRect();
       const px = (e.clientX - r.left - ox) / escala, py = (e.clientY - r.top - oy) / escala;
       const x = Math.round(xDe(px) * 10) / 10, z = Math.round(zDe(py) * 10) / 10;
-      ponto = { x, z, largura: ponto?.largura ?? 20, altura: ponto?.altura ?? 20 };
+      ponto = comDirecao ? { x, z, largura: 0, altura: 0, direcao: ponto?.direcao ?? 0 } : { x, z, largura: ponto?.largura ?? 20, altura: ponto?.altura ?? 20 };
     }
     arrasto = null;
   }
@@ -101,9 +111,14 @@
   };
 </script>
 
-<Modal titulo="Onde nasce — {mapa.nome} ({mapa.caminho})" {aoFechar} largo>
+<Modal titulo="{titulo || 'Onde nasce'} — {mapa.nome} ({mapa.caminho})" {aoFechar} largo>
+  {#if comDirecao}
+    <p class="mini">Clique para pôr o NPC; arraste a bolinha da seta para girá-lo; arraste o mapa para mover e use a roda para aproximar.
+      A área fica num ponto, para o servidor usar esta direção (com tamanho ele sorteia).</p>
+  {:else}
   <p class="mini">Clique para pôr o centro; arraste a alça (canto) para o tamanho da área; arraste o mapa para mover e use a roda para aproximar.
     O servidor sorteia cada nascimento dentro do retângulo.</p>
+  {/if}
   <div class="mapa" bind:this={caixa} role="application" aria-label="Mapa"
     onpointerdown={(e) => baixar(e, "mapa")} onpointermove={mover} onpointerup={soltar} onwheel={roda}>
     <div class="camada" style:transform="translate({ox}px, {oy}px) scale({escala})" style:width="{LARGURA}px" style:height="{ALTURA}px">
@@ -120,10 +135,21 @@
       {#if ponto}
         {@const r = ret(ponto)}
         {@const [cx, cy] = tela(pxDe(ponto.x), pyDe(ponto.z))}
+        {#if comDirecao}
+          {@const rad = ((ponto.direcao ?? 0) * Math.PI) / 180}
+          {@const sx = cx + Math.cos(rad) * RAIO_DA_SETA}
+          {@const sy = cy - Math.sin(rad) * RAIO_DA_SETA}
+          <circle cx={cx} cy={cy} r={RAIO_DA_SETA} class="giro" />
+          <line x1={cx} y1={cy} x2={sx} y2={sy} class="seta" />
+          <circle cx={cx} cy={cy} r="7" class="centro" />
+          <circle cx={sx} cy={sy} r="8" class="alca" role="slider" aria-label="Direção do NPC" aria-valuenow={ponto.direcao ?? 0}
+            tabindex="0" onpointerdown={(e) => baixar(e, "seta")} />
+        {:else}
         <rect x={r.x} y={r.y} width={r.w} height={r.h} class="area" />
         <circle cx={cx} cy={cy} r="5" class="centro" />
         <rect x={r.x + r.w - 6} y={r.y + r.h - 6} width="12" height="12" class="alca" role="slider" aria-label="Tamanho da área" aria-valuenow={ponto.largura}
           tabindex="0" onpointerdown={(e) => baixar(e, "alca")} />
+        {/if}
       {/if}
     </svg>
   </div>
@@ -131,8 +157,12 @@
     <div class="linha valores">
       <label class="mini">x <input class="campo n" type="number" step="0.1" bind:value={ponto.x} /></label>
       <label class="mini">z <input class="campo n" type="number" step="0.1" bind:value={ponto.z} /></label>
+      {#if comDirecao}
+        <label class="mini">direção (graus; 0 = leste, 90 = norte) <input class="campo n" type="number" step="1" min="0" max="359" bind:value={ponto.direcao} /></label>
+      {:else}
       <label class="mini">largura (x) <input class="campo n" type="number" step="1" min="0" bind:value={ponto.largura} /></label>
       <label class="mini">altura (z) <input class="campo n" type="number" step="1" min="0" bind:value={ponto.altura} /></label>
+      {/if}
       <button class="botao pequeno" type="button" onclick={enquadrar}>Centralizar</button>
     </div>
   {:else}
@@ -153,6 +183,9 @@
   .outro { fill: rgba(106, 167, 255, 0.12); stroke: var(--azul); stroke-width: 1; stroke-dasharray: 4 3; }
   .centro { fill: var(--ouro); stroke: #000; }
   .alca { fill: var(--ouro); stroke: #000; cursor: nwse-resize; pointer-events: all; }
+  circle.alca { cursor: grab; }
+  .giro { fill: rgba(227, 182, 91, 0.08); stroke: rgba(227, 182, 91, 0.6); stroke-dasharray: 4 4; }
+  .seta { stroke: var(--ouro); stroke-width: 3; }
   .valores { margin-top: 8px; }
   .n { width: 110px; height: 28px; }
 </style>
