@@ -18124,4 +18124,5 @@ comparação lado a lado.
     - **Publicado** a pedido do Murillo: `pw-admin-api` reconstruído e no ar em 2026-11-03 17:26 (o Estúdio vai no Dockerfile
       do painel; nenhum serviço Rust mudou; nenhum contêiner ficou para trás). Conferido no publicado (`localhost:8000`):
       Filhote no nível 30 com 332 de dano, Lobo-rei vence 100% das 400 lutas, ranking no nível 40 com o Raptor de Combate em
-      primeiro. **Não commitado.**
+      primeiro.
+    - **Commit:** código em `15581e4`, documentação em `6f4ff2b` (na `studio-svelte`).
