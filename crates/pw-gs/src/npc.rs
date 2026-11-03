@@ -54,6 +54,8 @@ pub mod servico {
     pub const APRENDER_HABILIDADE: i32 = 9;
     pub const INCRUSTAR_PEDRA: i32 = 10;
     pub const LIMPAR_PEDRAS: i32 = 11;
+    /// B379 — `GP_NPCSEV_IDENTIFY` (`EC_GPDataType.h:92`) = `SERVICE_ID_IDENTIFY` 17 (`serviceprovider.h:282`).
+    pub const AVALIAR: i32 = 17;
     pub const FORJAR: i32 = 12;
     pub const DECOMPOR: i32 = 13;
     pub const SENHA_DO_ARMAZEM: i32 = 14;

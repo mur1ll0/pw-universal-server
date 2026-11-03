@@ -44,8 +44,9 @@ pub const TABELA_DE_REFINO: [[f32; 4]; 12] = [
     [0.05, 0.0, 0.0, 1.0],
 ];
 
-/// `refine_factor[]` (`equip_item.cpp:208-223`): o multiplicador do parâmetro por nível.
-pub const FATOR_DE_REFINO: [f32; 13] = [0.0, 1.0, 2.0, 3.05, 4.3, 5.75, 7.55, 9.95, 13.0, 17.05, 22.3, 29.0, 37.5];
+/// `refine_factor[]` (`equip_item.cpp:208-223`): o multiplicador do parâmetro por nível (um só
+/// lugar, no `pw_data_loader::refino`, que o Estúdio também usa).
+pub use pw_data_loader::refino::FATOR_DE_REFINO;
 
 /// `weapon_slot_material_count[2][20]` (`equip_item.cpp:1385-1386`).
 const MATERIAL_DO_FURO_NA_ARMA: [[i32; 20]; 2] = [
@@ -264,6 +265,8 @@ pub fn mascara_das_pedras(familia: Familia, furos: &[i32], mascara: u16, cor_e_g
 /// Os erros (`common/protocol.h`, enum `ERR_*`; os mesmos números empurrados no `gs` 1.2.6).
 pub mod erro {
     pub const SERVICO_INDISPONIVEL: i32 = 14;
+    /// `ERR_SERVICE_ERR_REQUEST` (15, `common/protocol.h:695`) — o avaliar sem efeito a avaliar.
+    pub const PEDIDO_DE_SERVICO_INVALIDO: i32 = 15;
     /// `ERR_OUT_OF_FUND` (0x10 no 1.2.6, `install_executor::OnServe` VA 0x810b2e1).
     pub const SEM_DINHEIRO: i32 = 16;
     /// `ERR_CANNOT_EMBED` (0x15 no 1.2.6, VA 0x810b29d).

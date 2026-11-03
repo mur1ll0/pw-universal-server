@@ -5,6 +5,20 @@ COPY crates ./crates
 COPY tools ./tools
 RUN cargo build --release --locked -p pw-crypto --bin pw-validar-credenciais
 
+# B366: o Estúdio (Svelte + TypeScript + Vite) é empacotado aqui; o resultado são só arquivos estáticos em
+# static/estudio/, servidos pelo FastAPI na mesma origem (CSP `self`). A rede só é usada no `npm ci` da build;
+# em execução o painel não busca nada fora.
+FROM node:22-bookworm-slim AS estudio
+WORKDIR /build/web-admin/estudio
+COPY web-admin/estudio/package.json web-admin/estudio/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web-admin/estudio/ ./
+# Os layouts do elements das duas versões: o teste dos grupos de Itens confere cada tabela neles (lib/itens.test.ts).
+COPY specs/elements_layouts/v156.json specs/elements_layouts/v7.json /build/specs/elements_layouts/
+# B392: o teste da conversa confere as funções de opção (`enum SERVICE_TYPE`) do mesmo arquivo que o pw-recursos usa.
+COPY specs/estudio/funcoes_de_conversa.json /build/specs/estudio/
+RUN npm test && npm run build
+
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
@@ -19,6 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY web-admin/backend/painel ./painel
 COPY web-admin/backend/static ./static
+COPY --from=estudio /build/web-admin/backend/static/estudio ./static/estudio
 COPY web-admin/backend/main.py .
 COPY --from=credenciais /build/target/release/pw-validar-credenciais /usr/local/bin/
 

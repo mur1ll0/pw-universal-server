@@ -90,15 +90,15 @@ async function abrirComportamento(id) {
 /* Edição no lugar (B259): flags do gatilho e os parâmetros de tamanho fixo de cada operação e condição. */
 function editorDoGatilho(pol, t, ti, ed, tipos) {
   const caixa = criar("details");
-  caixa.appendChild(criar("summary", "", estudio.rascunho ? "Editar este gatilho" : "Editar (escolha um rascunho no topo do Estúdio)"));
+  caixa.appendChild(criar("summary", "", estudio.rascunho ? "Editar este gatilho" : "Editar (escolha um rascunho no topo dos Editores)"));
   if (!estudio.rascunho) return caixa;
   const salvar = async (corpo, msg) => {
     try {
       const r = await api(rotaDeComportamento(`/${pol.id}`), { method: "PUT", body: JSON.stringify({ gatilho: ti, ...corpo }) });
-      alerta("ok", "Estúdio", msg + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
+      alerta("ok", "Editores", msg + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
       await abrirComportamento(pol.id);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   };
   const flags = criar("div", "recursos-linha");
   const marcas = {};
@@ -116,7 +116,7 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
   bf.addEventListener("click", () => {
     const f = {};
     for (const [k, c] of Object.entries(marcas)) if (c.checked !== !!t[k]) f[k] = c.checked;
-    if (!Object.keys(f).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    if (!Object.keys(f).length) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
     salvar({ flags: f }, "Flags salvas no rascunho.");
   });
   flags.appendChild(bf);
@@ -130,7 +130,7 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
   bnome.type = "button";
   bnome.addEventListener("click", () => {
     const v = inome.value.trim();
-    if (!v || v === (t.nome || "")) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    if (!v || v === (t.nome || "")) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
     salvar({ nome: v }, "Nome do gatilho salvo no rascunho.");
   });
   ln.append("Nome: ", inome, bnome);
@@ -157,7 +157,7 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
         const x = tipo === "f32" ? Number(i.value) : Math.trunc(Number(i.value));
         if (x !== atuais[nome]) v[nome] = x;
       }
-      if (!Object.keys(v).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+      if (!Object.keys(v).length) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
       aoSalvar(v);
     });
     l.appendChild(b);
@@ -193,7 +193,7 @@ function editorDoGatilho(pol, t, ti, ed, tipos) {
     const b = criar("button", "botao botao-pequeno botao-secundario", "Salvar fala");
     b.type = "button";
     b.addEventListener("click", () => {
-      if (i.value === fala.texto) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+      if (i.value === fala.texto) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
       salvar({ fala: { indice: oi, texto: i.value } }, "Fala salva no rascunho.");
     });
     l.append(i, b);
@@ -317,7 +317,7 @@ function criarGatilhoDoZero(pol, tipos) {
   const b = criar("button", "botao botao-pequeno botao-primario", "Criar");
   b.type = "button";
   b.addEventListener("click", async () => {
-    if (!nome.value.trim()) { alerta("aviso", "Estúdio", "Dê um nome ao gatilho.", { toast: true }); return; }
+    if (!nome.value.trim()) { alerta("aviso", "Editores", "Dê um nome ao gatilho.", { toast: true }); return; }
     const operacao = Number(so.value);
     let id_gatilho;
     if (operacao >= 4 && operacao <= 6) {
@@ -328,10 +328,10 @@ function criarGatilhoDoZero(pol, tipos) {
     try {
       const r = await api(rotaDeComportamento(`/${pol.id}`), { method: "PUT",
         body: JSON.stringify({ novo_gatilho: { nome: nome.value.trim(), condicao: Number(sc.value), operacao, id_gatilho } }) });
-      alerta("ok", "Estúdio", `Gatilho ${r.resultado?.novo_gatilho ?? ""} criado no rascunho (ligado, só em combate; parâmetros zerados: ajuste).`, { toast: true });
+      alerta("ok", "Editores", `Gatilho ${r.resultado?.novo_gatilho ?? ""} criado no rascunho (ligado, só em combate; parâmetros zerados: ajuste).`, { toast: true });
       await abrirComportamento(pol.id);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   l.append(nome, " quando ", sc, " faz ", so, b);
   caixa.appendChild(l);

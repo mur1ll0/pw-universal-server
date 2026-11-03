@@ -1,0 +1,13 @@
+# Limites de uso da máquina (pedido do Murillo, 2026-10-24): a suíte inteira com 16 compilações e 16 testes por
+# binário em paralelo levou a CPU a 100% e um só binário (`equipamento_gerado`, que carrega o elements.data em cada
+# teste) a 5,4 GB. Vale para toda sessão (Claude, Codex) e para o terminal do Murillo.
+#
+# - `jobs`: no máximo 6 compilações ao mesmo tempo (a máquina tem 16 núcleos).
+# - `RUST_TEST_THREADS`: no máximo 3 testes ao mesmo tempo dentro de cada binário (o `cargo test` já roda um
+#   binário por vez). Quem quiser mais numa rodada isolada passa `-j N` ou `-- --test-threads=N`.
+
+[build]
+jobs = 6
+
+[env]
+RUST_TEST_THREADS = "3"

@@ -212,6 +212,16 @@ def main() -> None:
                 "bind_type", "id_upgrade_equip", "upgrade_rate", "proc_type",
                 "character_combo_id", "upgrade_engrave_rate", "upgrade_addon_rate",
             }]
+        elif origem["name"] == "NPC_SELL_SERVICE":
+            # B393 — loja antiga no v7 (1224 = 4 + 64 + 8 × (16 + 32 × 4) + 4): cada página é só
+            # `page_title[8]` e os 32 ids, sem `require_contrib`/`require_force`/
+            # `require_force_reputation` nem `contrib_cost`/`force_contribution_cost`/`unk` por
+            # item (a struct de contribuição do `ExpTypes.h` 1.5.3 não existe no 1.2.6). Medido no
+            # registro 0 (id 2241) do realm_126: o título da página 1 em +68 ("Espadas"), os ids
+            # 36, 37, 39, 40, 41, 151… logo depois, e o título da página 2 em +212 ("Lanças") —
+            # lido como v156, os ids caíam em "exige contribuição/força" e o título em custos.
+            campos_origem = [c for c in campos_origem if not any(
+                s in c["name"] for s in ("require_", "contrib_cost", "force_contribution_cost", "_unk"))]
         elif origem["name"] == "NPC_MAKE_SERVICE":
             # B145 — sem `produce_type` no v7 (1224 = 72 + 8 × 144): lido como v156, o
             # `produce_type` saía 0x00730045, o texto UTF-16 do título da primeira página, e
@@ -266,6 +276,15 @@ def main() -> None:
             pos += campo["size"]
         if pos < tamanho:
             campos.append({"name": "_opaco", "type": "string", "size": tamanho - pos})
+        if origem["name"] == "NPC_ESSENCE":
+            # B163 — `NPC_ESSENCE+0x348` é `combined_services` no v7 (o bit 0x4000 de refinar, lido
+            # em `npc_stubs_manager::LoadTemplate` do gs 1.2.6, VA 0x80efff8); o corte do v156 punha
+            # `id_goblin_skill_service` aí. Estava só no JSON; o gerador passou a reproduzir (B393).
+            deslocamento = 0
+            for c in campos:
+                if deslocamento == 0x348:
+                    c["name"] = "combined_services"
+                deslocamento += c["size"]
         tabelas.append({"index": i if i < 58 else i + 1,
                         "name": origem["name"], "variable_size": False,
                         "record_size": tamanho, "fields": campos})

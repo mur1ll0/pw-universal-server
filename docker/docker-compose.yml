@@ -249,6 +249,11 @@ services:
       # o arquivo no config do realm da versão (B237). O realm precisa ser reiniciado depois.
       # B302: a pasta inteira do realm (config + catalogo); os itens do servidor vão para o config e o catálogo ao lado.
       PW_RECURSOS_REALMS: '{"1.2.6":["/realms/realm_126/config"],"1.5.5":["/realms/realm_155/config"]}'
+      # B391: URL do painel (pw-admin-api) que o launcher abre no botão "Criar conta / Painel".
+      # `{host}` = o host com que o launcher alcança este servidor (127.0.0.1, IP da rede ou DNS);
+      # a porta é a publicada pelo pw-admin-api acima ("8000:8000"). Atrás de proxy/HTTPS, ponha a
+      # URL fixa em PAINEL_URL no docker/.env (ex.: https://conta.seudominio.com/).
+      PW_PAINEL_URL: ${PAINEL_URL:-http://{host}:8000/}
     ports:
       - "8100:8100"
     volumes:

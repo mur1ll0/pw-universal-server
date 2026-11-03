@@ -31,12 +31,14 @@ const ID_VERSAO: i32 = 100;
 const ID_BOTAO0: i32 = 110;
 const ID_SALVAR: i32 = 120;
 const ID_OPCOES: i32 = 130;
+const ID_PAINEL: i32 = 140;
 const N_BOTOES: usize = 5;
 
 const WM_INICIO: u32 = WM_APP + 1;
 const WM_SITUACAO: u32 = WM_APP + 2;
 const WM_PROGRESSO: u32 = WM_APP + 3;
 const WM_FIM: u32 = WM_APP + 4;
+const WM_PAINEL: u32 = WM_APP + 5;
 
 // Estilos de STATIC (winuser.h); a windows-sys 0.52 os põe em outro módulo.
 const SS_NOPREFIX: u32 = 0x0080;
@@ -92,6 +94,7 @@ struct Controles {
     servidor: HWND,
     salvar: HWND,
     opcoes: HWND,
+    painel: HWND,
     fonte: HFONT,
     dpi: i32,
 }
@@ -186,6 +189,14 @@ extern "system" {
     fn SHBrowseForFolderW(lpbi: *const BROWSEINFOW) -> *mut core::ffi::c_void;
     fn SHGetPathFromIDListW(pidl: *const core::ffi::c_void, pszpath: *mut u16) -> BOOL;
     fn ILFree(pidl: *const core::ffi::c_void);
+    fn ShellExecuteW(
+        hwnd: HWND,
+        lpoperation: *const u16,
+        lpfile: *const u16,
+        lpparameters: *const u16,
+        lpdirectory: *const u16,
+        nshowcmd: i32,
+    ) -> isize;
 }
 
 // ---------------------------------------------------------------- telas
@@ -484,6 +495,34 @@ fn ao_trocar_versao() {
     }
 }
 
+/// B391: botão "Criar conta / Painel" — pergunta ao servidor de atualização onde está o painel e abre
+/// no navegador padrão. Não trava a janela: dá para abrir durante um download.
+fn ao_pedir_painel() {
+    let c = ctl();
+    unsafe { EnableWindow(c.painel, 0) };
+    mensagem("Buscando o endereço do painel…", Cor::Normal);
+    let janela = c.janela;
+    std::thread::spawn(move || postar(janela, WM_PAINEL, acoes::endereco_do_painel()));
+}
+
+fn ao_painel(r: Result<String, String>) {
+    unsafe { EnableWindow(ctl().painel, 1) };
+    match r {
+        Ok(url) => {
+            // `montar_url` só deixa passar http/https sem espaço nem aspas: o ShellExecute abre o navegador.
+            let ok = unsafe {
+                ShellExecuteW(ctl().janela, w("open").as_ptr(), w(&url).as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL)
+            } > 32;
+            if ok {
+                mensagem(&format!("Painel aberto no navegador: {url}"), Cor::Ok);
+            } else {
+                mensagem(&format!("Não consegui abrir o navegador. Endereço do painel: {url}"), Cor::Erro);
+            }
+        }
+        Err(e) => mensagem(&e, Cor::Erro),
+    }
+}
+
 fn ao_salvar_servidor() {
     match acoes::trocar_servidor(&ler_texto(ctl().servidor)) {
         Ok(()) => {
@@ -507,6 +546,8 @@ unsafe extern "system" fn procedimento(janela: HWND, msg: u32, wparam: WPARAM, l
                 ao_salvar_servidor();
             } else if id == ID_OPCOES && codigo == BN_CLICKED {
                 opcoes::abrir();
+            } else if id == ID_PAINEL && codigo == BN_CLICKED {
+                ao_pedir_painel();
             } else if (ID_BOTAO0..ID_BOTAO0 + N_BOTOES as i32).contains(&id) && codigo == BN_CLICKED {
                 let a = EST.with(|e| e.borrow().acoes[(id - ID_BOTAO0) as usize]);
                 if let Some(a) = a {
@@ -556,6 +597,10 @@ unsafe extern "system" fn procedimento(janela: HWND, msg: u32, wparam: WPARAM, l
         }
         WM_FIM => {
             ao_fim(receber(lparam));
+            0
+        }
+        WM_PAINEL => {
+            ao_painel(receber(lparam));
             0
         }
         WM_DESTROY => {
@@ -691,8 +736,9 @@ pub fn executar() {
             cr.criar(st.as_ptr(), t, SS_NOPREFIX | extra, 0, r, -1, f)
         };
 
-        estatico("Perfect World", cabecalho_f, (16, 14, 300, 34), 0);
-        let opcoes = cr.criar(bt.as_ptr(), "Opções do jogo…", WS_TABSTOP | WS_DISABLED, 0, (318, 17, 150, 28), ID_OPCOES, normal);
+        estatico("Perfect World", cabecalho_f, (16, 14, 172, 34), 0);
+        let painel = cr.criar(bt.as_ptr(), "Criar conta / Painel", WS_TABSTOP, 0, (192, 17, 140, 28), ID_PAINEL, normal);
+        let opcoes = cr.criar(bt.as_ptr(), "Opções do jogo…", WS_TABSTOP | WS_DISABLED, 0, (338, 17, 136, 28), ID_OPCOES, normal);
         estatico("Versão:", normal, (484, 22, 56, 20), 0);
         let versao = cr.criar(
             WC_COMBOBOXW,
@@ -741,6 +787,7 @@ pub fn executar() {
                 servidor,
                 salvar,
                 opcoes,
+                painel,
                 fonte: normal,
                 dpi,
             })

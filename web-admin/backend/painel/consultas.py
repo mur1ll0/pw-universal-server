@@ -1,7 +1,7 @@
 """Consultas somente de leitura com origem explícita e alvo validado no banco."""
 from typing import Literal, Optional
 from fastapi import HTTPException, Path, Query, Request, Response
-from .icones import png_do_icone
+from .icones import buscar_icones, png_do_icone
 from .dica import TIPO_HABILIDADE_DO_ITEM, catalogo_de_efeitos, habilidade_do_efeito, linhas_da_dica, texto_do_efeito
 from .textos import habilidades_do_cliente, nome_da_classe, nomes_das_habilidades, tipos_de_efeito
 from .canal import CanalIndisponivel, consultar_daemons, resposta_do_primeiro
@@ -43,6 +43,16 @@ def registrar_consultas(app):
         except CanalIndisponivel as erro:
             return {"realm_id": realm_id, "estado": "desconhecido", "jogadores_online": None,
                     "mapas": [], "aviso": str(erro)}
+
+    @app.get("/api/icones/{sexo}")
+    async def buscar_icones_do_atlas(sexo: str = Path(..., pattern="^(m|f)$"),
+                                     busca: str = Query("", max_length=64), limite: int = Query(60, ge=1, le=200)):
+        """B366: nomes do atlas de ícones de item (só leitura), para o Estúdio escolher um ícone existente."""
+        try:
+            total, achados = buscar_icones(sexo, busca, limite)
+        except (OSError, ValueError):
+            raise HTTPException(503, "Atlas de ícones indisponível.")
+        return {"total": total, "icones": [{"arquivo": n, "hex": h} for n, h in achados]}
 
     @app.get("/api/icones/{sexo}/{titulo}.png")
     async def icone(sexo: str = Path(..., pattern="^(m|f|habilidade|mascote)$"),
@@ -88,6 +98,21 @@ def registrar_consultas(app):
             genero = await conexao.fetchval("SELECT gender FROM characters WHERE realm_id=$1 AND id=$2", realm_id, personagem_id)
         return {"realm_id": realm_id, "personagem_id": personagem_id, "sexo": "f" if genero else "m",
                 "recipientes": dados.get("recipientes", {})}
+
+    @app.get("/api/realms/{realm_id}/itens/{item_id}/exemplo")
+    async def dica_de_exemplo(realm_id: str, requisicao: Request, item_id: int = Path(..., ge=1, le=2_147_483_647)):
+        """B373: a dica de um item do modelo `item_id` como se tivesse caído agora — o GS gera os octetos pela geração
+        do drop (`item_de_exemplo`) sem gravar, e a dica é a mesma da tela de personagem."""
+        dados = await consultar_primeiro(realm_id, requisicao, {"tipo": "item_de_exemplo", "item_id": item_id})
+        if dados.get("codigo"):
+            raise HTTPException(404 if dados["codigo"] == "item_inexistente" else 503, dados["codigo"])
+        async with app.state.seguranca.pool.acquire() as conexao:
+            versao = await conexao.fetchval("SELECT version FROM realms WHERE id=$1", realm_id)
+        try:
+            linhas = linhas_da_dica(dados, versao=versao)
+        except OSError:
+            raise HTTPException(503, "Textos do cliente indisponíveis (data/textos).")
+        return {"realm_id": realm_id, "item": dados, "linhas": linhas}
 
     @app.get("/api/realms/{realm_id}/personagens/{personagem_id}/itens/{recipiente}/{slot}/dica")
     async def dica_do_item(realm_id: str, requisicao: Request,
@@ -369,20 +394,25 @@ def registrar_consultas(app):
         return {"realm_id": realm_id, "mascotes": dados.get("mascotes", [])}
 
     @app.get("/api/realms/{realm_id}/personagens")
-    async def buscar_personagens(realm_id: str, busca: str = Query("", max_length=64),
+    async def buscar_personagens(realm_id: str, requisicao: Request, busca: str = Query("", max_length=64),
                                  pagina: int = Query(1, ge=1, le=100_000),
                                  por_pagina: int = Query(12, ge=1, le=48)):
-        """B190: personagens do realm de todas as contas, por nome do personagem ou da conta."""
+        """B190: personagens do realm de todas as contas, por nome do personagem ou da conta.
+        B387: conta comum vê só os da própria conta (o filtro vem da sessão, não da URL)."""
         await validar_realm(realm_id)
+        administrador = requisicao.state.administrador
+        # GM: 0 = todas as contas.
+        conta = 0 if administrador["papel"] == "gm" else administrador["conta_id"]
         # Curingas do ILIKE escapados, como na busca de contas.
         padrao = "%" + busca.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
         filtro = ("FROM characters c JOIN accounts a ON a.id=c.account_id WHERE c.realm_id=$1 "
-                  "AND NOT c.is_deleted AND (c.name ILIKE $2 ESCAPE '!' OR a.username ILIKE $2 ESCAPE '!')")
+                  "AND NOT c.is_deleted AND (c.name ILIKE $2 ESCAPE '!' OR a.username ILIKE $2 ESCAPE '!') "
+                  "AND ($3 = 0 OR c.account_id = $3)")
         async with app.state.seguranca.pool.acquire() as conexao:
-            total = await conexao.fetchval(f"SELECT count(*) {filtro}", realm_id, padrao)
+            total = await conexao.fetchval(f"SELECT count(*) {filtro}", realm_id, padrao, conta)
             registros = await conexao.fetch(
                 f"SELECT c.id,c.name,c.cls,c.level,c.gender,a.id AS conta_id,a.username {filtro} "
-                "ORDER BY c.id LIMIT $3 OFFSET $4", realm_id, padrao, por_pagina, (pagina - 1) * por_pagina,
+                "ORDER BY c.id LIMIT $4 OFFSET $5", realm_id, padrao, conta, por_pagina, (pagina - 1) * por_pagina,
             )
         return {"realm_id": realm_id, "origem": "persistida", "total": total, "pagina": pagina,
                 "por_pagina": por_pagina,

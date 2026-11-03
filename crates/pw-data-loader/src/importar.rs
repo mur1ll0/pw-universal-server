@@ -207,6 +207,57 @@ pub struct AcaoImportada {
     pub quadro_final: f32,
 }
 
+/// Separador do nome legível que o Estúdio põe nas animações do GLB exportado (B380): "Parado · 站立".
+pub const SEPARADOR_DO_NOME: &str = " · ";
+
+/// B380: o nome da ação no `.smd` (o que o cliente procura, em GBK) a partir de uma animação glTF: primeiro
+/// `extras.angelica.nome` (o Estúdio grava ao exportar; a extensão PW Estúdio do Blender o guarda na ação e o exportador
+/// glTF do Blender o devolve, `export_extras`); sem ele, o que vem depois do último " · " do nome ("Parado · 站立" →
+/// "站立"); sem separador, o nome inteiro (GLB feito fora do Estúdio, com o nome do cliente).
+pub fn nome_original(anim: &Value) -> Option<String> {
+    if let Some(n) = anim["extras"]["angelica"]["nome"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
+        return Some(n.to_string());
+    }
+    let nome = anim["name"].as_str()?;
+    Some(nome.rsplit_once(SEPARADOR_DO_NOME).map_or(nome, |x| x.1).trim().to_string()).filter(|n| !n.is_empty())
+}
+
+/// B380: o esqueleto do glTF é o do modelo? Compara pelo nome de cada osso e o nome da mãe (o importador de ações e o de
+/// pele casam os ossos pelo nome, e a trilha de cada osso só vale relativa à mãe dele). `Err` com o que difere.
+pub fn conferir_esqueleto(glb: &[u8], esqueleto: &Bon) -> Result<(), String> {
+    let (doglb, _) = esqueleto_do_glb(glb)?;
+    let maes = |b: &Bon| -> std::collections::BTreeMap<String, String> {
+        b.ossos.iter().map(|o| (o.nome.clone(), usize::try_from(o.mae).ok().and_then(|m| b.ossos.get(m)).map_or(String::new(), |m| m.nome.clone()))).collect()
+    };
+    let (a, b) = (maes(esqueleto), maes(&doglb));
+    let lista = |v: Vec<&String>| -> String {
+        let n = v.len();
+        let mut t: Vec<String> = v.into_iter().take(5).cloned().collect();
+        if n > 5 {
+            t.push(format!("+{}", n - 5));
+        }
+        t.join(", ")
+    };
+    let faltam: Vec<&String> = a.keys().filter(|k| !b.contains_key(*k)).collect();
+    let sobram: Vec<&String> = b.keys().filter(|k| !a.contains_key(*k)).collect();
+    let outra_mae: Vec<&String> = a.iter().filter(|(k, m)| b.get(*k).is_some_and(|x| x != *m)).map(|x| x.0).collect();
+    let mut partes = Vec::new();
+    if !faltam.is_empty() {
+        partes.push(format!("faltam {} osso(s) do modelo ({})", faltam.len(), lista(faltam)));
+    }
+    if !sobram.is_empty() {
+        partes.push(format!("sobram {} osso(s) que o modelo não tem ({})", sobram.len(), lista(sobram)));
+    }
+    if !outra_mae.is_empty() {
+        partes.push(format!("{} osso(s) com outra mãe ({})", outra_mae.len(), lista(outra_mae)));
+    }
+    if partes.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("o esqueleto do GLB não é o do modelo ({} ossos no modelo, {} no GLB): {}", a.len(), b.len(), partes.join("; ")))
+    }
+}
+
 /// B295 (S6): as animações do glTF como ações do modelo, para o esqueleto `esqueleto`.
 /// - Cada osso usa a trilha da sua primeira junta (`A3DSkinModelAct.cpp:612`), e **todo** osso precisa de uma: sem
 ///   ela, `GetBoneStateOnTrack` falha (`:379-384`) e o chamador usa posição e rotação sem valor. Osso sem canal no glTF
@@ -234,7 +285,7 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
     }
     let mut r = Vec::new();
     for (ai, anim) in j["animations"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-        let nome = anim["name"].as_str().map(str::to_string).unwrap_or_else(|| format!("acao{ai}"));
+        let nome = nome_original(anim).unwrap_or_else(|| format!("acao{ai}"));
         // (nó, caminho) → (tempos, valores, interpolação)
         let mut canais: std::collections::HashMap<(usize, String), (Vec<f32>, Vec<Vec<f32>>, String)> = std::collections::HashMap::new();
         let mut duracao = 0f32;
@@ -329,6 +380,81 @@ pub fn acoes_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<(Vec<AcaoImportada>, 
         r.push(AcaoImportada { nome, stck, quadro_final: (n_chaves - 1) as f32 });
     }
     Ok((r, relatorio))
+}
+
+/// Tolerâncias de `acao_v5_igual`: posição relativa ao maior módulo da chave (`|Δ| / (1 + max|p|)`) e quatérnio por
+/// componente, com o sinal alinhado. Medido na ida e volta real pelo Blender 5.1 (extensão PW Estúdio, cena a 15/s) de um
+/// modelo v5 do cliente (`侏儒卫兵.bon`, 21 ações, teste `medir_b381`): até 3,0e-4 na posição e 3,2e-3 no quatérnio — o
+/// Blender interpola componente a componente entre as chaves fora da grade. 5e-3 no quatérnio é ~0,6° de rotação: uma
+/// edição menor que isso em todos os quadros passaria por igual; a chave mexida em 0,05 do teste é recusada.
+pub const TOLERANCIA_DE_ACAO_IGUAL: (f32, f32) = (1e-3, 5e-3);
+
+/// B381: a ação importada é a que o modelo v5 já tem com esse nome? A referência é a ação existente passada pelo mesmo
+/// caminho do Estúdio — exportada para glTF como no "Exportar GLB" (`glb::do_modelo_com_acoes`, trilhas embutidas no
+/// intervalo da ação) e importada de volta (`acoes_do_glb`) —, e cada chave importada é comparada com a dela dentro de
+/// `TOLERANCIA_DE_ACAO_IGUAL`. (Comparar direto com a trilha erra entre chaves: muitas trilhas do cliente têm chaves fora
+/// da grade de quadros, e a reamostragem as aproxima — medido: até 1e-2.) Qualquer dúvida — outro número de quadros,
+/// juntas com intervalos diferentes, junta sem trilha de um dos lados, FPS diferente — é "diferente": o erro possível é
+/// acrescentar à toa (como antes), nunca perder a edição. Igual, `anexar_acao_v5` não é chamado e o `.bon` não cresce a
+/// cada ida e volta pelo Blender.
+pub fn acao_v5_igual(bon: &Bon, smd: &crate::smd::Smd, acao: &AcaoImportada) -> bool {
+    diferenca_da_acao_v5(bon, smd, acao).is_some_and(|(p, q)| p <= TOLERANCIA_DE_ACAO_IGUAL.0 && q <= TOLERANCIA_DE_ACAO_IGUAL.1)
+}
+
+/// A maior diferença (posição relativa, componente de quatérnio) entre a ação importada e a existente passada pelo
+/// caminho do Estúdio (ver `acao_v5_igual`); `None` quando não dá para comparar (é "diferente").
+pub fn diferenca_da_acao_v5(bon: &Bon, smd: &crate::smd::Smd, acao: &AcaoImportada) -> Option<(f32, f32)> {
+    let Some(a) = smd.acoes.iter().find(|x| x.nome == acao.nome) else { return None };
+    if bon.fps <= 0 || acao.stck.fps != bon.fps || bon.trilhas.is_empty() {
+        return None;
+    }
+    let f = |o: usize| a.dados.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+    let i = |o: usize| a.dados.get(o..o + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap()));
+    // O intervalo da ação: v5, o de cada junta (`FILEJOINTACTION`) — todos iguais, senão "diferente"; v6, o único.
+    let faixa = if smd.versao < 6 {
+        let n = i(4).unwrap_or(0).max(0) as usize;
+        let faixas: Option<Vec<(f32, f32)>> = (0..n).map(|k| Some((f(12 + 20 * k + 4)?, f(12 + 20 * k + 8)?))).collect();
+        match faixas.as_deref() {
+            Some([p, resto @ ..]) if resto.iter().all(|x| x == p) => *p,
+            _ => return None,
+        }
+    } else {
+        match (f(0), f(4)) {
+            (Some(x), Some(y)) => (x, y),
+            _ => return None,
+        }
+    };
+    let fps = bon.fps as f32;
+    let anim = crate::glb::AnimacaoDoModelo {
+        nome: acao.nome.clone(),
+        trilhas: bon.trilhas.iter().enumerate().map(|(j, t)| (j as i32, t)).collect(),
+        inicio_ms: faixa.0 * 1000.0 / fps,
+        fim_ms: faixa.1 * 1000.0 / fps,
+        nome_original: None,
+    };
+    let glb = crate::glb::do_modelo_com_acoes(&[], bon, std::slice::from_ref(&anim), "referencia");
+    let Ok((lidas, _)) = acoes_do_glb(&glb, bon) else { return None };
+    let Some(referencia) = lidas.first() else { return None };
+    if referencia.quadro_final != acao.quadro_final {
+        return None;
+    }
+    let n = acao.quadro_final as usize + 1;
+    let (mut dp, mut dq) = (0f32, 0f32);
+    for (j, r) in &referencia.stck.trilhas {
+        let Some((_, nova)) = acao.stck.trilhas.iter().find(|x| x.0 == *j) else { return None };
+        if nova.posicao.chaves.len() < n || nova.rotacao.chaves.len() < n || r.posicao.chaves.len() < n || r.rotacao.chaves.len() < n {
+            return None;
+        }
+        for k in 0..n {
+            let (po, pn) = (r.posicao.chaves[k], nova.posicao.chaves[k]);
+            let escala = 1.0 + po.iter().fold(0f32, |m, x| m.max(x.abs()));
+            dp = (0..3).map(|c| (po[c] - pn[c]).abs() / escala).fold(dp, f32::max);
+            let (qo, qn) = (r.rotacao.chaves[k], nova.rotacao.chaves[k]);
+            let sinal = if (0..4).map(|c| qo[c] * qn[c]).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+            dq = (0..4).map(|c| (qo[c] * sinal - qn[c]).abs()).fold(dq, f32::max);
+        }
+    }
+    Some((dp, dq))
 }
 
 /// B296 (S6): acrescenta a ação importada a um modelo de esqueleto v5 (todo o 1.2.6), em que não há `.stck`: cada
@@ -522,6 +648,172 @@ pub fn esqueleto_do_glb(glb: &[u8]) -> Result<(Bon, Vec<String>), String> {
 }
 
 /// A pele (`.ski` v9) do glTF `glb`, com os ossos casados pelo nome no `esqueleto`.
+/// B383: para onde vai uma junta da skin do glTF no esqueleto do jogo.
+struct DestinoDaJunta {
+    /// O osso do `.bon` (o da junta, ou o ancestral mais próximo que existe); `None` = a vaga do esqueleto.
+    osso: Option<String>,
+    /// `C = (pose de repouso do osso no .bon) × IBM do glTF`, em glTF: leva o vértice da pose de repouso do glTF à do
+    /// `.bon`. `None` quando é a identidade (o caso do GLB exportado pelo Estúdio).
+    correcao: Option<[f32; 16]>,
+}
+
+/// B383: o que a correção dos pesos fez num GLB (relatório da importação).
+#[derive(Default)]
+pub struct RelatorioDePesos {
+    /// Vértices com peso zero antes de um não nulo — o motor para no 1º peso zero (`A3DSkinMesh.cpp:1040-1041`) e
+    /// perderia os seguintes; os não nulos vão para a frente.
+    pub reordenados: usize,
+    /// Vértices com soma dos pesos diferente de 1 (mais de 0,001): o motor não completa a soma — só o 4º peso é
+    /// implícito (`1 − soma`, e só quando os 3 primeiros são não nulos, `A3DSkinMesh.cpp:1053-1066`); o vértice encolheria.
+    pub renormalizados: usize,
+    /// Vértices com mais de 4 influências (o `A3DBVERTEX3` tem 4 ossos, `A3DVertex.h:184-191`): ficam as 4 maiores.
+    pub cortados: usize,
+    pub maior_peso_cortado: f32,
+    /// Vértices sem peso nenhum: presos à vaga do esqueleto (andam com o modelo inteiro; sem peso o motor os poria na origem).
+    pub sem_peso: usize,
+    /// Ossos do glTF que não existem no `.bon` → ancestral que existe (o `BindSkeleton` recusaria a pele inteira,
+    /// `A3DSkin.cpp:851-856`; no jogo só os ossos do `.bon` se movem, então o osso extra andaria preso ao ancestral).
+    pub reatribuidos: Vec<(String, String)>,
+    /// Ossos cuja pose de repouso no glTF difere da do `.bon` (o motor usa a do `.bon`, `A3DSkinModel.cpp:1341`).
+    pub poses_corrigidas: Vec<String>,
+    pub reposicionados: usize,
+}
+
+impl RelatorioDePesos {
+    fn linhas(&self) -> Vec<String> {
+        let mut l = Vec::new();
+        if self.reordenados > 0 {
+            l.push(format!("pesos: {} vértice(s) com peso zero antes de um não nulo — os não nulos foram para a frente (o motor para no 1º zero)", self.reordenados));
+        }
+        if self.renormalizados > 0 {
+            l.push(format!("pesos: {} vértice(s) com soma diferente de 1 — normalizados (no jogo o vértice encolheria)", self.renormalizados));
+        }
+        if self.cortados > 0 {
+            l.push(format!(
+                "pesos: {} vértice(s) com mais de 4 ossos — ficaram os 4 maiores (maior peso cortado {:.3}); no Blender: Weights → Limit Total 4",
+                self.cortados, self.maior_peso_cortado
+            ));
+        }
+        if self.sem_peso > 0 {
+            l.push(format!("pesos: {} vértice(s) sem peso — presos ao modelo inteiro; no Blender, dê peso a eles", self.sem_peso));
+        }
+        for (de, para) in &self.reatribuidos {
+            l.push(format!(
+                "ossos: \"{de}\" não existe no esqueleto do jogo — os pesos dele foram para \"{para}\", o ancestral que existe (no jogo ele andaria preso a esse osso)"
+            ));
+        }
+        if !self.poses_corrigidas.is_empty() {
+            l.push(format!(
+                "pose de repouso diferente da do jogo em {} osso(s) ({}) — {} vértice(s) repostos na pose do esqueleto do jogo; no Blender, não mude a pose de repouso (Rest Position) do esqueleto exportado",
+                self.poses_corrigidas.len(),
+                self.poses_corrigidas.iter().take(8).cloned().collect::<Vec<_>>().join(", "),
+                self.reposicionados
+            ));
+        }
+        l
+    }
+}
+
+/// B383: o destino de cada junta da skin (na ordem de `joints`). Um osso que não existe no `.bon` vai para o ancestral
+/// mais próximo (no glTF) que existe; sem nenhum, a importação é recusada com o nome. A correção da pose usa a pose de
+/// repouso do `.bon` (`inversa(matBoneInit)`, como o exportador, `glb::do_modelo`) e a IBM do glTF da junta — ou, se o
+/// osso foi reatribuído, a do ancestral (o osso extra anda preso a ele).
+fn destino_das_juntas(g: &Glb, skin: &Value, nos: &[Value], pais: &[Option<usize>], esqueleto: &Bon, rel: &mut RelatorioDePesos) -> Result<Vec<DestinoDaJunta>, String> {
+    let nome_do_no = |i: usize| nos.get(i).and_then(|n| n["name"].as_str()).unwrap_or("").to_string();
+    let juntas: Vec<usize> = skin["joints"].as_array().ok_or("skin sem joints")?.iter().map(|x| x.as_u64().unwrap_or(u64::MAX) as usize).collect();
+    let ibm: Vec<Vec<f32>> = match skin["inverseBindMatrices"].as_u64() {
+        Some(a) => g.acessor(a as usize)?,
+        None => Vec::new(),
+    };
+    // A IBM de um nó: a da skin, se ele é junta; senão, a inversa da matriz dele no mundo.
+    let ibm_do_no = |no: usize| -> Option<[f32; 16]> {
+        if let Some(k) = juntas.iter().position(|x| *x == no) {
+            if let Some(m) = ibm.get(k).filter(|m| m.len() == 16) {
+                return Some(std::array::from_fn(|i| m[i]));
+            }
+        }
+        crate::glb::inversa(&mundo(no, nos, pais))
+    };
+    let mut r = Vec::with_capacity(juntas.len());
+    for &no in &juntas {
+        let nome = nome_do_no(no);
+        if nome == "esqueleto" {
+            r.push(DestinoDaJunta { osso: None, correcao: None });
+            continue;
+        }
+        let mut atual = Some(no);
+        let mut achado = None;
+        while let Some(k) = atual {
+            if let Some(o) = esqueleto.ossos.iter().position(|o| o.nome == nome_do_no(k)) {
+                achado = Some((k, o));
+                break;
+            }
+            atual = pais.get(k).copied().flatten();
+        }
+        let Some((no_osso, o)) = achado else {
+            return Err(format!(
+                "o osso \"{nome}\" não existe no esqueleto do jogo e não tem ancestral que exista — no Blender, renomeie o grupo de vértices para um osso do esqueleto exportado ou passe os pesos para um deles"
+            ));
+        };
+        let osso = esqueleto.ossos[o].nome.clone();
+        if no_osso != no && !rel.reatribuidos.iter().any(|x| x.0 == nome) {
+            rel.reatribuidos.push((nome.clone(), osso.clone()));
+        }
+        let repouso = crate::glb::inversa(&crate::glb::matriz_gltf(&esqueleto.ossos[o].inicial));
+        let correcao = match (repouso, ibm_do_no(no_osso)) {
+            (Some(rp), Some(ib)) => {
+                let c = multiplicar_cc(&rp, &ib);
+                let identidade = c.iter().enumerate().all(|(i, x)| (x - if i % 5 == 0 { 1.0 } else { 0.0 }).abs() < 1e-3);
+                if identidade {
+                    None
+                } else {
+                    if !rel.poses_corrigidas.contains(&osso) {
+                        rel.poses_corrigidas.push(osso.clone());
+                    }
+                    Some(c)
+                }
+            }
+            _ => None,
+        };
+        r.push(DestinoDaJunta { osso: Some(osso), correcao });
+    }
+    Ok(r)
+}
+
+/// B383: os pesos de um vértice como o motor lê (`A3DSkinMesh.cpp:1036-1066`): do maior para o menor, zeros no fim, no
+/// máximo 4, somando 1 (os 3 primeiros gravados, o 4º implícito). Sem peso → a vaga do esqueleto (255) com peso 1.
+/// Devolve os 3 pesos gravados e os 4 índices; `alvos` fica com a lista final (para a correção da pose).
+fn ajustar_pesos(alvos: &mut Vec<(u8, f32, Option<&[f32; 16]>)>, rel: &mut RelatorioDePesos) -> ([f32; 3], [u8; 4]) {
+    // Os zeros já saíram (só entram pesos > 0), então os não nulos ficam na frente — é o que o motor exige; a ordem
+    // entre eles não importa. Só com mais de 4 se ordena, para ficar com os 4 maiores.
+    alvos.retain(|x| x.1 > 0.0);
+    if alvos.is_empty() {
+        rel.sem_peso += 1;
+        alvos.push((255, 1.0, None));
+    }
+    // A soma que veio do glTF (antes do corte): diferente de 1 é peso faltando ou sobrando no Blender.
+    if (alvos.iter().map(|x| x.1).sum::<f32>() - 1.0).abs() > 1e-3 {
+        rel.renormalizados += 1;
+    }
+    if alvos.len() > 4 {
+        alvos.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        rel.cortados += 1;
+        rel.maior_peso_cortado = rel.maior_peso_cortado.max(alvos[4].1);
+        alvos.truncate(4);
+    }
+    let soma: f32 = alvos.iter().map(|x| x.1).sum();
+    alvos.iter_mut().for_each(|x| x.1 /= soma);
+    let mut w = [0f32; 3];
+    let mut o = [alvos[0].0; 4];
+    for (i, x) in alvos.iter().enumerate() {
+        o[i] = x.0;
+        if i < 3 {
+            w[i] = x.1;
+        }
+    }
+    (w, o)
+}
+
 pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let g = abrir(glb)?;
     let j = &g.json;
@@ -535,6 +827,8 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
     let mut texturas_novas: Vec<TexturaNova> = Vec::new();
     let mut malhas = Vec::new();
     let mut rigidas: Vec<MalhaRigida> = Vec::new();
+    // B383: o que a correção dos pesos fez, para o relatório.
+    let mut pesos = RelatorioDePesos::default();
     // A mãe de cada nó (pelos `children`), para a matriz no mundo e para achar o osso acima de uma malha sem pele.
     let mut pais: Vec<Option<usize>> = vec![None; nos.len()];
     for (i, n) in nos.iter().enumerate() {
@@ -585,6 +879,11 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                 })
                 .collect(),
         };
+        // B383: o destino de cada junta da skin no esqueleto do jogo e a correção da pose de repouso (ver `destino_das_juntas`).
+        let destinos: Vec<DestinoDaJunta> = match no["skin"].as_u64() {
+            None => Vec::new(),
+            Some(si) => destino_das_juntas(&g, &j["skins"][si as usize], &nos, &pais, esqueleto, &mut pesos)?,
+        };
         for (pi, prim) in malha["primitives"].as_array().cloned().unwrap_or_default().iter().enumerate() {
             let nome = if pi == 0 { nome_malha.clone() } else { format!("{nome_malha}_{pi}") };
             if prim["mode"].as_u64().unwrap_or(4) != 4 {
@@ -601,9 +900,8 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
                 relatorio.push(format!("{nome}: sem JOINTS_0/WEIGHTS_0 — deixada de fora"));
                 continue;
             }
-            if at.get("JOINTS_1").is_some() {
-                relatorio.push(format!("{nome}: mais de 4 ossos por vértice (JOINTS_1) — o formato tem 4; os extras foram ignorados e os pesos renormalizados"));
-            }
+            // B383: o 2º grupo de influências (JOINTS_1/WEIGHTS_1) entra na escolha das 4 maiores.
+            let (js1, ws1) = (pega("JOINTS_1")?.unwrap_or_default(), pega("WEIGHTS_1")?.unwrap_or_default());
             if nor.is_none() {
                 relatorio.push(format!("{nome}: sem NORMAL — normais zeradas"));
             }
@@ -647,52 +945,79 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
             };
             let mut vertices = Vec::with_capacity(pos.len());
             for k in 0..if rigida.is_some() { 0 } else { pos.len() } {
-                let mut ossos_v = [0u8; 4];
-                let mut w = [0f32; 4];
-                for c in 0..4 {
-                    let peso = ws[k].get(c).copied().unwrap_or(0.0);
-                    if peso <= 0.0 {
-                        continue;
+                // As influências do vértice (junta, peso) dos dois grupos, no destino de cada junta.
+                let mut inf: Vec<(usize, f32)> = Vec::with_capacity(8);
+                let (mut viu_zero, mut zero_no_meio) = (false, false);
+                for (jj, ww) in [(&js, &ws), (&js1, &ws1)] {
+                    let (Some(jv), Some(wv)) = (jj.get(k), ww.get(k)) else { continue };
+                    for c in 0..4 {
+                        let peso = wv.get(c).copied().unwrap_or(0.0);
+                        if peso > 0.0 {
+                            // Só se relata o zero no meio quando o peso de depois conta: o 4º peso que o exportador grava é
+                            // `1 − soma`, e o arredondamento do `f32` deixa ~6e-8 depois de um zero (medido: 26 vértices
+                            // da 紫金胸甲 do cliente) — invisível no jogo.
+                            zero_no_meio |= viu_zero && peso > 1e-5;
+                            inf.push((jv.get(c).copied().unwrap_or(0.0) as usize, peso));
+                        } else {
+                            viu_zero = true;
+                        }
                     }
-                    let junta = js[k].get(c).copied().unwrap_or(0.0) as usize;
-                    let alvo = match juntas.get(junta) {
-                        None => return Err(format!("{nome}: junta {junta} fora da skin")),
-                        Some(None) => None,
-                        Some(Some(n)) => {
-                            if !esqueleto.ossos.iter().any(|o| &o.nome == n) {
-                                return Err(format!("{nome}: o osso \"{n}\" não existe no esqueleto"));
+                }
+                if zero_no_meio {
+                    pesos.reordenados += 1;
+                }
+                let mut alvos: Vec<(u8, f32, Option<&[f32; 16]>)> = Vec::with_capacity(inf.len());
+                for (junta, peso) in inf {
+                    let d = destinos.get(junta).ok_or(format!("{nome}: junta {junta} fora da skin"))?;
+                    let indice = match &d.osso {
+                        None => 255u8, // a vaga do esqueleto: resolvida no fim, quando o número de nomes é conhecido
+                        Some(n) => {
+                            let p = match ossos.iter().position(|x| x == n) {
+                                Some(p) => p,
+                                None => {
+                                    ossos.push(n.clone());
+                                    ossos.len() - 1
+                                }
+                            };
+                            if p > 254 {
+                                return Err(format!("{nome}: mais de 255 ossos na pele (o índice do vértice é um byte)"));
                             }
-                            Some(n.clone())
+                            p as u8
                         }
                     };
-                    let indice = match alvo {
-                        Some(n) => match ossos.iter().position(|x| *x == n) {
-                            Some(p) => p,
-                            None => {
-                                ossos.push(n);
-                                ossos.len() - 1
-                            }
-                        },
-                        None => usize::MAX, // a vaga do esqueleto: resolvida no fim, quando o número de nomes é conhecido
-                    };
-                    if indice != usize::MAX && indice > 254 {
-                        return Err(format!("{nome}: mais de 255 ossos na pele"));
+                    match alvos.iter_mut().find(|x| x.0 == indice) {
+                        Some(x) => x.1 += peso, // duas juntas que caíram no mesmo osso (ancestral) somam
+                        None => alvos.push((indice, peso, d.correcao.as_ref())),
                     }
-                    ossos_v[c] = if indice == usize::MAX { 255 } else { indice as u8 };
-                    w[c] = peso;
                 }
-                let soma: f32 = w.iter().sum();
-                if soma > 0.0 {
-                    w.iter_mut().for_each(|x| *x /= soma);
-                }
+                let ajuste = ajustar_pesos(&mut alvos, &mut pesos);
+                let (w, ossos_v) = ajuste;
                 let p = &pos[k];
                 let n = nor.as_ref().map_or(vec![0.0; 3], |x| x[k].clone());
                 let t = uv.as_ref().map_or(vec![0.0; 2], |x| x[k].clone());
+                // Pose de repouso diferente da do `.bon`: v' = Σ wᵢ · Cᵢ · v (a malha posta na pose do esqueleto do jogo).
+                let (mut pm, mut nm) = ([p[0], p[1], p[2]], [n[0], n[1], n[2]]);
+                if alvos.iter().any(|x| x.2.is_some()) {
+                    let (mut ps, mut ns) = ([0f32; 3], [0f32; 3]);
+                    for (_, peso, c) in &alvos {
+                        let (a, b) = match c {
+                            Some(m) => (aplicar(m, pm, 1.0), aplicar(m, nm, 0.0)),
+                            None => (pm, nm),
+                        };
+                        for e in 0..3 {
+                            ps[e] += a[e] * peso;
+                            ns[e] += b[e] * peso;
+                        }
+                    }
+                    pesos.reposicionados += 1;
+                    pm = ps;
+                    nm = normalizar(ns);
+                }
                 vertices.push(VerticeComPeso {
-                    posicao: [p[0], p[1], -p[2]],
+                    posicao: [pm[0], pm[1], -pm[2]],
                     pesos: [w[0], w[1], w[2]],
                     ossos: ossos_v,
-                    normal: [n[0], n[1], -n[2]],
+                    normal: [nm[0], nm[1], -nm[2]],
                     uv: [t[0], t[1]],
                 });
             }
@@ -807,6 +1132,7 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
         ossos_no_cabecalho: ossos.len() as i32,
         reservado: vec![0; 52],
     };
+    relatorio.extend(pesos.linhas());
     Ok(Importacao { ski, texturas_novas, relatorio })
 }
 
@@ -814,6 +1140,138 @@ pub fn ski_do_glb(glb: &[u8], esqueleto: &Bon) -> Result<Importacao, String> {
 mod testes {
     use super::*;
     use crate::glb::{do_modelo, PeleDoModelo};
+
+    /// B383: os pesos saem como o motor lê (`A3DSkinMesh.cpp:1036-1066`) e o osso que o esqueleto não tem vai para o
+    /// ancestral; a malha modelada noutra pose de repouso volta à pose do `.bon`.
+    fn glb_de_pesos(x_do_braco: f32) -> Vec<u8> {
+        let mut bin: Vec<u8> = Vec::new();
+        let mut vistas = Vec::new();
+        let mut acessores = Vec::new();
+        let mut por = |bytes: Vec<u8>, tipo: &str, comp: u32, n: usize| {
+            vistas.push(serde_json::json!({ "buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len() }));
+            bin.extend_from_slice(&bytes);
+            while bin.len() % 4 != 0 { bin.push(0); }
+            acessores.push(serde_json::json!({ "bufferView": vistas.len() - 1, "componentType": comp, "count": n, "type": tipo }));
+            acessores.len() - 1
+        };
+        let f = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let pos = f(&[0., 0., 0., 1., 0., 0., 0., 1., 0., 1., 1., 0., 0., 0., 1., 2., 0., 0.]);
+        let j0: Vec<u8> = vec![0, 3, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 3, 4, 1, 0, 0, 0];
+        let w0 = f(&[0.5, 0., 0.5, 0., 0.2, 0.2, 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0.3, 0.25, 0.2, 0.15, 1., 0., 0., 0.]);
+        let j1: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 6, 0, 0, 0, 0, 0, 0];
+        let w1 = f(&[0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.06, 0.04, 0., 0., 0., 0., 0., 0.]);
+        let t = |x: f32| -> Vec<f32> { vec![1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, 0., 0., 1.] };
+        let ibm: Vec<f32> = [t(0.), t(-x_do_braco), t(-x_do_braco - 0.5), t(0.), t(0.), t(0.), t(0.)].concat();
+        let a_pos = por(pos, "VEC3", 5126, 6);
+        let a_j0 = por(j0, "VEC4", 5121, 6);
+        let a_w0 = por(w0, "VEC4", 5126, 6);
+        let a_j1 = por(j1, "VEC4", 5121, 6);
+        let a_w1 = por(w1, "VEC4", 5126, 6);
+        let a_ibm = por(f(&ibm), "MAT4", 5126, 7);
+        let j = serde_json::json!({
+            "asset": { "version": "2.0" },
+            "nodes": [
+                { "name": "raiz", "children": [1, 3, 4, 5, 6] },
+                { "name": "braco", "translation": [x_do_braco, 0.0, 0.0], "children": [2] },
+                { "name": "extra", "translation": [0.5, 0.0, 0.0] },
+                { "name": "o2" }, { "name": "o3" }, { "name": "o4" }, { "name": "o5" },
+                { "name": "peca", "mesh": 0, "skin": 0 },
+            ],
+            "skins": [{ "joints": [0, 1, 2, 3, 4, 5, 6], "inverseBindMatrices": a_ibm }],
+            "meshes": [{ "name": "peca", "primitives": [{ "attributes": { "POSITION": a_pos, "JOINTS_0": a_j0, "WEIGHTS_0": a_w0, "JOINTS_1": a_j1, "WEIGHTS_1": a_w1 } }] }],
+            "accessors": acessores, "bufferViews": vistas, "buffers": [{ "byteLength": bin.len() }],
+        });
+        let mut tj = serde_json::to_vec(&j).unwrap();
+        while tj.len() % 4 != 0 { tj.push(b' '); }
+        let mut g = b"glTF".to_vec();
+        g.extend_from_slice(&2u32.to_le_bytes());
+        g.extend_from_slice(&((12 + 8 + tj.len() + 8 + bin.len()) as u32).to_le_bytes());
+        g.extend_from_slice(&(tj.len() as u32).to_le_bytes());
+        g.extend_from_slice(b"JSON");
+        g.extend_from_slice(&tj);
+        g.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        g.extend_from_slice(b"BIN\0");
+        g.extend_from_slice(&bin);
+        g
+    }
+
+    fn esqueleto_de_pesos() -> Bon {
+        let t = |x: f32| -> crate::bon::Matriz { [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, 0., 0., 1.] };
+        let osso = |nome: &str, mae: i32, x: f32| crate::bon::Osso { nome: nome.into(), flags: 0, mae, primeira_junta: -1, relativa: t(x), inicial: t(-x), filhas: vec![], enchimento: [0; 3] };
+        // O `.bon` tem o braço em x = 1 e não tem o osso "extra".
+        let ossos = vec![osso("raiz", -1, 0.), osso("braco", 0, 1.), osso("o2", 0, 0.), osso("o3", 0, 0.), osso("o4", 0, 0.), osso("o5", 0, 0.)];
+        Bon { versao: 6, quadro_inicial: 0, quadro_final: 0, fps: 30, ossos, juntas: vec![], trilhas: vec![], ganchos: vec![], marca: true, reservado: vec![] }
+    }
+
+    #[test]
+    fn pesos_corrigidos_como_o_motor_le() {
+        let bon = esqueleto_de_pesos();
+        let i = ski_do_glb(&glb_de_pesos(1.0), &bon).unwrap();
+        let m = &i.ski.malhas_de_pele[0];
+        let nome = |k: u8| i.ski.ossos.get(k as usize).cloned().unwrap_or_else(|| "esqueleto".into());
+        let infl = |v: usize| influencias(m.vertices[v].pesos, m.vertices[v].ossos, &nome);
+        let perto = |a: &[(String, f32)], b: &[(&str, f32)]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0 == y.0 && (x.1 - y.1).abs() < 1e-5);
+        // Zero no meio: os não nulos vão para a frente (o motor pararia no zero e perderia o braço).
+        assert!(perto(&infl(0), &[("raiz", 0.5), ("braco", 0.5)]), "{:?}", infl(0));
+        assert_eq!(m.vertices[0].pesos[1], 0.5);
+        // Soma 0,4 → normalizada.
+        assert!(perto(&infl(1), &[("raiz", 0.5), ("braco", 0.5)]), "{:?}", infl(1));
+        // Sem peso → a vaga do esqueleto, peso 1.
+        assert!(perto(&infl(2), &[("esqueleto", 1.0)]), "{:?}", infl(2));
+        // "extra" não existe no .bon → o ancestral "braco".
+        assert!(perto(&infl(3), &[("braco", 1.0)]), "{:?}", infl(3));
+        // 6 influências (JOINTS_0 + JOINTS_1) → as 4 maiores, somando 1.
+        assert!(perto(&infl(4), &[("raiz", 0.3 / 0.9), ("braco", 0.25 / 0.9), ("o2", 0.2 / 0.9), ("o3", 0.15 / 0.9)]), "{:?}", infl(4));
+        // Mesma pose de repouso: o vértice fica onde estava (z negado).
+        assert_eq!(m.vertices[5].posicao, [2.0, 0.0, -0.0]);
+        let r = i.relatorio.join("\n");
+        for esperado in ["1 vértice(s) com peso zero antes", "1 vértice(s) com soma diferente de 1", "1 vértice(s) com mais de 4 ossos", "maior peso cortado 0.060",
+            "1 vértice(s) sem peso", "\"extra\" não existe no esqueleto do jogo — os pesos dele foram para \"braco\""] {
+            assert!(r.contains(esperado), "falta \"{esperado}\" em:\n{r}");
+        }
+        assert!(!r.contains("pose de repouso"), "{r}");
+        let w = i.ski.escrever();
+        assert!(Ski::ler(&w).is_ok_and(|x| x.escrever() == w));
+
+        // Braço modelado em x = 2 (no .bon está em x = 1): o vértice preso a ele volta 1 para trás.
+        let i = ski_do_glb(&glb_de_pesos(2.0), &bon).unwrap();
+        let v = i.ski.malhas_de_pele[0].vertices[5].posicao;
+        assert!((v[0] - 1.0).abs() < 1e-5 && v[1].abs() < 1e-5 && v[2].abs() < 1e-5, "{v:?}");
+        assert!(i.relatorio.iter().any(|l| l.contains("pose de repouso diferente da do jogo em 1 osso(s) (braco)")), "{:?}", i.relatorio);
+
+        // Osso sem ancestral no esqueleto: recusa, dizendo o que fazer no Blender.
+        let mut so_braco = esqueleto_de_pesos();
+        so_braco.ossos.retain(|o| o.nome != "raiz");
+        let e = ski_do_glb(&glb_de_pesos(1.0), &so_braco).err().unwrap();
+        assert!(e.contains("\"raiz\" não existe no esqueleto do jogo e não tem ancestral") && e.contains("Blender"), "{e}");
+    }
+
+    /// B381: mede quanto cada ação de um GLB devolvido pelo Blender difere da existente no modelo v5 (pasta em `PW_B381`
+    /// com `b381.smd`, `b381.bon` e `lobo_blender.glb`). `cargo test -p pw-data-loader --lib medir_b381 -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn medir_b381() {
+        let Ok(pasta) = std::env::var("PW_B381") else { eprintln!("sem PW_B381"); return };
+        let pasta = std::path::Path::new(&pasta);
+        let smd = crate::smd::Smd::ler(&std::fs::read(pasta.join("b381.smd")).unwrap()).unwrap();
+        let bon = Bon::ler(&std::fs::read(pasta.join("b381.bon")).unwrap()).unwrap();
+        let (acoes, _) = acoes_do_glb(&std::fs::read(pasta.join("lobo_blender.glb")).unwrap(), &bon).unwrap();
+        for a in &acoes {
+            eprintln!("MEDIDA {} quadros {} → {:?}", a.nome, a.quadro_final + 1.0, diferenca_da_acao_v5(&bon, &smd, a));
+        }
+    }
+
+    /// B380: o nome do cliente de uma animação glTF — extras primeiro, depois o que vem após o último " · ".
+    #[test]
+    fn nome_original_da_animacao() {
+        let n = |v: Value| nome_original(&v);
+        assert_eq!(n(serde_json::json!({ "name": "Parado · 站立", "extras": { "angelica": { "nome": "休闲" } } })).as_deref(), Some("休闲"));
+        assert_eq!(n(serde_json::json!({ "name": "Ataque 1 — início · 普攻1起" })).as_deref(), Some("普攻1起"));
+        assert_eq!(n(serde_json::json!({ "name": "站立" })).as_deref(), Some("站立"));
+        assert_eq!(n(serde_json::json!({ "name": "a · b · 死亡" })).as_deref(), Some("死亡"));
+        assert_eq!(n(serde_json::json!({ "name": "Parado · " })), None);
+        assert_eq!(n(serde_json::json!({})), None);
+    }
 
     /// As influências de um vértice: (nome do osso, peso normalizado), na ordem dos 4 lugares. O 4º peso é implícito
     /// (`1 − soma`) e, medido, sobra como ruído de arredondamento (~1e-8) num lado e some no outro — o osso desse lugar
@@ -859,6 +1317,7 @@ mod testes {
         let mut pilha = vec![raiz.to_path_buf()];
         let (mut n, mut v5, mut v6, mut chaves, mut pior_p, mut pior_q) = (0usize, 0usize, 0usize, 0usize, 0f32, 0f32);
         let (mut na_chave, mut pior_entre) = (0usize, 0f32);
+        let (mut v5_iguais, mut v5_diferentes) = (0usize, Vec::<String>::new());
         while let Some(d) = pilha.pop() {
             if v5 >= 20 && v6 >= 20 { break; }
             for e in std::fs::read_dir(&d).unwrap().flatten() {
@@ -888,7 +1347,7 @@ mod testes {
                     stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
                 };
                 let fps = b.fps as f32;
-                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas: trilhas.clone(), inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                let acao = AnimacaoDoModelo { nome: ac.nome.clone(), trilhas: trilhas.clone(), inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps, nome_original: None };
                 if acao.fim_ms <= acao.inicio_ms { continue; }
                 let sem = |_: usize| None;
                 let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();
@@ -897,6 +1356,32 @@ mod testes {
                 let Some(nova) = acoes.first() else { continue };
                 if b.versao < 6 { v5 += 1 } else { v6 += 1 }
                 assert_eq!(nova.nome, ac.nome);
+                // B380: o esqueleto do GLB exportado é o do modelo; com um osso renomeado, não é.
+                conferir_esqueleto(&glb, &b).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+                let mut outro = b.clone();
+                outro.ossos[0].nome.push_str("_x");
+                assert!(conferir_esqueleto(&glb, &outro).is_err_and(|e| e.contains("faltam 1") && e.contains("sobram 1")), "{}", p.display());
+                // B380: várias ações num GLB (o "Exportar GLB"), com nome legível: o nome do cliente volta pelo
+                // `extras.angelica.nome` e, sem ele, pelo que vem depois de " · ".
+                let com_extras = AnimacaoDoModelo { nome: format!("Parado{SEPARADOR_DO_NOME}outro"), trilhas: trilhas.clone(), inicio_ms: acao.inicio_ms, fim_ms: acao.fim_ms, nome_original: Some(ac.nome.clone()) };
+                let sem_extras = AnimacaoDoModelo { nome: format!("Legível{SEPARADOR_DO_NOME}{}", ac.nome), trilhas: trilhas.clone(), inicio_ms: acao.inicio_ms, fim_ms: acao.fim_ms, nome_original: None };
+                let duas = crate::glb::do_modelo_com_acoes(&peles, &b, &[com_extras, sem_extras], "t");
+                let (lidas, _) = acoes_do_glb(&duas, &b).unwrap();
+                assert_eq!(lidas.iter().map(|a| a.nome.as_str()).collect::<Vec<_>>(), [ac.nome.as_str(), ac.nome.as_str()], "{}", p.display());
+                // B381: no v5, a ação que foi e voltou é "igual" (não precisa ser acrescentada); com uma chave de
+                // rotação mexida (0,05), não é.
+                if b.versao < 6 {
+                    let completo = crate::smd::Smd::ler(&std::fs::read(&p).unwrap()).unwrap();
+                    let veredito = acao_v5_igual(&b, &completo, nova);
+                    if veredito { v5_iguais += 1 } else { v5_diferentes.push(format!("{} / {}", p.display(), ac.nome)) }
+                    let mut mexida = AcaoImportada { nome: nova.nome.clone(), stck: nova.stck.clone(), quadro_final: nova.quadro_final };
+                    if let Some((_, t)) = mexida.stck.trilhas.iter_mut().find(|(_, t)| t.rotacao.chaves.len() > 1) {
+                        let meio = t.rotacao.chaves.len() / 2;
+                        let q = &mut t.rotacao.chaves[meio];
+                        q[0] += 0.05;
+                    }
+                    assert!(!acao_v5_igual(&b, &completo, &mexida), "{}: chave mexida passou por igual", p.display());
+                }
                 let w = crate::stck::escrever(&nova.stck);
                 assert!(crate::stck::ler(&w).is_ok_and(|s| crate::stck::escrever(&s) == w));
                 for o in &b.ossos {
@@ -926,6 +1411,9 @@ mod testes {
         }
         eprintln!("ações: v5 {v5}, v6 {v6}, chaves comparadas {chaves} ({na_chave} na chave original); maior diferença relativa de posição {pior_p:.2e}, de quatérnio na chave {pior_q:.2e}, entre chaves {pior_entre:.2e}");
         assert!(v5 + v6 >= 20 && chaves > 1000, "{v5} {v6} {chaves}");
+        // B381: toda ação v5 que foi e voltou é reconhecida como igual.
+        eprintln!("B381: ações v5 iguais {v5_iguais}, diferentes {}: {:?}", v5_diferentes.len(), v5_diferentes.iter().take(5).collect::<Vec<_>>());
+        assert!(v5_iguais >= 20 && v5_diferentes.is_empty(), "{v5_iguais} {v5_diferentes:?}");
         assert!(pior_p < 1e-3 && pior_q < 1e-3, "{pior_p} {pior_q}");
     }
 
@@ -1076,7 +1564,7 @@ mod testes {
                 if skis.is_empty() { continue; }
                 let fps = b.fps as f32;
                 let trilhas: Vec<(i32, &crate::trilha::TrilhaDeOsso)> = b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect();
-                let acao = AnimacaoDoModelo { nome: "nova_acao".into(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps };
+                let acao = AnimacaoDoModelo { nome: "nova_acao".into(), trilhas, inicio_ms: ac.quadro_inicial * 1000.0 / fps, fim_ms: ac.quadro_final * 1000.0 / fps, nome_original: None };
                 if acao.fim_ms <= acao.inicio_ms { continue; }
                 let sem = |_: usize| None;
                 let peles: Vec<PeleDoModelo> = skis.iter().map(|s| PeleDoModelo { ski: s, textura: &sem }).collect();

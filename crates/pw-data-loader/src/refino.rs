@@ -83,6 +83,62 @@ pub struct DadosDeRefino {
 /// `EQUIP_MAKE_HOLE_CONFIG_ID` (`gs/config.h:246`).
 pub const ID_DA_TABELA_DE_FUROS: i32 = 2013;
 
+/// `refine_factor[]` (`gs/item/equip_item.cpp:208-223`): o multiplicador do parâmetro do efeito
+/// de refino por nível (índice 0 não se usa). O GS reexporta (`pw_gs::refino::FATOR_DE_REFINO`).
+pub const FATOR_DE_REFINO: [f32; 13] = [0.0, 1.0, 2.0, 3.05, 4.3, 5.75, 7.55, 9.95, 13.0, 17.05, 22.3, 29.0, 37.5];
+
+/// O valor do efeito de refino no nível `nivel` (1..=12): `equip_item::RefineAddon`
+/// (`equip_item.cpp:319, 330`) grava `(int)(arg0 × refine_factor[nível] + 0.1f)` — o valor do
+/// nível **substitui** o anterior (não acumula), e `arg0` é o `param1` do `EQUIPMENT_ADDON`
+/// (`refine_addon_template::GenerateParam` → `arg_addon<POINT>`, `item_addon.cpp:1235-1244`).
+pub fn valor_do_refino(param: i32, nivel: usize) -> i32 {
+    match FATOR_DE_REFINO.get(nivel) {
+        Some(f) if nivel > 0 => (param as f32 * f + 0.1) as i32,
+        _ => 0,
+    }
+}
+
+/// O que um tratador `refine_*` soma ao equipamento ou ao personagem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EfeitoDeRefino {
+    pub tratador: &'static str,
+    /// O que soma, em português (um ou dois atributos; o valor é o mesmo nos dois).
+    pub soma: &'static [&'static str],
+    /// Onde o original define a regra.
+    pub evidencia: &'static str,
+}
+
+/// Os sete modelos de refino do 1.5.5 (`item_addon.cpp:1505-1511`, sobre os tratadores-base):
+/// - `refine_damage` = `enhance_damage_addon`: `damage_low` e `damage_high` da peça (`:503-522`);
+/// - `refine_magic_damage` = `refine_addon_template2<enhance_magic_damage_addon, enhance_damage_addon>`:
+///   o `UpdateItem` chama os dois (`:1277-1283`) — soma ataque mágico **e** físico;
+/// - `refine_max_hp` = `enhance_hp_addon` (`EPSA_addon` em `enhanced_param.max_hp`, `:1428`);
+/// - `refine_defense` = `enhance_defense_addon_1arg` (`base_data.defense` da peça, `:1486`);
+/// - `refine_armor` = `enhance_armor_addon` (`base_data.armor`, "闪避率加值" = esquiva, `:1482`;
+///   `equip_item.h:203`);
+/// - `refine_resistance` = `enhance_all_resistance_addon` → `EnhanceAllResistance`: as 5
+///   resistências (`:609-635`; `actobject.h:1243-1250`);
+/// - `refine_defense_resistance` = `template2<enhance_defense_addon_2, enhance_all_resistance_addon>`:
+///   defesa do personagem (`enhanced_param.defense`, `:1434`) e as 5 resistências (`Activate` dos dois, `:1300-1312`).
+pub const EFEITOS_DE_REFINO: [EfeitoDeRefino; 7] = [
+    EfeitoDeRefino { tratador: "refine_damage", soma: &["ataque físico"], evidencia: "item_addon.cpp:1510, 503-522" },
+    EfeitoDeRefino { tratador: "refine_magic_damage", soma: &["ataque mágico", "ataque físico"], evidencia: "item_addon.cpp:1509, 1265-1283, 525-544" },
+    EfeitoDeRefino { tratador: "refine_max_hp", soma: &["HP máximo"], evidencia: "item_addon.cpp:1508, 1428" },
+    EfeitoDeRefino { tratador: "refine_defense", soma: &["defesa física"], evidencia: "item_addon.cpp:1507, 1486" },
+    EfeitoDeRefino { tratador: "refine_armor", soma: &["esquiva"], evidencia: "item_addon.cpp:1506, 1482; equip_item.h:203" },
+    EfeitoDeRefino { tratador: "refine_resistance", soma: &["todas as resistências (metal, madeira, água, fogo, terra)"], evidencia: "item_addon.cpp:1505, 609-635; actobject.h:1243-1250" },
+    EfeitoDeRefino {
+        tratador: "refine_defense_resistance",
+        soma: &["defesa física", "todas as resistências (metal, madeira, água, fogo, terra)"],
+        evidencia: "item_addon.cpp:1511, 1434, 1300-1312",
+    },
+];
+
+/// O modelo de refino de um tratador (`None` se não é `refine_*`).
+pub fn efeito_de_refino(tratador: &str) -> Option<&'static EfeitoDeRefino> {
+    EFEITOS_DE_REFINO.iter().find(|e| e.tratador == tratador)
+}
+
 fn i(r: &Record, n: &str) -> i32 {
     match r.get(n) {
         Some(FieldValue::Int(v)) => *v,
@@ -181,4 +237,33 @@ pub fn carregar(g: &GenericElementsData) -> DadosDeRefino {
             .collect();
     }
     d
+}
+
+#[cfg(test)]
+mod testes_do_valor {
+    use super::*;
+
+    #[test]
+    fn valor_do_refino_pelo_fator() {
+        // `(int)(arg0 × refine_factor[n] + 0.1f)` (`equip_item.cpp:319, 330`).
+        let v: Vec<i32> = (1..=12).map(|n| valor_do_refino(7, n)).collect();
+        assert_eq!(v, [7, 14, 21, 30, 40, 52, 69, 91, 119, 156, 203, 262]);
+        assert_eq!(valor_do_refino(7, 0), 0);
+        assert_eq!(valor_do_refino(7, 13), 0);
+        // Os sete modelos de `item_addon.cpp:1505-1511` e nada mais.
+        assert_eq!(EFEITOS_DE_REFINO.len(), 7);
+        assert!(efeito_de_refino("refine_magic_damage").unwrap().soma.contains(&"ataque físico"));
+        assert!(efeito_de_refino("enhance_damage_addon").is_none());
+    }
+
+    #[test]
+    fn todo_tratador_refine_do_gs_tem_modelo() {
+        for id in 1..=8191u32 {
+            if let Some(t) = crate::addons::tratador_do_id(id) {
+                if t.starts_with("refine_") {
+                    assert!(efeito_de_refino(t).is_some(), "{id}: {t} sem modelo");
+                }
+            }
+        }
+    }
 }

@@ -172,6 +172,8 @@ struct QCaminho {
     habilidades: Option<String>,
     /// B365: a política do monstro (`common_strategy`): as habilidades que ela manda usar entram no diagnóstico.
     politica: Option<u32>,
+    /// B392: o modelo é de um NPC de serviço — o diagnóstico usa as ações `ACT_NPC_*` (`ecm::pedidos_de_npc`).
+    npc: Option<bool>,
 }
 
 async fn conteudo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QCaminho>) -> R<Response> {
@@ -283,22 +285,60 @@ fn ao_lado(caminho: &str, nome: &str) -> String {
 
 /// O modelo (`.smd`): a cabeça, as peles lidas (caminho e `.ski`) e o esqueleto (`Ok(.bon)`, ou o motivo de não ter).
 #[allow(clippy::type_complexity)]
+/// B374: arquivos de modelo do rascunho (caminho em minúsculas → nome e bytes), lidos antes do publicado — para o GLB
+/// mostrar um modelo que só existe no rascunho (ex.: o importado de um GLB, `modelos/novo`).
+type DoRascunho = std::collections::HashMap<String, (String, Vec<u8>)>;
+
+fn conteudo_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str) -> anyhow::Result<(String, Vec<u8>)> {
+    if let Some(x) = r.and_then(|m| m.get(&caminho.to_lowercase())) {
+        return Ok(x.clone());
+    }
+    e.gov.conteudo(v, caminho)
+}
+
+async fn arquivos_de_modelo_do_rascunho(e: &Estado, v: &str, rascunho: i64) -> Result<DoRascunho, Erro> {
+    e.gov.rascunho_da_versao(v, rascunho).await?;
+    let itens = e.gov.repo.itens(rascunho).await.map_err(anyhow::Error::from)?;
+    let objetos = e.gov.objetos(v);
+    let ext = ["ecm", "smd", "ski", "bon", "stck", "dds", "tga", "png", "bmp", "jpg"];
+    let mut m = DoRascunho::new();
+    for i in itens {
+        let nome = nomes::legivel(&i.caminho);
+        let baixo = nome.to_lowercase();
+        if !baixo.rsplit_once('.').is_some_and(|(_, x)| ext.contains(&x)) {
+            continue;
+        }
+        let Some(sha) = i.sha256_depois.clone() else { continue };
+        let Ok(sha): Result<crate::objetos::Sha256Bytes, _> = sha.try_into() else { continue };
+        let t = i.tamanho.unwrap_or(0) as usize;
+        let o = objetos.clone();
+        if let Ok(Ok(b)) = tokio::task::spawn_blocking(move || o.ler(&sha, t)).await {
+            m.insert(baixo, (nome, b));
+        }
+    }
+    Ok(m)
+}
+
 fn ler_smd(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader::smd::CabecaDoSmd, Vec<(String, Result<pw_data_loader::ski::Ski, String>)>, Result<pw_data_loader::bon::Bon, String>), Erro> {
-    let (nome, dados) = e.gov.conteudo(v, caminho)?;
+    ler_smd_de(e, v, None, caminho)
+}
+
+fn ler_smd_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str) -> Result<(String, pw_data_loader::smd::CabecaDoSmd, Vec<(String, Result<pw_data_loader::ski::Ski, String>)>, Result<pw_data_loader::bon::Bon, String>), Erro> {
+    let (nome, dados) = conteudo_de(e, v, r, caminho)?;
     let c = pw_data_loader::smd::cabeca(&dados).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{nome}: {x}")))?;
     let peles = c
         .peles
         .iter()
         .map(|p| {
             let cp = ao_lado(&nome, p);
-            let s = e.gov.conteudo(v, &cp).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::ski::Ski::ler(&b).map_err(|x| x.to_string()));
+            let s = conteudo_de(e, v, r, &cp).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::ski::Ski::ler(&b).map_err(|x| x.to_string()));
             (cp, s)
         })
         .collect();
     let esqueleto = if c.esqueleto.is_empty() {
         Err("o modelo não cita esqueleto".to_string())
     } else {
-        e.gov.conteudo(v, &ao_lado(&nome, &c.esqueleto)).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::bon::Bon::ler(&b).map_err(|x| x.to_string()))
+        conteudo_de(e, v, r, &ao_lado(&nome, &c.esqueleto)).map_err(|x| x.to_string()).and_then(|(_, b)| pw_data_loader::bon::Bon::ler(&b).map_err(|x| x.to_string()))
     };
     Ok((nome, c, peles, esqueleto))
 }
@@ -315,11 +355,15 @@ fn ler_ski(e: &Estado, v: &str, caminho: &str) -> Result<(String, pw_data_loader
 /// Onde o cliente acha a textura `nome` do `.ski` em `caminho` (`A3DSkin::Load`, `A3DSkin.cpp`: primeiro
 /// `<pasta>\Textures\<nome>`, depois `<pasta>\Tex_<título>\<nome>`). Devolve o caminho e os bytes.
 fn achar_textura(e: &Estado, v: &str, caminho: &str, nome: &str) -> Option<(String, Vec<u8>)> {
+    achar_textura_de(e, v, None, caminho, nome)
+}
+
+fn achar_textura_de(e: &Estado, v: &str, r: Option<&DoRascunho>, caminho: &str, nome: &str) -> Option<(String, Vec<u8>)> {
     let (pasta, arquivo) = caminho.rsplit_once('\\')?;
     let titulo = arquivo.rsplit_once('.').map_or(arquivo, |x| x.0);
     [format!("{pasta}\\Textures\\{nome}"), format!("{pasta}\\Tex_{titulo}\\{nome}")]
         .into_iter()
-        .find_map(|c| e.gov.conteudo(v, &c).ok())
+        .find_map(|c| conteudo_de(e, v, r, &c).ok())
 }
 
 /// A textura em PNG (para o GLB), pelo decodificador do `pw-data-loader` (DDS DXT1/3/5, RGBA, TGA).
@@ -343,13 +387,16 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
     if q.caminho.to_lowercase().ends_with(".ecm") {
         // B277: o modelo do jogo — o .smd, as ações combinadas e o diagnóstico de monstro (os nomes que o cliente pede,
         // `pw_data_loader::ecm::pedidos_de_monstro`, pela tabela `configs\actions_npc.txt` do próprio cliente).
-        let (nome, mut dados) = e.gov.conteudo(&v, &q.caminho)?;
-        if let Some(r) = q.rascunho {
-            dados = e.estudio.bytes_do_cliente(&e.gov, &v, &q.caminho, Some(r)).await?;
-        }
+        // B374: com o rascunho, os arquivos de modelo dele valem antes do publicado (o .ecm e o .smd podem só existir nele).
+        let do_rascunho = match q.rascunho {
+            Some(r) => Some(arquivos_de_modelo_do_rascunho(&e, &v, r).await?),
+            None => None,
+        };
+        let rr = do_rascunho.as_ref();
+        let (nome, dados) = conteudo_de(&e, &v, rr, &q.caminho)?;
         let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome}: .ecm ilegível")))?;
-        let bases_do_smd: Option<Vec<String>> = e.gov.conteudo(&v, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
-        let smd_caminho = e.gov.conteudo(&v, &m.smd).ok().map(|(n, _)| n);
+        let bases_do_smd: Option<Vec<String>> = conteudo_de(&e, &v, rr, &m.smd).ok().and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()).map(|c| c.lista_de_acoes.into_iter().map(|a| a.nome).collect());
+        let smd_caminho = conteudo_de(&e, &v, rr, &m.smd).ok().map(|(n, _)| n);
         let combinadas: Vec<Value> = m.acoes.iter().map(|a| {
             let faltam: Vec<&String> = bases_do_smd.as_ref().map_or(vec![], |b| a.bases.iter().filter(|x| !b.contains(x)).collect());
             json!({ "nome": a.nome, "bases": a.bases, "bases_ausentes": faltam, "filhas": a.filhas })
@@ -370,7 +417,11 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             };
             json!({ "indice": i, "pedido": pedido, "alternativa": alternativa, "estado": estado })
         }).collect() };
-        let diagnostico = diagnosticar(pw_data_loader::ecm::pedidos_de_monstro(&tabela));
+        let diagnostico = diagnosticar(if q.npc == Some(true) {
+            pw_data_loader::ecm::pedidos_de_npc(&tabela)
+        } else {
+            pw_data_loader::ecm::pedidos_de_monstro(&tabela)
+        });
         // B281: mascote (invocado, de combate ou evolutivo) — os nomes com o ambiente do habitat.
         let de_mascote = q.habitat.filter(|h| *h <= 6).map(|h| diagnosticar(pw_data_loader::ecm::pedidos_de_mascote(&tabela, h)));
         // B283: voo — o encaixe no esqueleto e as ações que os modelos de jogador mandam aos filhos.
@@ -420,7 +471,33 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
             }
             Some(lista)
         };
+        // B384: o nome legível de cada ação (bases, combinadas e o que o cliente pede) — a tela mostra este, o mesmo do GLB.
+        let mut nomes: std::collections::BTreeSet<String> = bases_do_smd.clone().unwrap_or_default().into_iter().collect();
+        for c in combinadas.iter() {
+            if let Some(n) = c["nome"].as_str() {
+                nomes.insert(n.to_string());
+            }
+            for b in c["bases"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+                nomes.insert(b.to_string());
+            }
+        }
+        let diagnosticados: Vec<&Value> = diagnostico.iter().collect();
+        for d in diagnosticados {
+            for k in ["pedido", "alternativa"] {
+                if let Some(n) = d[k].as_str() {
+                    nomes.insert(n.to_string());
+                }
+            }
+        }
+        let nomes_legiveis: serde_json::Map<String, Value> = nomes
+            .into_iter()
+            .filter_map(|n| {
+                let l = nome_legivel_da_acao(&n);
+                l.split_once(pw_data_loader::importar::SEPARADOR_DO_NOME).map(|(x, _)| (n.clone(), json!(x)))
+            })
+            .collect();
         return Ok(Json(json!({ "caminho": nome, "tipo": "ecm", "versao": m.versao, "smd": smd_caminho.unwrap_or(m.smd), "smd_lido": bases_do_smd.is_some(), "voo": q.voo, "diagnostico_de_voo": de_voo,
+            "nomes_legiveis": nomes_legiveis,
             "combinadas": combinadas, "bases_do_smd": bases_do_smd.clone().unwrap_or_default(), "tabela_de_acoes": tabela.len(), "diagnostico_de_monstro": diagnostico,
             "habitat": q.habitat, "diagnostico_de_mascote": de_mascote, "diagnostico_de_habilidades": de_habilidades })));
     }
@@ -475,10 +552,82 @@ async fn estudio_modelo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Que
 struct QModelo {
     caminho: String,
     acao: Option<String>,
+    /// B374: com o rascunho, os arquivos de modelo dele valem antes do publicado.
+    rascunho: Option<i64>,
+    /// B380: todas as ações-base do `.smd` (o GLB que vai para o Blender).
+    todas: Option<bool>,
+    /// B383: "equipamento" = monta o `.ecm` como o `CECModel::Load` da arma/asa/voo (peles do `.smd` + `AddiSkinPath`),
+    /// não como o NPC (`<.ecm>.ski`). "matter" = item no chão e mina (`CECMatter`): peles do `.smd`, senão a `<.smd>.ski`.
+    como: Option<String>,
+    /// B383: as peles (`.ski`, separadas por `|`) a vestir no esqueleto do `.ecm` — a armadura/moda sobre o corpo do
+    /// jogador (`Models\Players\形象\<classe>\躯干\<classe>.ecm`), como o `ChangeArmor` do cliente.
+    peles: Option<String>,
+}
+
+/// B380: o nome legível de uma ação do cliente para o GLB ("站立" → "Parado · 站立"), com o original depois do
+/// separador (`importar::SEPARADOR_DO_NOME`), que o importador recupera. B384: é a única tabela — a ficha do `.ecm` manda
+/// o legível de cada nome (`nomes_legiveis`) e as telas mostram esse; só para ler, o arquivo guarda o original.
+/// Aplicada em ordem: os compostos antes dos simples. B384: ações de voo, asas e espada voadora (medidas em 130 modelos
+/// de voo/asa/arma do 1.5.5 e do 1.2.6: 低空下降, 高空下降, 展开, 飞行悬停, 飞行前进, 飞剑…, 翅膀收起, 起飞, 滑翔, 收起…;
+/// `地空下降` é grafia do cliente para 低空下降). B386: item no chão e mina (medidos em 1.681 modelos `file_matter`/`file_model`
+/// das duas versões): o item caído toca `掉落保护` (no chão), `掉落保护_水中` (na água) ou `掉落保护_空中` (no ar), pelo ambiente
+/// (`CECMatter`, `EC_Matter.cpp:300-311`; em 1.006 modelos), `刀光` (rastro da lâmina, 614), e os termos soltos `四处张望`,
+/// `战斗站立`, `行走`, `奔跑`, `普通攻击`, `点头`, `摇头`, `招手`, `挑衅`, `复活` (modelos de personagem usados como item no chão).
+const TRADUCOES_DE_ACAO: &[(&str, &str)] = &[
+    ("掉落保护_水中", "Item caído na água"), ("掉落保护_空中", "Item caído no ar"), ("掉落保护", "Item caído no chão"),
+    ("刀光", "Rastro da lâmina"), ("四处张望", "Olhando ao redor"), ("战斗站立", "Parado em combate"), ("行走", "Andando"),
+    ("奔跑", "Correndo"), ("普通攻击", "Ataque normal"), ("点头", "Acenando que sim"), ("摇头", "Acenando que não"),
+    ("招手", "Chamando com a mão"), ("挑衅", "Provocando"), ("复活", "Revivendo"),
+    ("低空下降", "descendo de baixa altura"), ("地空下降", "descendo de baixa altura"), ("高空下降", "descendo de grande altura"),
+    ("飞行悬停", "voando parado"), ("飞行前进", "voando para frente"), ("飞行落地", "pousando"), ("飞行下降", "descendo"),
+    ("翅膀收起", "asas recolhidas"), ("飞剑", "espada voadora: "), ("展开", "abrindo"), ("收起", "recolhendo"), ("起飞", "decolando"),
+    ("滑翔", "planando"), ("前进", "para frente"), ("悬停", "parado no ar"), ("落地", "pousando"), ("静止", "parada"),
+    // B392: as do NPC de serviço (`actions_npc.txt` 17–25): 休闲动作1/2, 跑动, 攻击, 消失.
+    ("休闲动作", "Ocioso "), ("跑动", "Correndo"), ("消失", "Sumindo"), ("攻击", "Atacando"),
+    ("站立", "Parado"), ("休闲", "Ocioso"), ("戒备", "Em guarda"), ("慢速移动", "Andando"), ("快速移动", "Correndo"),
+    ("普攻", "Ataque "), ("魔攻", "Ataque mágico "), ("技能", "Habilidade "), ("施放", "lançar "), ("吟唱", "concentrar "), ("死亡", "Morrendo"),
+    ("受伤", "Apanhando"), ("叠加", " (sobreposto)"), ("起", " — início"), ("落", " — golpe"), ("挂点", "Ponto de encaixe"), ("飞行", "Voando"),
+    ("游泳", "Nadando"), ("跳", "Pulo"), ("眩晕", "Atordoado"), ("出生", "Nascendo")];
+
+fn nome_legivel_da_acao(original: &str) -> String {
+    // 起/落 (início/golpe do ataque) só como sufixo: no meio são outra palavra (`落石术` = "pedra que cai").
+    // B384: um termo da tabela que termina em 起/落 (收起, 翅膀收起, 落地…) não é o início/golpe do ataque.
+    let termo_no_fim = TRADUCOES_DE_ACAO.iter().any(|(a, _)| a.chars().count() > 1 && original.ends_with(a));
+    let (miolo, sufixo) = match original.strip_suffix('起').filter(|_| !termo_no_fim).map(|m| (m, " — início")).or_else(|| original.strip_suffix('落').filter(|_| !termo_no_fim).map(|m| (m, " — golpe"))) {
+        Some(x) => x,
+        None => (original, ""),
+    };
+    // B384: "<modelo>_<ação>" (天鹅之翼_起飞): o prefixo é o nome do modelo — o legível fica só com a ação (o original,
+    // inteiro, vai depois do separador).
+    // B386: termo da tabela com "_" (掉落保护_水中) não é prefixo de modelo.
+    let com_traco = TRADUCOES_DE_ACAO.iter().any(|(a, _)| a.contains('_') && miolo.contains(a));
+    let miolo = if com_traco { miolo } else { miolo.rsplit_once('_').map_or(miolo, |x| x.1) };
+    let mut t = miolo.to_string();
+    for (a, b) in TRADUCOES_DE_ACAO.iter().filter(|(a, _)| *a != "起" && *a != "落") {
+        t = t.replace(a, b);
+    }
+    if t == miolo && sufixo.is_empty() {
+        return original.to_string(); // nada traduzido (ex.: nome já em português)
+    }
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ").replace(" :", ":");
+    let t = t.strip_suffix(':').unwrap_or(&t).to_string();
+    let mut c = t.chars();
+    let t = format!("{}{sufixo}", c.next().map_or(String::new(), |p| p.to_uppercase().chain(c).collect()));
+    // Sobrou ideograma (nome sem tradução na tabela): o legível misturado só confunde — vai o original.
+    if t == original || t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+        original.to_string()
+    } else {
+        format!("{t}{}{original}", pw_data_loader::importar::SEPARADOR_DO_NOME)
+    }
 }
 
 async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModelo>) -> R<Response> {
     validar(&v)?;
+    let do_rascunho = match q.rascunho {
+        Some(r) => Some(arquivos_de_modelo_do_rascunho(&e, &v, r).await?),
+        None => None,
+    };
+    let rr = do_rascunho.as_ref();
     let ext = q.caminho.to_lowercase();
     if ext.ends_with(".smd") || ext.ends_with(".ecm") {
         // B274: o modelo inteiro — as peles lidas, com as texturas de cada uma, e o esqueleto (sem ele, fica parado).
@@ -486,12 +635,44 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
         // as peles do `.smd` (`LSF_NOSKIN`) e a pele `<.ecm com extensão .ski>`; sem ela, as `AddiSkinPath`
         // (`"Models\" + caminho`, `EC_Model.cpp:678-689`) e, por fim, as do `.smd`.
         let (nome, cabeca, peles, esqueleto) = if ext.ends_with(".ecm") {
-            let (nome_ecm, dados) = e.gov.conteudo(&v, &q.caminho)?;
+            let (nome_ecm, dados) = conteudo_de(&e, &v, rr, &q.caminho)?;
             let m = pw_data_loader::ecm::ler(&dados).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("{nome_ecm}: .ecm ilegível")))?;
-            let (_, cabeca, peles_do_smd, esqueleto) = ler_smd(&e, &v, &m.smd)?;
-            let ler_pele = |c: &str| e.gov.conteudo(&v, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
+            let (_, cabeca, peles_do_smd, esqueleto) = ler_smd_de(&e, &v, rr, &m.smd)?;
+            let ler_pele = |c: &str| conteudo_de(&e, &v, rr, c).map_err(|x| x.to_string()).and_then(|(n, b)| pw_data_loader::ski::Ski::ler(&b).map(|s| (n, s)).map_err(|x| x.to_string()));
             let irma = format!("{}.ski", nome_ecm.rsplit_once('.').map_or(nome_ecm.as_str(), |x| x.0));
             let mut peles: Vec<(String, Result<pw_data_loader::ski::Ski, String>)> = Vec::new();
+            if let Some(lista) = q.peles.as_deref().filter(|x| !x.trim().is_empty()) {
+                // B383: peles escolhidas (armadura/moda e, se pedido, o corpo) no esqueleto deste .ecm.
+                for c in lista.split('|').map(str::trim).filter(|c| !c.is_empty()).take(16) {
+                    match ler_pele(c) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((c.to_string(), Err(x))),
+                    }
+                }
+            } else if q.como.as_deref() == Some("equipamento") {
+                // B383: equipamento — as peles do .smd e as adicionais do .ecm (`CECModel::Load(…, LSF_UNIQUESKIN)`,
+                // `EC_Player.cpp:4547-4583`; `AddiSkinPath`, `EC_Model.cpp:678-689`).
+                peles.extend(peles_do_smd);
+                for a in &m.peles_adicionais {
+                    let c = format!("Models\\{a}");
+                    match ler_pele(&c) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((c, Err(x))),
+                    }
+                }
+            } else if q.como.as_deref() == Some("matter") {
+                // Item no chão e mina (`CECMatter::LoadMatterModel`, `EC_Matter.cpp:71-107`): `CECModel::Load` comum — as
+                // peles do .smd; se o modelo ficou sem pele, a `<.smd>.ski` (`:96-103`). As `AddiSkinPath` só entram no
+                // editor (`#ifdef GFX_EDITOR`, `EC_Model.cpp:678-689`).
+                peles.extend(peles_do_smd);
+                if !peles.iter().any(|p| p.1.is_ok()) {
+                    let ski = format!("{}.ski", m.smd.trim().replace('/', "\\").rsplit_once('.').map_or(m.smd.trim().to_string(), |x| x.0.to_string()));
+                    match ler_pele(&ski) {
+                        Ok((n, s)) => peles.push((n, Ok(s))),
+                        Err(x) => peles.push((ski, Err(x))),
+                    }
+                }
+            } else {
             match ler_pele(&irma) {
                 Ok((n, s)) => peles.push((n, Ok(s))),
                 Err(_) => {
@@ -507,9 +688,10 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
                     }
                 }
             }
+            }
             (nome_ecm, cabeca, peles, esqueleto)
         } else {
-            ler_smd(&e, &v, &q.caminho)?
+            ler_smd_de(&e, &v, rr, &q.caminho)?
         };
         let lidas: Vec<(String, pw_data_loader::ski::Ski)> = peles.into_iter().filter_map(|(cp, s)| s.ok().map(|s| (cp, s))).collect();
         if lidas.is_empty() && esqueleto.is_err() {
@@ -524,7 +706,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
         }
         let texturas: Vec<Vec<Option<pw_data_loader::glb::Textura>>> = lidas
             .iter()
-            .map(|(cp, s)| s.texturas.iter().map(|t| achar_textura(&e, &v, cp, t).and_then(|(_, b)| textura_em_png(&b))).collect())
+            .map(|(cp, s)| s.texturas.iter().map(|t| achar_textura_de(&e, &v, rr, cp, t).and_then(|(_, b)| textura_em_png(&b))).collect())
             .collect();
         let fornecedores: Vec<Box<dyn Fn(usize) -> Option<pw_data_loader::glb::Textura>>> = texturas
             .iter()
@@ -532,27 +714,58 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
             .collect();
         let lista: Vec<pw_data_loader::glb::PeleDoModelo> = lidas.iter().zip(&fornecedores).map(|((_, s), f)| pw_data_loader::glb::PeleDoModelo { ski: s, textura: f.as_ref() }).collect();
         // B276: com `acao`, a animação dela — trilhas embutidas no .bon v5 ou o .stck da ação (pasta das trilhas: a do
-        // .smd v8, ou `tcks_<título>`).
-        if let (Some(nome_acao), Ok(b)) = (q.acao.as_deref(), esqueleto.as_ref()) {
-            let a = cabeca.lista_de_acoes.iter().find(|a| a.nome == nome_acao).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("ação {nome_acao} não existe")))?;
+        // .smd v8, ou `tcks_<título>`). B380: com `todas`, uma animação glTF por ação-base do .smd (o "Exportar GLB"),
+        // com o nome legível ("Parado · 站立") e o original em `extras.angelica.nome`; ação cuja trilha não lê fica de fora.
+        let escolhidas: Vec<&pw_data_loader::smd::Acao> = if q.todas == Some(true) {
+            cabeca.lista_de_acoes.iter().collect()
+        } else if let Some(nome_acao) = q.acao.as_deref() {
+            vec![cabeca.lista_de_acoes.iter().find(|a| a.nome == nome_acao).ok_or_else(|| Erro(StatusCode::BAD_REQUEST, format!("ação {nome_acao} não existe")))?]
+        } else {
+            Vec::new()
+        };
+        if let (false, Ok(b)) = (escolhidas.is_empty(), esqueleto.as_ref()) {
             if b.fps <= 0 || (cabeca.versao < 7 && b.versao >= 6) {
-                return Err(Erro(StatusCode::BAD_REQUEST, "o motor descarta as ações deste modelo (.smd < 7 com .bon v6)".into()));
+                if q.todas != Some(true) {
+                    return Err(Erro(StatusCode::BAD_REQUEST, "o motor descarta as ações deste modelo (.smd < 7 com .bon v6)".into()));
+                }
+                return glb_como_resposta(&nome, pw_data_loader::glb::do_modelo(&lista, Some(b), &nome));
             }
-            let stck;
-            let trilhas: Vec<(i32, &pw_data_loader::trilha::TrilhaDeOsso)> = if b.versao < 6 {
-                b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect()
-            } else {
-                let arquivo = a.stck.clone().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "a ação não cita .stck".into()))?;
-                let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
-                let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
-                let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
-                let (_, bytes) = e.gov.conteudo(&v, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
-                stck = pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
-                stck.trilhas.iter().map(|(j, t)| (*j, t)).collect()
-            };
+            let titulo = nome.rsplit('\\').next().and_then(|x| x.rsplit_once('.')).map_or("", |x| x.0).to_string();
+            let pasta = if cabeca.versao >= 8 { cabeca.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
+            // As .stck lidas antes (as trilhas das animações apontam para elas); `None` = trilha embutida no .bon v5.
+            let mut lidas_stck: Vec<(&pw_data_loader::smd::Acao, Option<pw_data_loader::stck::Stck>)> = Vec::new();
+            for a in &escolhidas {
+                if b.versao < 6 {
+                    lidas_stck.push((a, None));
+                    continue;
+                }
+                let lida = (|| -> Result<pw_data_loader::stck::Stck, Erro> {
+                    let arquivo = a.stck.clone().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "a ação não cita .stck".into()))?;
+                    let caminho = ao_lado(&nome, &format!("{pasta}\\{arquivo}"));
+                    let (_, bytes) = conteudo_de(&e, &v, rr, &caminho).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))?;
+                    pw_data_loader::stck::ler(&bytes).map_err(|x| Erro(StatusCode::BAD_REQUEST, format!("{caminho}: {x}")))
+                })();
+                match lida {
+                    Ok(s) => lidas_stck.push((a, Some(s))),
+                    Err(x) if q.todas == Some(true) => tracing::warn!("GLB de {nome}: ação {} fora ({})", a.nome, x.1),
+                    Err(x) => return Err(x),
+                }
+            }
             let fps = b.fps as f32;
-            let anim = pw_data_loader::glb::AnimacaoDoModelo { nome: a.nome.clone(), trilhas, inicio_ms: a.quadro_inicial * 1000.0 / fps, fim_ms: a.quadro_final * 1000.0 / fps };
-            let glb = pw_data_loader::glb::do_modelo_animado(&lista, b, &anim, &nome);
+            let anims: Vec<pw_data_loader::glb::AnimacaoDoModelo> = lidas_stck
+                .iter()
+                .map(|(a, s)| pw_data_loader::glb::AnimacaoDoModelo {
+                    nome: if q.todas == Some(true) { nome_legivel_da_acao(&a.nome) } else { a.nome.clone() },
+                    trilhas: match s {
+                        Some(s) => s.trilhas.iter().map(|(j, t)| (*j, t)).collect(),
+                        None => b.trilhas.iter().enumerate().map(|(i, t)| (i as i32, t)).collect(),
+                    },
+                    inicio_ms: a.quadro_inicial * 1000.0 / fps,
+                    fim_ms: a.quadro_final * 1000.0 / fps,
+                    nome_original: Some(a.nome.clone()),
+                })
+                .collect();
+            let glb = pw_data_loader::glb::do_modelo_com_acoes(&lista, b, &anims, &nome);
             return glb_como_resposta(&nome, glb);
         }
         let glb = pw_data_loader::glb::do_modelo(&lista, esqueleto.as_ref().ok(), &nome);
@@ -561,7 +774,7 @@ async fn estudio_modelo_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>,
     let (nome, s) = ler_ski(&e, &v, &q.caminho)?;
     // B273: as texturas, achadas como o cliente acha e convertidas para PNG; a que falta fica só com a cor.
     let texturas: Vec<Option<pw_data_loader::glb::Textura>> =
-        s.texturas.iter().map(|t| achar_textura(&e, &v, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
+        s.texturas.iter().map(|t| achar_textura_de(&e, &v, rr, &nome, t).and_then(|(_, b)| textura_em_png(&b))).collect();
     let glb = pw_data_loader::glb::do_ski_com_texturas(&s, &nome, &|i| texturas.get(i).and_then(|t| t.as_ref()).map(|t| pw_data_loader::glb::Textura { png: t.png.clone(), transparente: t.transparente }));
     glb_como_resposta(&nome, glb)
 }
@@ -596,6 +809,20 @@ async fn estudio_acao_nova(State(e): State<Arc<Estado>>, Path(v): Path<String>, 
         return Ok(Json(e.estudio.acao_copiada_no_ecm(&e.gov, &v, &p.caminho, r, de, p.origem, p.nova).await?));
     }
     Ok(Json(e.estudio.acao_nova_no_ecm(&e.gov, &v, &p.caminho, r, p.origem, p.nova, p.base).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoTrocarBase {
+    caminho: String,
+    acao: String,
+    base: String,
+}
+
+/// B373: a animação-base que uma ação combinada do `.ecm` executa.
+async fn estudio_trocar_base(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoTrocarBase>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.trocar_base_da_acao(&e.gov, &v, &p.caminho, r, p.acao, p.base).await?))
 }
 
 #[derive(Deserialize)]
@@ -740,19 +967,55 @@ async fn estudio_texto_da_habilidade(State(e): State<Arc<Estado>>, Path((v, id))
 }
 
 #[derive(Deserialize)]
+struct QImportarGlb {
+    rascunho: Option<i64>,
+    caminho: String,
+    modo: String,
+    /// B383: "equipamento" = o GLB vai para a 1ª pele do `.smd` (arma, asa, voo), não para a `<.ecm>.ski` do NPC.
+    /// "matter" = item no chão e mina: a 1ª pele do `.smd` ou, sem nenhuma, a `<.smd>.ski` (`EC_Matter.cpp:96-103`).
+    como: Option<String>,
+    /// B383: só conferir (relatório), sem gravar.
+    validar: Option<bool>,
+}
+
+/// B380: GLB no modelo (`.ecm`) do monstro — só o modelo ou só as animações, com o mesmo esqueleto
+/// (`Estudio::importar_glb_no_modelo`).
+async fn estudio_importar_glb(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImportarGlb>, corpo: Bytes) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    Ok(Json(e.estudio.importar_glb_no_modelo(&e.gov, &v, r, &q.caminho, &q.modo, q.como.as_deref(), q.validar == Some(true), corpo.to_vec()).await?))
+}
+
+#[derive(Deserialize)]
+struct PedidoSemUso {
+    caminho: String,
+}
+
+/// B380: marca para remoção os arquivos do modelo antigo que nada mais usa (`Estudio::remover_modelo_sem_uso`).
+async fn estudio_modelo_sem_uso(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>, Json(p): Json<PedidoSemUso>) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.remover_modelo_sem_uso(&e.gov, &v, r, &p.caminho).await?))
+}
+
+#[derive(Deserialize)]
 struct QModeloNovo {
     rascunho: Option<i64>,
     pasta: String,
     titulo: String,
     /// B299: o `.ecm` do cliente a usar como molde do `.ecm` novo (opcional).
     molde: Option<String>,
+    /// B383: ganchos exigidos no esqueleto (um basta), separados por vírgula.
+    ganchos: Option<String>,
+    /// B383: só conferir (relatório), sem gravar.
+    validar: Option<bool>,
 }
 
 /// B298 (S6): um modelo inteiro (.bon, .ski, .smd, texturas e ações) a partir do GLB do corpo — `Estudio::modelo_novo`.
 async fn estudio_modelo_novo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QModeloNovo>, corpo: Bytes) -> R<Json<Value>> {
     validar(&v)?;
     let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
-    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec(), q.molde.as_deref()).await?))
+    Ok(Json(e.estudio.modelo_novo(&e.gov, &v, r, &q.pasta, &q.titulo, corpo.to_vec(), q.molde.as_deref(), q.ganchos.as_deref(), q.validar == Some(true)).await?))
 }
 
 /// B290 (S6): substitui uma pele (`.ski`) pelo glTF (GLB) do corpo, com os ossos do esqueleto do `.smd`.
@@ -883,6 +1146,10 @@ struct QEstudio {
     busca: Option<String>,
     pagina: Option<usize>,
     por_pagina: Option<usize>,
+    /// B376 (só a listagem de tabela): `colunas=a,b`, `ordem=-a`, `faixas=a:30:40`.
+    colunas: Option<String>,
+    ordem: Option<String>,
+    faixas: Option<String>,
 }
 
 fn tabela_valida(t: &str) -> R<()> {
@@ -908,14 +1175,77 @@ async fn estudio_listar(
 ) -> R<Json<Value>> {
     validar(&v)?;
     tabela_valida(&tabela)?;
+    // B376: colunas, ordenação e faixas por campo, sobre a tabela inteira (`FiltroDeListagem`).
+    let filtro = crate::estudio::FiltroDeListagem::da_consulta(q.colunas.as_deref(), q.ordem.as_deref(), q.faixas.as_deref())
+        .map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?;
     let r = e
         .estudio
-        .listar(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50))
+        .listar(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50), &filtro)
         .await?;
     Ok(Json(r))
 }
 
 /// B365: tela própria (loja, forja, teleporte) do registro — `Estudio::tela`.
+/// B369: de onde vem o item `id` (drops, missões, lojas, Loja Gold, forjas), só leitura.
+async fn estudio_origens(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    if id <= 0 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
+    }
+    Ok(Json(e.estudio.origens_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
+/// Para onde o item vai: receitas que o gastam, minas que o dão, habilidades que o exigem — `Estudio::usos_do_item`.
+async fn estudio_usos(State(e): State<Arc<Estado>>, Path((v, id)): Path<(String, i32)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    if id <= 0 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "id inválido".into()));
+    }
+    Ok(Json(e.estudio.usos_do_item(&e.gov, &v, q.rascunho, id).await?))
+}
+
+/// A mina (registro `indice` de `MINE_ESSENCE`) como o GS a monta, ou o motivo da recusa — `Estudio::mina_do_gs`.
+async fn estudio_mina(State(e): State<Arc<Estado>>, Path((v, indice)): Path<(String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.mina_do_gs(&e.gov, &v, q.rascunho, indice).await?))
+}
+
+#[derive(Deserialize)]
+struct QPeleDoEquipamento {
+    rascunho: Option<i64>,
+    realname: String,
+    genero: u8,
+    grupo: Option<String>,
+    classe: Option<usize>,
+    validar: Option<bool>,
+}
+
+/// B383: a pele de armadura/moda (`realname`) de um gênero — grupos, arquivos, corpos, quem usa (`Estudio::pele_do_equipamento`).
+async fn estudio_pele_do_equipamento(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QPeleDoEquipamento>) -> R<Json<Value>> {
+    validar(&v)?;
+    if q.genero > 1 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "gênero 0 ou 1".into()));
+    }
+    Ok(Json(e.estudio.pele_do_equipamento(&e.gov, &v, q.rascunho, &q.realname, q.genero).await?))
+}
+
+/// B383: GLB → os três `.ski` da pele de armadura/moda (`Estudio::importar_pele_do_equipamento`); `validar` só confere.
+async fn estudio_importar_pele_do_equipamento(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QPeleDoEquipamento>, corpo: Bytes) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    let grupo = q.grupo.as_deref().ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "falta o grupo da pele".into()))?;
+    if q.genero > 1 {
+        return Err(Erro(StatusCode::BAD_REQUEST, "gênero 0 ou 1".into()));
+    }
+    Ok(Json(e.estudio.importar_pele_do_equipamento(&e.gov, &v, r, &q.realname, q.genero, grupo, q.classe, q.validar == Some(true), corpo.to_vec()).await?))
+}
+
+/// Os efeitos de refino do rascunho, com o valor por nível e o uso por família — `Estudio::refinos`.
+async fn estudio_refinos(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.refinos(&e.gov, &v, q.rascunho).await?))
+}
+
 async fn estudio_tela(
     State(e): State<Arc<Estado>>,
     Path((v, tabela, indice)): Path<(String, String, usize)>,
@@ -1273,13 +1603,111 @@ async fn estudio_clonar_oferta(
 ) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
-    Ok(Json(e.estudio.clonar_oferta(&e.gov, &v, &arquivo, r, p.base).await?))
+    Ok(Json(e.estudio.clonar_oferta(&e.gov, &v, &arquivo, r, p.base, p.campos).await?))
+}
+
+// ------------------------------------------------------------------ Estúdio G-Shop (abas, imagens, conferência)
+
+async fn estudio_abas_da_loja(State(e): State<Arc<Estado>>, Path((v, arquivo)): Path<(String, String)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.abas_da_loja(&e.gov, &v, &arquivo, q.rascunho).await?))
+}
+
+#[derive(Deserialize)]
+struct QImagemDaAba {
+    rascunho: Option<i64>,
+    tema: Option<u8>,
+    estado: String,
+}
+
+async fn estudio_imagem_da_aba(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, aba)): Path<(String, String, usize)>,
+    Query(q): Query<QImagemDaAba>,
+    corpo: Bytes,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = q.rascunho.ok_or_else(|| Erro(StatusCode::BAD_REQUEST, "escolha um rascunho".into()))?;
+    Ok(Json(e.estudio.trocar_imagem_da_aba(&e.gov, &v, &arquivo, r, aba, q.tema.unwrap_or(0), &q.estado, &corpo).await?))
+}
+
+async fn estudio_imagem_da_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    corpo: Bytes,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    let r = rascunho_obrigatorio(&q)?;
+    Ok(Json(e.estudio.trocar_imagem_da_oferta(&e.gov, &v, &arquivo, r, indice, &corpo).await?))
+}
+
+async fn estudio_conferir_oferta(
+    State(e): State<Arc<Estado>>,
+    Path((v, arquivo, indice)): Path<(String, String, usize)>,
+    Query(q): Query<QEstudio>,
+    Json(p): Json<PedidoCampos>,
+) -> R<Json<Value>> {
+    validar(&v)?;
+    Ok(Json(e.estudio.conferir_oferta(&e.gov, &v, &arquivo, q.rascunho, indice, p.campos).await?))
+}
+
+#[derive(Deserialize)]
+struct QImagemDoCliente {
+    caminho: String,
+    rascunho: Option<i64>,
+}
+
+/// Uma imagem de interface do cliente (`surfaces\…`, TGA/DDS) em PNG — as abas e as imagens das ofertas da loja.
+async fn estudio_imagem_do_cliente(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QImagemDoCliente>) -> R<Response> {
+    validar(&v)?;
+    let png = e
+        .estudio
+        .imagem_do_cliente_em_png(&e.gov, &v, &q.caminho, q.rascunho)
+        .await
+        .map_err(|err| Erro(StatusCode::NOT_FOUND, format!("{err:#}")))?;
+    let mut h = HeaderMap::new();
+    h.insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+    h.insert(header::CACHE_CONTROL, "private, no-cache".parse().unwrap());
+    Ok((h, png).into_response())
 }
 
 async fn estudio_remover_oferta(State(e): State<Arc<Estado>>, Path((v, arquivo, indice)): Path<(String, String, usize)>, Query(q): Query<QEstudio>) -> R<Json<Value>> {
     validar(&v)?;
     let r = rascunho_obrigatorio(&q)?;
     Ok(Json(e.estudio.remover_oferta(&e.gov, &v, &arquivo, r, indice).await?))
+}
+
+// ------------------------------------------------------------------ serviços de NPC e resumo de missões (B392)
+
+#[derive(Deserialize)]
+struct QServicos {
+    rascunho: Option<i64>,
+    busca: Option<String>,
+    uso: Option<String>,
+    pagina: Option<usize>,
+    por_pagina: Option<usize>,
+}
+
+async fn estudio_servicos(State(e): State<Arc<Estado>>, Path((v, tabela)): Path<(String, String)>, Query(q): Query<QServicos>) -> R<Json<Value>> {
+    validar(&v)?;
+    tabela_valida(&tabela)?;
+    let r = e.estudio.servicos(&e.gov, &v, q.rascunho, &tabela, q.busca.as_deref().unwrap_or(""), q.uso.as_deref(),
+        q.pagina.unwrap_or(0), q.por_pagina.unwrap_or(50)).await.map_err(|x| Erro(StatusCode::BAD_REQUEST, x.to_string()))?;
+    Ok(Json(r))
+}
+
+#[derive(Deserialize)]
+struct QResumoDeMissoes {
+    rascunho: Option<i64>,
+    ids: Option<String>,
+    npc: Option<u32>,
+}
+
+async fn estudio_missoes_resumo(State(e): State<Arc<Estado>>, Path(v): Path<String>, Query(q): Query<QResumoDeMissoes>) -> R<Json<Value>> {
+    validar(&v)?;
+    let ids: Vec<u32> = q.ids.as_deref().unwrap_or("").split(',').filter_map(|x| x.trim().parse().ok()).filter(|&x| x > 0).take(600).collect();
+    Ok(Json(e.estudio.missoes_resumo(&e.gov, &v, q.rascunho, &ids, q.npc).await?))
 }
 
 // ------------------------------------------------------------------ missões (S7, B255)
@@ -1717,6 +2145,11 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}", get(estudio_ficha).put(estudio_editar).delete(estudio_remover))
         .route("/admin/{v}/estudio/tabelas/{tabela}/{indice}/clonar", post(estudio_clonar))
         .route("/admin/{v}/estudio/telas/{tabela}/{indice}", get(estudio_tela))
+        .route("/admin/{v}/estudio/origens/{id}", get(estudio_origens))
+        .route("/admin/{v}/estudio/usos/{id}", get(estudio_usos))
+        .route("/admin/{v}/estudio/minas/{indice}", get(estudio_mina))
+        .route("/admin/{v}/estudio/refinos", get(estudio_refinos))
+        .route("/admin/{v}/estudio/equipamentos/pele", get(estudio_pele_do_equipamento).post(estudio_importar_pele_do_equipamento))
         .route("/admin/{v}/estudio/espacos/{espaco}", get(estudio_buscar_no_espaco))
         .route("/admin/{v}/estudio/funcoes", get(estudio_funcoes))
         .route("/admin/{v}/estudio/mapas", get(estudio_mapas))
@@ -1736,16 +2169,21 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/mapas/{caminho}/altura", get(estudio_altura))
         .route("/admin/{v}/estudio/alinhamento", get(estudio_alinhamento))
         .route("/admin/{v}/estudio/missoes", get(estudio_missoes))
+        .route("/admin/{v}/estudio/missoes_resumo", get(estudio_missoes_resumo))
+        .route("/admin/{v}/estudio/servicos/{tabela}", get(estudio_servicos))
         .route("/admin/{v}/estudio/comportamentos", get(estudio_comportamentos))
         .route("/admin/{v}/estudio/modelos", get(estudio_modelos))
         .route("/admin/{v}/estudio/modelos/ficha", get(estudio_modelo))
         .route("/admin/{v}/estudio/modelos/glb", get(estudio_modelo_glb))
         .route("/admin/{v}/estudio/modelos/acao", post(estudio_acao_nova))
+        .route("/admin/{v}/estudio/modelos/base", post(estudio_trocar_base))
         .route("/admin/{v}/estudio/modelos/doadores", get(estudio_doadores))
         .route("/admin/{v}/estudio/modelos/importar", post(estudio_importar_pele))
         .route("/admin/{v}/estudio/modelos/pele_nova", post(estudio_nova_pele))
         .route("/admin/{v}/estudio/modelos/acoes_glb", post(estudio_acoes_glb))
         .route("/admin/{v}/estudio/modelos/novo", post(estudio_modelo_novo))
+        .route("/admin/{v}/estudio/modelos/importar_glb", post(estudio_importar_glb))
+        .route("/admin/{v}/estudio/modelos/sem_uso", post(estudio_modelo_sem_uso))
         .route("/admin/{v}/estudio/habilidades", get(estudio_habilidades))
         .route("/admin/{v}/estudio/habilidades/{id}", get(estudio_habilidade))
         .route("/admin/{v}/estudio/habilidades/{id}/texto", put(estudio_texto_da_habilidade))
@@ -1763,6 +2201,11 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .route("/admin/{v}/estudio/missoes/{id}/clonar", post(estudio_clonar_missao))
         .route("/admin/{v}/estudio/loja/{arquivo}", get(estudio_loja).post(estudio_clonar_oferta))
         .route("/admin/{v}/estudio/loja/{arquivo}/categorias", post(estudio_categoria_da_loja))
+        .route("/admin/{v}/estudio/loja/{arquivo}/abas", get(estudio_abas_da_loja))
+        .route("/admin/{v}/estudio/loja/{arquivo}/abas/{aba}/imagem", post(estudio_imagem_da_aba))
+        .route("/admin/{v}/estudio/loja/{arquivo}/{indice}/imagem", post(estudio_imagem_da_oferta))
+        .route("/admin/{v}/estudio/loja/{arquivo}/{indice}/conferir", post(estudio_conferir_oferta))
+        .route("/admin/{v}/estudio/imagem", get(estudio_imagem_do_cliente))
         .route("/admin/{v}/estudio/loja/{arquivo}/{indice}", get(estudio_oferta).put(estudio_editar_oferta).delete(estudio_remover_oferta))
         .route("/admin/{v}/estudio/mapas/{caminho}/alinhar", post(estudio_alinhar))
         .route("/admin/{v}/estudio/rastreador/{id}", put(estudio_editar_rastreador))
@@ -1779,4 +2222,44 @@ pub fn rotas_com_fonte(gov: Governanca, segredo: String, fonte: Arc<dyn crate::f
         .layer(DefaultBodyLimit::max(MAIOR_ARQUIVO))
         .route_layer(middleware::from_fn_with_state(estado.clone(), exigir_segredo))
         .with_state(estado)
+}
+
+#[cfg(test)]
+mod testes_b380 {
+    /// B380: nome legível da ação no GLB, com o original depois do separador (o importador o recupera).
+    #[test]
+    fn nome_legivel_da_acao() {
+        assert_eq!(super::nome_legivel_da_acao("站立"), "Parado · 站立");
+        // B386: item caído (EC_Matter.cpp:300-311) e o "站立" composto antes do simples.
+        assert_eq!(super::nome_legivel_da_acao("掉落保护_水中"), "Item caído na água · 掉落保护_水中");
+        assert_eq!(super::nome_legivel_da_acao("掉落保护"), "Item caído no chão · 掉落保护");
+        assert_eq!(super::nome_legivel_da_acao("战斗站立"), "Parado em combate · 战斗站立");
+        assert_eq!(super::nome_legivel_da_acao("普攻1起"), "Ataque 1 — início · 普攻1起");
+        assert_eq!(super::nome_legivel_da_acao("andar"), "andar");
+        // B392: ações do NPC de serviço.
+        assert_eq!(super::nome_legivel_da_acao("休闲动作1"), "Ocioso 1 · 休闲动作1");
+        assert_eq!(super::nome_legivel_da_acao("攻击起"), "Atacando — início · 攻击起");
+        assert_eq!(super::nome_legivel_da_acao("跑动"), "Correndo · 跑动");
+        assert_eq!(super::nome_legivel_da_acao("消失"), "Sumindo · 消失");
+        assert_eq!(super::nome_legivel_da_acao("受伤叠加"), "Apanhando (sobreposto) · 受伤叠加");
+        // Sem tradução de tudo, só o original (antes: "— golpe石术lançar — golpe").
+        assert_eq!(super::nome_legivel_da_acao("落石术施放落"), "落石术施放落");
+        assert_eq!(super::nome_legivel_da_acao("弓箭站立"), "弓箭站立");
+        // B384: voo, asas e espada voadora; o prefixo do modelo sai do legível e volta pelo original.
+        assert_eq!(super::nome_legivel_da_acao("飞行悬停"), "Voando parado · 飞行悬停");
+        assert_eq!(super::nome_legivel_da_acao("低空下降"), "Descendo de baixa altura · 低空下降");
+        assert_eq!(super::nome_legivel_da_acao("飞剑悬停"), "Espada voadora: parado no ar · 飞剑悬停");
+        assert_eq!(super::nome_legivel_da_acao("天鹅之翼_起飞"), "Decolando · 天鹅之翼_起飞");
+        assert_eq!(super::nome_legivel_da_acao("机械翼_地空下降"), "Descendo de baixa altura · 机械翼_地空下降");
+        assert_eq!(super::nome_legivel_da_acao("翅膀收起"), "Asas recolhidas · 翅膀收起");
+        assert_eq!(super::nome_legivel_da_acao("飞剑挂点"), "Espada voadora: Ponto de encaixe · 飞剑挂点");
+        for n in ["低空下降", "高空下降", "展开", "飞行悬停", "飞行前进", "挂点", "飞剑低空下降", "飞剑高空下降", "飞剑前进", "飞剑悬停",
+            "翅膀收起", "飞剑静止", "起飞", "滑翔", "飞行落地", "收起", "前进", "悬停", "落地", "飞剑滑翔", "飞剑落地", "飞剑起飞", "蝠翼_飞行下降"] {
+            let l = super::nome_legivel_da_acao(n);
+            assert!(l.contains(" · "), "sem tradução: {n} → {l}");
+            assert_eq!(pw_data_loader::importar::nome_original(&serde_json::json!({ "name": l })).as_deref(), Some(n));
+        }
+        let v = serde_json::json!({ "name": super::nome_legivel_da_acao("魔攻2落") });
+        assert_eq!(pw_data_loader::importar::nome_original(&v).as_deref(), Some("魔攻2落"));
+    }
 }

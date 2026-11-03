@@ -1113,6 +1113,15 @@ impl RoteadorDeMapas {
         n
     }
 
+    /// B378: aviso do sistema (canal 9) a todos os jogadores deste processo — `BusServer::avisar_sistema` em cada mapa.
+    pub async fn avisar_todos(&self, texto: &str) -> usize {
+        let mut n = 0;
+        for (_, m) in self.todos() {
+            n += m.avisar_sistema(texto).await;
+        }
+        n
+    }
+
     /// Reiniciar pelo painel (B249): todos saem pelo caminho do logout (`expulsar_pelo_painel`: trava de gravação,
     /// fotografia salva antes de liberar), com a guarda de presença em escrita para ninguém entrar no meio.
     pub async fn desconectar_todos(&self) -> usize {
@@ -1235,7 +1244,7 @@ impl RoteadorDeMapas {
                     |[f, a, v, e, p]| serde_json::json!({"forca":f,"agilidade":a,"vitalidade":v,"energia":e,"pontos_livres":p})),
             },
             E::Cultivo(v) => Self::offline(roleid, "cultivo",
-                self.repo.definir_cultivo_offline(roleid, v).await.map(|ok| ok.then_some(v)),
+                self.repo.definir_cultivo_offline(roleid, v, bus.teto_de_chi_do_cultivo(v).await).await.map(|ok| ok.then_some(v)),
                 |c| serde_json::json!({"cultivo": c})),
             E::Dinheiro(delta) => match self.repo.ajustar_dinheiro_offline(roleid, delta).await {
                 Ok(Some(dinheiro)) => serde_json::json!({"estado":"salvo","presenca":"offline","dinheiro":dinheiro.to_string()}),
@@ -1441,6 +1450,14 @@ impl RoteadorDeMapas {
     pub async fn detalhe_do_item(&self, roleid: i32, recipiente: pw_core::ContainerType, slot: u16) -> serde_json::Value {
         match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
             Some(bus) => bus.detalhe_do_item(roleid, recipiente, slot).await,
+            None => serde_json::json!({"codigo":"sem_mapa"}),
+        }
+    }
+
+    /// Estúdio (B373): o item `tid` gerado como drop, para a prévia (não grava).
+    pub async fn item_de_exemplo(&self, tid: u32) -> serde_json::Value {
+        match self.mapa(self.padrao).or_else(|| self.todos().into_iter().next().map(|(_, m)| m)) {
+            Some(bus) => bus.item_de_exemplo(tid).await,
             None => serde_json::json!({"codigo":"sem_mapa"}),
         }
     }

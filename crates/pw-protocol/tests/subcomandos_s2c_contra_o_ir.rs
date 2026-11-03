@@ -210,6 +210,7 @@ const INTENCAO: &[(&str, &str)] = &[
     ("decompose_end", "DECOMPOSE_END"),
     ("embed_item", "EMBED_ITEM"),
     ("clear_tessera", "CLEAR_TESSERA"),
+    ("item_identify", "ITEM_IDENTIFY"),
     ("refine_result", "REFINE_RESULT"),
     ("object_takeoff", "OBJECT_TAKEOFF"),
     ("object_landing", "OBJECT_LANDING"),

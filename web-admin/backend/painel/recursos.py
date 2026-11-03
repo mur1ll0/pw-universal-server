@@ -7,7 +7,9 @@ pw-recursos (`RECURSOS_URL`, `RECURSOS_SEGREDO`). Spec: `specs/07_RECURSOS_DO_CL
 """
 import asyncio
 import json
+import logging
 import os
+import time
 import re
 import urllib.error
 import urllib.parse
@@ -90,6 +92,72 @@ def _envio(id_envio):
     if not ENVIO.match(id_envio):
         raise HTTPException(404, "Envio inexistente.")
     return id_envio
+
+
+# ---- B378: reinício agendado, com aviso aos jogadores ----
+# Um por realm, na memória deste processo (o painel roda com um só processo do uvicorn, `Dockerfile`); se o painel cair
+# no meio, o agendamento some e o realm segue como estava (o aviso "aguarda reinício" continua no topo dos Editores).
+# Os avisos saem pela consulta "avisar" do GS (mensagem do sistema, canal 9, a todos do realm) no começo e a 10, 5, 2
+# e 1 minuto, 30 e 10 segundos do fim; no fim, a consulta "reiniciar" de sempre (salva e desconecta todos).
+AVISOS_ANTES_S = (600, 300, 120, 60, 30, 10)
+MAXIMO_DE_MINUTOS = 120
+_reinicios = {}  # realm -> {"em": epoch s, "segundos": total, "por": conta, "tarefa": asyncio.Task}
+_dormir = asyncio.sleep  # os testes trocam
+REGISTRO = logging.getLogger("pw_admin")
+
+
+def texto_do_aviso(faltam_s):
+    if faltam_s >= 60:
+        m = round(faltam_s / 60)
+        quando = f"{m} minuto{'s' if m != 1 else ''}"
+    else:
+        quando = f"{int(faltam_s)} segundos"
+    return f"[Sistema] O servidor vai reiniciar em {quando} para aplicar uma atualização. Procure um lugar seguro."
+
+
+def marcos_do_aviso(segundos):
+    """Quanto falta em cada aviso: o total e os marcos fixos menores que ele, do maior para o menor."""
+    return sorted({segundos, *(x for x in AVISOS_ANTES_S if x < segundos)}, reverse=True)
+
+
+async def _reinicio_agendado(realm, administrador, segundos):
+    fim = time.monotonic() + segundos
+    try:
+        for faltam in marcos_do_aviso(segundos):
+            espera = fim - faltam - time.monotonic()
+            if espera > 0:
+                await _dormir(espera)
+            r = await aplicar_no_realm(realm, administrador, {"tipo": "avisar", "texto": texto_do_aviso(faltam)})
+            if isinstance(r, str):
+                REGISTRO.warning("reinício agendado de %s: aviso não saiu (%s)", realm, r)
+        espera = fim - time.monotonic()
+        if espera > 0:
+            await _dormir(espera)
+        r = await aplicar_no_realm(realm, administrador, {"tipo": "reiniciar"})
+        REGISTRO.warning("reinício agendado de %s: %s", realm, "falha: " + r if isinstance(r, str) else "aplicado")
+    finally:
+        atual = _reinicios.get(realm)
+        if atual and atual["tarefa"] is asyncio.current_task():
+            _reinicios.pop(realm, None)
+
+
+def agendar_reinicio(realm, administrador, segundos):
+    cancelar_reinicio(realm)
+    tarefa = asyncio.get_running_loop().create_task(_reinicio_agendado(realm, administrador, segundos))
+    _reinicios[realm] = {"em": int(time.time() + segundos), "segundos": segundos, "por": administrador, "tarefa": tarefa}
+    return _reinicios[realm]
+
+
+def cancelar_reinicio(realm):
+    atual = _reinicios.pop(realm, None)
+    if atual:
+        atual["tarefa"].cancel()
+    return atual
+
+
+def reinicio_agendado(realm):
+    atual = _reinicios.get(realm)
+    return {"em": atual["em"], "segundos": atual["segundos"], "por": atual["por"]} if atual else None
 
 
 def registrar_recursos(app):
@@ -252,11 +320,14 @@ def registrar_estudio(app):
 
     @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}")
     async def estudio_listar(realm: str, tabela: str, requisicao: Request, rascunho: int | None = None,
-                             busca: str = "", pagina: int = 0, por_pagina: int = 50):
+                             busca: str = "", pagina: int = 0, por_pagina: int = 50,
+                             colunas: str = "", ordem: str = "", faixas: str = ""):
         v = await _versao_do_realm(requisicao, realm)
+        # B376: colunas, ordenação e faixas por campo (só leitura; o pw-recursos valida os nomes no layout).
+        extra = {k: x[:400] for k, x in (("colunas", colunas), ("ordem", ordem), ("faixas", faixas)) if x}
         return await _repassar("GET", f"/admin/{v}/estudio/tabelas/{_tabela(tabela)}", {
             "rascunho": rascunho, "busca": busca[:100], "pagina": max(0, pagina),
-            "por_pagina": max(1, min(por_pagina, 200))})
+            "por_pagina": max(1, min(por_pagina, 200)), **extra})
 
     @app.get("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_ficha(realm: str, tabela: str, indice: int, requisicao: Request, rascunho: int | None = None):
@@ -269,6 +340,34 @@ def registrar_estudio(app):
     async def estudio_tela(realm: str, tabela: str, indice: int, requisicao: Request, rascunho: int | None = None):
         v = await _versao_do_realm(requisicao, realm)
         return await _repassar("GET", f"/admin/{v}/estudio/telas/{_tabela(tabela)}/{max(0, indice)}", {"rascunho": rascunho})
+
+    # B369: de onde vem o item (drops, missões, lojas de NPC, Loja Gold, forjas), só leitura.
+    @app.get("/api/realms/{realm}/estudio/origens/{id_item}")
+    async def estudio_origens(realm: str, id_item: int, requisicao: Request, rascunho: int | None = None):
+        if not 0 < id_item <= 2_147_483_647:
+            raise HTTPException(422, "Id inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/origens/{id_item}", {"rascunho": rascunho})
+
+    # Para onde o item vai (receitas que o gastam, minas que o dão, habilidades que o exigem), só leitura.
+    @app.get("/api/realms/{realm}/estudio/usos/{id_item}")
+    async def estudio_usos(realm: str, id_item: int, requisicao: Request, rascunho: int | None = None):
+        if not 0 < id_item <= 2_147_483_647:
+            raise HTTPException(422, "Id inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/usos/{id_item}", {"rascunho": rascunho})
+
+    # A mina (registro de MINE_ESSENCE) como o GS a monta, ou o motivo por que o GS a recusa.
+    @app.get("/api/realms/{realm}/estudio/minas/{indice}")
+    async def estudio_mina(realm: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/minas/{max(0, indice)}", {"rascunho": rascunho})
+
+    # Efeitos de refino (tratador refine_* do GS): o que somam, valor de +1 a +12 e uso por família.
+    @app.get("/api/realms/{realm}/estudio/refinos")
+    async def estudio_refinos(realm: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/refinos", {"rascunho": rascunho})
 
     @app.put("/api/realms/{realm}/estudio/tabelas/{tabela}/{indice}")
     async def estudio_editar(realm: str, tabela: str, indice: int, rascunho: int, requisicao: Request):
@@ -495,6 +594,7 @@ def registrar_reinicio(app):
         online = sum(m.get("jogadores_online", 0) for r in respostas for m in r.get("mapas", []))
         recargas = [r.get("recarga") or {} for r in respostas]
         return {"versao": v, "ultima": ultima, "iniciado_em": iniciado, "dados_em": dados_em, "aguarda_reinicio": aguarda,
+                "reinicio_agendado": reinicio_agendado(realm),
                 "jogadores_online": online, "recarregando": any(x.get("em_andamento") for x in recargas),
                 "falhas_da_recarga": sorted({f for x in recargas for f in (x.get("falhas") or [])})}
 
@@ -504,16 +604,35 @@ def registrar_reinicio(app):
 
     @app.post("/api/realms/{realm}/reiniciar")
     async def reiniciar_realm(realm: str, requisicao: Request):
-        """Desconecta todos (salvando) e encerra cada GS do realm; o Docker os sobe de novo."""
+        """Desconecta todos (salvando) e encerra cada GS do realm; o Docker os sobe de novo. B378: com `em_minutos` > 0,
+        agenda — avisa os jogadores (mensagem do sistema) e reinicia no fim; 0 ou ausente = agora."""
         await _versao_do_realm(requisicao, realm)
         dados = await requisicao.json()
         if dados.get("confirmar") != realm:
             raise HTTPException(422, "Confirme digitando o id do realm.")
-        resultado = await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"], {"tipo": "reiniciar"})
+        minutos = dados.get("em_minutos", 0)
+        if isinstance(minutos, bool) or not isinstance(minutos, (int, float)) or not 0 <= minutos <= MAXIMO_DE_MINUTOS:
+            raise HTTPException(422, f"Tempo inválido: de 0 a {MAXIMO_DE_MINUTOS} minutos.")
+        administrador = requisicao.state.administrador["conta_id"]
+        if minutos > 0:
+            a = agendar_reinicio(realm, administrador, int(round(minutos * 60)))
+            return {"estado": "agendado", "realm": realm, "em": a["em"], "segundos": a["segundos"]}
+        cancelar_reinicio(realm)
+        resultado = await aplicar_no_realm(realm, administrador, {"tipo": "reiniciar"})
         if isinstance(resultado, str):
             return JSONResponse({"estado": "falha", "mensagem": resultado}, status_code=503)
         return {"estado": "aplicado", "realm": realm, "online": sum(d.get("online", 0) for d in resultado),
                 "processos": len(resultado)}
+
+    @app.delete("/api/realms/{realm}/reiniciar")
+    async def cancelar_reinicio_do_realm(realm: str, requisicao: Request):
+        """B378: cancela o reinício agendado e avisa os jogadores."""
+        await _versao_do_realm(requisicao, realm)
+        if not cancelar_reinicio(realm):
+            raise HTTPException(404, "Não há reinício agendado neste realm.")
+        await aplicar_no_realm(realm, requisicao.state.administrador["conta_id"],
+                               {"tipo": "avisar", "texto": "[Sistema] O reinício do servidor foi cancelado."})
+        return {"estado": "cancelado", "realm": realm}
 
     @app.post("/api/realms/{realm}/recarregar")
     async def recarregar_realm(realm: str, requisicao: Request):
@@ -580,11 +699,60 @@ def registrar_reinicio(app):
 
     @app.post("/api/realms/{realm}/estudio/loja/{arquivo}")
     async def estudio_clonar_oferta(realm: str, arquivo: str, rascunho: int, requisicao: Request):
+        """Oferta nova no fim (cópia de `base`); o Estúdio G-Shop manda junto os `campos` da nova (item, aba, subaba)."""
         v = await _versao_do_realm(requisicao, realm)
-        base = (await requisicao.json()).get("base")
-        if arquivo not in LOJA or not isinstance(base, int) or base < 0:
+        dados = await requisicao.json()
+        base, campos = dados.get("base"), dados.get("campos") or {}
+        if arquivo not in LOJA or not isinstance(base, int) or base < 0 or not isinstance(campos, dict):
             raise HTTPException(422, "Pedido inválido.")
-        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho}, dados={"base": base})
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}", {"rascunho": rascunho},
+                               dados={"base": base, "campos": campos})
+
+    # Estúdio G-Shop: as abas como o diálogo da loja do cliente as desenha (botões, texto e imagens por tema).
+    @app.get("/api/realms/{realm}/estudio/loja/{arquivo}/abas")
+    async def estudio_abas_da_loja(realm: str, arquivo: str, requisicao: Request, rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        if arquivo not in LOJA:
+            raise HTTPException(404, "Loja inválida.")
+        return await _repassar("GET", f"/admin/{v}/estudio/loja/{arquivo}/abas", {"rascunho": rascunho})
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/abas/{aba}/imagem")
+    async def estudio_imagem_da_aba(realm: str, arquivo: str, aba: int, rascunho: int, estado: str, requisicao: Request,
+                                    tema: int = 0):
+        """PNG do mesmo tamanho → a imagem do botão da aba (TGA/DDS do cliente)."""
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if arquivo not in LOJA or estado not in ("normal", "selecionada") or not corpo or aba < 0 or tema not in (0, 1):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/abas/{aba}/imagem",
+                               {"rascunho": rascunho, "estado": estado, "tema": tema}, corpo=corpo,
+                               tipo="application/octet-stream")
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}/imagem")
+    async def estudio_imagem_da_oferta(realm: str, arquivo: str, indice: int, rascunho: int, requisicao: Request):
+        """PNG de 128×128 → imagem própria da oferta (DDS novo em surfaces\\百宝阁\\ e o `icon` apontando para ele)."""
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if arquivo not in LOJA or not corpo:
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}/imagem", {"rascunho": rascunho},
+                               corpo=corpo, tipo="application/octet-stream")
+
+    @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/{indice}/conferir")
+    async def estudio_conferir_oferta(realm: str, arquivo: str, indice: int, requisicao: Request, rascunho: int | None = None):
+        """Confere a oferta com os campos aplicados pelas regras de carga do GS, sem gravar."""
+        v = await _versao_do_realm(requisicao, realm)
+        campos = (await requisicao.json()).get("campos") or {}
+        if arquivo not in LOJA or not isinstance(campos, dict):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}/conferir", {"rascunho": rascunho},
+                               dados={"campos": campos})
+
+    @app.get("/api/realms/{realm}/estudio/imagem")
+    async def estudio_imagem_do_cliente(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None):
+        """Imagem de interface do cliente (surfaces\\…, TGA/DDS) em PNG."""
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/imagem", {"caminho": caminho[:300], "rascunho": rascunho})
 
     @app.post("/api/realms/{realm}/estudio/loja/{arquivo}/categorias")
     async def estudio_categoria_da_loja(realm: str, arquivo: str, rascunho: int, requisicao: Request):
@@ -618,6 +786,24 @@ def registrar_reinicio(app):
         if arquivo not in LOJA:
             raise HTTPException(404, "Loja inválida.")
         return await _repassar("DELETE", f"/admin/{v}/estudio/loja/{arquivo}/{max(0, indice)}", {"rascunho": rascunho})
+
+    # B392: serviços de NPC de uma tabela NPC_*_SERVICE, com quantos NPCs usam cada um (o modal de serviços do Estúdio).
+    @app.get("/api/realms/{realm}/estudio/servicos/{tabela}")
+    async def estudio_servicos(realm: str, tabela: str, requisicao: Request, rascunho: int | None = None, busca: str = "",
+                               uso: str = "", pagina: int = 0, por_pagina: int = 50):
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/servicos/{_tabela(tabela)}", {
+            "rascunho": rascunho, "busca": busca[:100], "uso": uso if uso in ("em_uso", "sem_uso") else None,
+            "pagina": max(0, pagina), "por_pagina": max(1, min(por_pagina, 200))})
+
+    # B392: nomes das missões listadas por um serviço de NPC e as que o tasks.data liga a um NPC (só leitura).
+    @app.get("/api/realms/{realm}/estudio/missoes_resumo")
+    async def estudio_missoes_resumo(realm: str, requisicao: Request, ids: str = "", npc: int | None = None,
+                                     rascunho: int | None = None):
+        v = await _versao_do_realm(requisicao, realm)
+        lista = ",".join(x for x in ids.split(",")[:600] if x.strip().isdigit())
+        return await _repassar("GET", f"/admin/{v}/estudio/missoes_resumo", {
+            "rascunho": rascunho, "ids": lista or None, "npc": npc if npc and npc > 0 else None})
 
     # Missões (B255, só leitura): o tasks.data do realm.
     @app.get("/api/realms/{realm}/estudio/missoes")
@@ -773,7 +959,8 @@ def registrar_reinicio(app):
 
     @app.get("/api/realms/{realm}/estudio/modelos/ficha")
     async def estudio_modelo(realm: str, caminho: str, requisicao: Request, rascunho: int | None = None, habitat: int | None = None,
-                             voo: int | None = None, habilidades: str | None = None, politica: int | None = None):
+                             voo: int | None = None, habilidades: str | None = None, politica: int | None = None,
+                             npc: bool = False):
         v = await _versao_do_realm(requisicao, realm)
         # B283: `voo` (0 espada, 1 asa, 2 rodas) — o diagnóstico de voo.
         # B365: `habilidades` (ids separados por vírgula) e `politica` (common_strategy) — diagnóstico de habilidades.
@@ -781,9 +968,21 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/ficha", {"caminho": caminho[:500], "rascunho": rascunho,
                                "habitat": habitat if habitat is not None and 0 <= habitat <= 6 else None,
                                "voo": voo if voo is not None and 0 <= voo <= 2 else None,
-                               "habilidades": ids, "politica": politica if politica and politica > 0 else None})
+                               "habilidades": ids, "politica": politica if politica and politica > 0 else None,
+                               # B392: modelo de NPC de serviço — o diagnóstico usa as ações ACT_NPC_*.
+                               "npc": "true" if npc else None})
 
     # Ação combinada nova no .ecm, clonando outra (B280).
+    # B373: trocar a animação-base de uma ação combinada do .ecm (o que o monstro executa parado, andando, atacando…).
+    @app.post("/api/realms/{realm}/estudio/modelos/base")
+    async def estudio_trocar_base(realm: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        d = await requisicao.json()
+        if not all(isinstance(d.get(k), str) and d.get(k) and len(d[k]) <= 500 for k in ("caminho", "acao", "base")):
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/modelos/base", {"rascunho": rascunho},
+                               dados={k: d[k] for k in ("caminho", "acao", "base")})
+
     @app.post("/api/realms/{realm}/estudio/modelos/acao")
     async def estudio_acao_nova(realm: str, rascunho: int, requisicao: Request):
         v = await _versao_do_realm(requisicao, realm)
@@ -811,13 +1010,17 @@ def registrar_reinicio(app):
 
     # B298: um modelo inteiro (.bon, .ski, .smd, texturas, ações) a partir de um GLB.
     @app.post("/api/realms/{realm}/estudio/modelos/novo")
-    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request, molde: str | None = None):
+    async def estudio_modelo_novo(realm: str, rascunho: int, pasta: str, titulo: str, requisicao: Request, molde: str | None = None,
+                                  ganchos: str | None = None, validar: bool = False):
         v = await _versao_do_realm(requisicao, realm)
         corpo = await requisicao.body()
         if not corpo:
             raise HTTPException(422, "Arquivo vazio.")
+        # B383: `ganchos` = o esqueleto tem de ter um deles (arma CC_weapon/CC_qiu, asa CC_chibang, voo CC_feijian);
+        # `validar` = só o relatório, sem gravar.
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/novo",
-                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100], "molde": molde[:500] if molde else None}, corpo=corpo,
+                               {"rascunho": rascunho, "pasta": pasta[:300], "titulo": titulo[:100], "molde": molde[:500] if molde else None,
+                                "ganchos": ganchos[:200] if ganchos else None, "validar": "true" if validar else None}, corpo=corpo,
                                tipo="application/octet-stream")
 
     # B295: as animações de um GLB como ações do .smd.
@@ -829,6 +1032,57 @@ def registrar_reinicio(app):
             raise HTTPException(422, "Arquivo vazio.")
         return await _repassar("POST", f"/admin/{v}/estudio/modelos/acoes_glb",
                                {"rascunho": rascunho, "smd": smd[:500]}, corpo=corpo, tipo="application/octet-stream")
+
+    # B380: GLB no modelo do monstro — só o modelo (malha e texturas) ou só as animações, com o mesmo esqueleto.
+    @app.post("/api/realms/{realm}/estudio/modelos/importar_glb")
+    async def estudio_importar_glb(realm: str, rascunho: int, caminho: str, modo: str, requisicao: Request,
+                                   como: str | None = None, validar: bool = False):
+        v = await _versao_do_realm(requisicao, realm)
+        if modo not in ("modelo", "animacoes"):
+            raise HTTPException(422, "Modo inválido.")
+        if como not in (None, "equipamento", "matter"):
+            raise HTTPException(422, "Parâmetro como inválido.")
+        corpo = await requisicao.body()
+        if not corpo:
+            raise HTTPException(422, "Arquivo vazio.")
+        # B383: como=equipamento → a 1ª pele do .smd (arma, asa, voo); validar → só o relatório.
+        return await _repassar("POST", f"/admin/{v}/estudio/modelos/importar_glb",
+                               {"rascunho": rascunho, "caminho": caminho[:500], "modo": modo, "como": como,
+                                "validar": "true" if validar else None}, corpo=corpo,
+                               tipo="application/octet-stream")
+
+    # B383: a pele de armadura/moda (realname): grupos, arquivos, corpos e quem usa; e o GLB → os três .ski.
+    @app.get("/api/realms/{realm}/estudio/equipamentos/pele")
+    async def estudio_pele_do_equipamento(realm: str, realname: str, genero: int, requisicao: Request, rascunho: int | None = None):
+        if genero not in (0, 1):
+            raise HTTPException(422, "Gênero inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        return await _repassar("GET", f"/admin/{v}/estudio/equipamentos/pele",
+                               {"realname": realname[:100], "genero": genero, "rascunho": rascunho})
+
+    @app.post("/api/realms/{realm}/estudio/equipamentos/pele")
+    async def estudio_importar_pele_do_equipamento(realm: str, rascunho: int, realname: str, genero: int, grupo: str, requisicao: Request,
+                                                   classe: int | None = None, validar: bool = False):
+        if genero not in (0, 1):
+            raise HTTPException(422, "Gênero inválido.")
+        v = await _versao_do_realm(requisicao, realm)
+        corpo = await requisicao.body()
+        if not corpo:
+            raise HTTPException(422, "Arquivo vazio.")
+        return await _repassar("POST", f"/admin/{v}/estudio/equipamentos/pele",
+                               {"rascunho": rascunho, "realname": realname[:100], "genero": genero, "grupo": grupo[:20],
+                                "classe": classe, "validar": "true" if validar else None}, corpo=corpo,
+                               tipo="application/octet-stream")
+
+    # B380: depois de trocar o modelo inteiro, os arquivos do antigo que nada mais usa saem no rascunho.
+    @app.post("/api/realms/{realm}/estudio/modelos/sem_uso")
+    async def estudio_modelo_sem_uso(realm: str, rascunho: int, requisicao: Request):
+        v = await _versao_do_realm(requisicao, realm)
+        d = await requisicao.json()
+        if not isinstance(d.get("caminho"), str) or not d["caminho"] or len(d["caminho"]) > 500:
+            raise HTTPException(422, "Pedido inválido.")
+        return await _repassar("POST", f"/admin/{v}/estudio/modelos/sem_uso", {"rascunho": rascunho},
+                               dados={"caminho": d["caminho"]})
 
     # B291: pele nova no modelo (.ski ao lado do .smd, citado por ele), a partir de um GLB.
     @app.post("/api/realms/{realm}/estudio/modelos/pele_nova")
@@ -848,9 +1102,17 @@ def registrar_reinicio(app):
         return await _repassar("GET", f"/admin/{v}/estudio/modelos/doadores", {"caminho": caminho[:500], "acao": acao[:200]})
 
     @app.get("/api/realms/{realm}/estudio/modelos/glb")
-    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None):
+    async def estudio_modelo_glb(realm: str, caminho: str, requisicao: Request, acao: str | None = None,
+                                 rascunho: int | None = None, todas: bool = False, como: str | None = None, peles: str | None = None):
         v = await _versao_do_realm(requisicao, realm)
-        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb", {"caminho": caminho[:500], "acao": acao[:200] if acao else None})
+        if como not in (None, "equipamento", "matter"):
+            raise HTTPException(422, "Parâmetro como inválido.")
+        # B374: com o rascunho, o GLB mostra os arquivos de modelo dele (ex.: o modelo importado de um GLB).
+        # B380: `todas` = todas as ações-base do .smd (o GLB que vai para o Blender).
+        # B383: `como=equipamento` (peles do .smd) e `peles` (armadura/moda sobre o corpo, separadas por |).
+        return await _repassar("GET", f"/admin/{v}/estudio/modelos/glb",
+                               {"caminho": caminho[:500], "acao": acao[:200] if acao else None, "rascunho": rascunho,
+                                "todas": "true" if todas else None, "como": como, "peles": peles[:4000] if peles else None})
 
     # Comportamento dos monstros (B258, só leitura): o aipolicy.data do realm.
     @app.get("/api/realms/{realm}/estudio/comportamentos")

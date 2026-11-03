@@ -176,6 +176,7 @@ button, input, select { font: inherit; color: inherit; }
   border: 0; border-radius: 8px; background: transparent; color: var(--texto-2);
   font-size: 14px; font-weight: 500; cursor: pointer; text-align: left;
 }
+a.nav { text-decoration: none; }
 .nav:hover { background: var(--superficie); color: var(--texto); }
 .nav.ativo { background: var(--superficie-2); color: var(--texto); box-shadow: inset 2px 0 0 var(--ouro); }
 .nav .icone { width: 18px; text-align: center; color: var(--texto-3); font-size: 14px; }
@@ -732,6 +733,7 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .recursos-rascunho > header { justify-content: space-between; margin-bottom: 8px; }
 .recursos-item { margin-top: 10px; }
 .recursos-marca { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.recursos-minutos { width: 64px; padding: 2px 6px; }
 .recursos-publicar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .recursos-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
 .recursos-tabela th, .recursos-tabela td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
@@ -802,3 +804,13 @@ select option:checked { background-color: var(--ouro-suave); color: var(--ouro);
 .missao-objeto { padding-left: 12px; border-left: 2px solid var(--borda); margin: 2px 0; }
 #missoes-ficha table.tabela-simples { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
 #missoes-ficha table.tabela-simples th, #missoes-ficha table.tabela-simples td { border: 1px solid var(--borda); padding: 2px 6px; text-align: left; }
+
+/* Painel do jogador (B387): conta comum vê só o que é dela; o servidor barra o resto (painel/jogador.py). */
+body.modo-jogador [data-somente-gm],
+body:not(.modo-jogador) [data-somente-jogador] { display: none !important; }
+body.modo-jogador .tela-personagem .celula-item { cursor: default; }
+.texto-centro { text-align: center; }
+.lista-historico { display: grid; gap: 12px; }
+.lista-historico .item-historico { padding: 14px 16px; }
+.lista-historico .item-historico h3 { margin: 0 0 4px; font-size: 1rem; }
+.lista-historico .arquivos-historico { margin: 6px 0 0; padding-left: 18px; color: var(--texto-2); font-size: .9rem; }

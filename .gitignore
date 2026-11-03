@@ -98,3 +98,5 @@ _sync_out.tar.gz
 
 # Capturas de pacote locais (tcpdump), geradas sob demanda para diagnóstico
 _captura_local/
+web-admin/backend/static/estudio/
+web-admin/estudio/node_modules/

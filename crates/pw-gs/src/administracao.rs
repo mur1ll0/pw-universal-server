@@ -47,6 +47,8 @@ pub enum Consulta {
     Resultado { comando_id: String },
     TrocarSenha { conta_id: i32, senha: String },
     CriarConta { usuario: String, senha: String },
+    /// B387: cadastro público pelo painel (autor 0); ver `atender`.
+    CadastrarConta { usuario: String, senha: String },
     DefinirGm { conta_id: i32, habilitado: bool },
     /// Gold em unidades do cash (100 = 1 gold na Loja Gold). Só positivo: o painel dá,
     /// não tira (decisão do Murillo, B180 — tirar arrisca saldo negativo).
@@ -76,6 +78,9 @@ pub enum Consulta {
     /// os lê uma vez, ao montar o `GameDataManager`. Desconecta todos (salvando) e encerra o processo; o Docker o sobe
     /// de novo (`restart: unless-stopped`) e o `pw-link` reconecta sozinho (`pw-link/src/uplink.rs:133`).
     Reiniciar,
+    /// B378: mensagem do sistema a todos os jogadores do processo (o aviso do reinício agendado pelo painel). Até 200
+    /// caracteres; vazio é recusado.
+    Avisar { texto: String },
     /// B331: reler os arquivos do `config` sem reiniciar nem desconectar ([`crate::mapas::RoteadorDeMapas::recarregar_em_segundo_plano`]).
     Recarregar,
     /// Edição de personagem (E5): um só de `dinheiro` (dar), `exp`/`sp` (somar, só online),
@@ -138,6 +143,8 @@ pub enum Consulta {
     EfeitosParaItem { item_id: u32, ids: Vec<u32> },
     /// O item de um slot com os dados da dica (E6, B189). Só leitura.
     DetalheItem { personagem_id: i32, recipiente: String, slot: u16 },
+    /// B373: o item do modelo como se tivesse caído agora (prévia do Estúdio), sem gravar.
+    ItemDeExemplo { item_id: u32 },
 }
 
 /// Teto de uma edição de dinheiro/EXP pelo painel: cabe no `u32`/`i32` dos pacotes
@@ -329,6 +336,29 @@ pub struct ServidorAdministrativo {
 }
 
 impl ServidorAdministrativo {
+    /// B387: o que uma conta comum (sem GM, sem ban) pode pedir pelo painel — trocar a própria senha (o
+    /// repositório confere de novo sob o lock), o resumo dos mundos e as leituras de um personagem **dela**
+    /// neste realm. Tudo o mais é `administrador_recusado`. O painel faz a mesma conferência antes.
+    async fn liberado_a_conta_comum(&self, pedido: &PedidoAdministrativo) -> anyhow::Result<bool> {
+        let personagem = match &pedido.consulta {
+            Consulta::TrocarSenha { conta_id, .. } => return Ok(*conta_id == pedido.administrador_id),
+            Consulta::Mundos => return Ok(true),
+            Consulta::Personagem { personagem_id }
+            | Consulta::Inventario { personagem_id }
+            | Consulta::Daimon { personagem_id }
+            | Consulta::Mascotes { personagem_id }
+            | Consulta::Missoes { personagem_id, .. }
+            | Consulta::DetalheItem { personagem_id, .. } => *personagem_id,
+            _ => return Ok(false),
+        };
+        let dono = self
+            .contas
+            .comandos_administrativos()
+            .dono_do_personagem(personagem, &self.realm)
+            .await?;
+        Ok(dono == Some(pedido.administrador_id))
+    }
+
     pub fn new(
         realm: String,
         segredo: Vec<u8>,
@@ -412,9 +442,39 @@ impl ServidorAdministrativo {
             json!({"codigo":"consulta_desconhecida","mensagem":mensagem})
         } else if pedido.realm_id != self.realm {
             json!({"codigo":"realm_incorreto"})
+        } else if let Consulta::CadastrarConta { usuario, senha } = &pedido.consulta {
+            // B387: cadastro público pelo painel. O canal já prova que o pedido veio do painel
+            // (HMAC com desafio); o autor é 0 — não há conta antes do cadastro —, e qualquer outro
+            // autor é recusado (GM cria pela `criar_conta`). O limite por IP fica no painel.
+            if pedido.administrador_id != 0 {
+                json!({"codigo":"administrador_recusado"})
+            } else if !usuario_valido(usuario) || !senha_valida(senha) {
+                json!({"codigo":"alvo_invalido"})
+            } else {
+                // Mesmo hash e mesma impressão da `criar_conta` (EC_LoginSwitch.cpp:329, gameclient.cpp:131-139).
+                let usuario = usuario.to_ascii_lowercase();
+                let hash = pw_crypto::hash_legacy_pw_md5(&usuario, senha);
+                let impressao = Sha256::digest(serde_json::to_vec(&json!({
+                    "tipo":"cadastrar_conta", "usuario":usuario,
+                    "senha_resumida":pw_crypto::hash_raw_md5(senha)
+                }))?);
+                let resultado = self
+                    .contas
+                    .comandos_administrativos()
+                    .cadastrar_conta(&pedido.operacao_id, &self.realm, &usuario, &impressao, &hash)
+                    .await?;
+                tracing::info!(operacao=%pedido.operacao_id, conta=?resultado["conta_id"],
+                    estado=%resultado["estado"], "admin: cadastrar_conta pública");
+                resultado
+            }
         } else {
             let conta = self.contas.find_by_id(pedido.administrador_id).await?;
-            if !conta.is_some_and(|conta| conta.gm_privileges > 0 && !conta.is_banned) {
+            let liberado = match &conta {
+                Some(c) if !c.is_banned && c.gm_privileges > 0 => true,
+                Some(c) if !c.is_banned => self.liberado_a_conta_comum(&pedido).await?,
+                _ => false,
+            };
+            if !liberado {
                 json!({"codigo":"administrador_recusado"})
             } else {
                 match pedido.consulta {
@@ -518,6 +578,9 @@ impl ServidorAdministrativo {
                             Some(r) => self.roteador.detalhe_do_item(personagem_id, r, slot).await,
                             None => json!({"codigo":"recipiente_invalido"}),
                         }
+                    }
+                    Consulta::ItemDeExemplo { item_id } if item_id > 0 => {
+                        self.roteador.item_de_exemplo(item_id).await
                     }
                     Consulta::EfeitosParaItem { item_id, ids } if ids.len() <= 200 => {
                         self.roteador.efeitos_para_item(item_id, &ids).await
@@ -698,6 +761,16 @@ impl ServidorAdministrativo {
                             encerrar();
                         });
                         json!({"estado":"aplicado","tipo":"reiniciar","online":online})
+                    }
+                    Consulta::Avisar { texto } => {
+                        let texto = texto.trim();
+                        if texto.is_empty() || texto.chars().count() > 200 {
+                            json!({"codigo":"texto_invalido"})
+                        } else {
+                            let enviados = self.roteador.avisar_todos(texto).await;
+                            tracing::info!(administrador = pedido.administrador_id, enviados, "admin: aviso do sistema: {texto}");
+                            json!({"estado":"aplicado","tipo":"avisar","enviados":enviados})
+                        }
                     }
                     Consulta::Recarregar => match self.roteador.recarregar_em_segundo_plano() {
                         Ok(()) => {

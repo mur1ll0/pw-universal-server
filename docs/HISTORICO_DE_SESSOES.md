@@ -17222,3 +17222,907 @@ comparação lado a lado.
     - (Commitado: código em `d88a283`, documentação no commit seguinte.)
     - Publicar `pw-recursos` e `pw-admin-api`; publicar os rascunhos 58 e 59 e recarregar os mundos; ver no painel e em jogo
       (roteiro no ESTADO §3.3, B365).
+
+366. **Sessão 2026-10-23: Estúdio em Svelte (fase 1: Equipáveis → Armas) e o Estúdio antigo renomeado para
+     "Editores".** Pedido do Murillo; plano, subcategorias e tabela de campos aprovados por ele antes de codificar.
+    ### a. Editores
+    - Menu, títulos e avisos do JS atual: "Estúdio" → "Editores" (`static/*.js`, `index.html`, `painel.js`); ícone
+      novo `editores` (antes a espada dos Templates). Rotas, ids de elemento e comportamento iguais.
+    ### b. Estúdio em Svelte
+    - `web-admin/estudio/` (Svelte 5.19, TypeScript 5.7, Vite 6.0, Vitest 3.0, versões fixas), saída em
+      `web-admin/backend/static/estudio/` (fora do git). Dockerfile do painel ganhou o estágio `estudio`
+      (`node:22-bookworm-slim`: `npm ci`, `npm test`, `npm run build`); `.dockerignore` deixa entrar o fonte e tira
+      `node_modules` e a saída local. CSP `self` respeitada (sem script/estilo embutido; `style:` do Svelte usa CSSOM).
+    - Link "Estúdio" no grupo do realm (ícone `estudio`) → `/static/estudio/index.html#/?realm=<id>`; rota por hash
+      com realm e rascunho, para abrir outra aba no mesmo contexto.
+    - Sem caminho de escrita novo: ficha, `PUT` campos, clonar, espaços, textos, GLB. Rota nova só de leitura:
+      `GET /api/icones/{m|f}?busca=&limite=` (`painel/icones.py::buscar_icones`, teste
+      `test_busca_de_nomes_do_atlas_para_o_estudio`).
+    - Telas: principal (5 categorias, só Equipáveis ativa); busca (subcategorias com evidência em
+      `EC_IvtrTypes.h:56-95`/`ExpTypes.h:312-324, 736-741`, só as que existem na versão); edição de Arma com as boxes
+      aprovadas (`ESTUDIO_DO_PAINEL.md` §9.2); modais de ícone (atlas), categoria (clonar `WEAPON_MAJOR/SUB_TYPE`),
+      classes (`1 << classe`, 12 no 1.5.5 / 8 no 1.2.6), regras (`ITEM_PROC_TYPE_*`, `item.h:309-326`), efeito do
+      refino (`levelup_addon`, espaço `ADDON`, descrição pelo `/api/efeitos` com os parâmetros do `EQUIPMENT_ADDON`),
+      item ligado (`element_id`, `id_drop_after_damaged`) com "Criar" em outra aba e devolução por `BroadcastChannel`.
+    - Chances: `src/lib/chances.ts` porta a regra do GS (`NormalizeRandom` + `eliminate_zero_item`,
+      `elementdataman.cpp:270-320, 626-645`; `RandSelect`, `itemdataman.h:33-46`): float 0–1, soma 1 com `Math.fround`
+      e sobra na última linha, lista compactada com zeros no fim.
+    - Visualizador 3D: o de `modelos.js` portado para `src/lib/glb.ts`.
+    ### c. Evidência nova
+    - `proc_type`: bits `ITEM_PROC_TYPE_*` do `cgame/gs/item.h:309-326` (1.5.5).
+    - O brilho do refino é GFX do cliente (`EC_Player.cpp:9299-9316`), não vem no GLB.
+    - Atlas de ícones: 69 × 128 células de 32 px, 8.749 nomes; textura DXT1 4096² (cabe até 128 linhas).
+    ### d. Provas
+    - `chances.test.ts`: **18/18** (local e no estágio Node do Docker; build do estágio OK).
+    - `svelte-check`: 0 erros, 0 avisos.
+    - `pw-recursos` com `TEST_DATABASE_URL`: **29 passaram, 0 falharam** (nenhum Rust mudou).
+    - Painel no `pw-admin-api` (cópia em `/tmp/tp`): 89 testes, 2 falhas + 12 erros — os mesmos 14 de ambiente do
+      B342; os 2 de ícone com `ICONES_DIR=/app/data/icones`: **2/2**.
+    - Navegador (Vite dev com proxy para o painel em 8000): 1.5.5 e 1.2.6 (no v7 somem reputação, "cai ao quebrar" e
+      ficam 4 posições de quantidade de efeitos); no rascunho de teste #60 do 1.5.5: nome + 5 chances gravados (soma
+      0,99999999 em dupla), descrição nova no `item_ext_desc.txt` (`acrescentar`), item novo 50997 criado pela aba
+      "Item novo" e a mensagem do canal recebida. Rascunho #60 **descartado** ao fim.
+    - Achado e corrigido no teste: a busca de texto por id devolve antes os textos que contêm o número; a tela agora
+      percorre as páginas até a chave exata (`textoDaChave`).
+    ### e. Falta
+    - ~~Publicar o `pw-admin-api`~~ — publicado a pedido do Murillo (`docker compose … up -d --build pw-admin-api`;
+      estágio Node com 18/18); conferido em `localhost:8000`: Estúdio servido, sem bloqueio de CSP, `/api/icones/m`
+      respondendo. Falta o Murillo ver no painel; ver o "Criar" com duas abas.
+    - Envio de ícone novo (gravar célula no atlas); brilho do refino no 3D; o GLB de arma sai com 1 malha de 65
+      vértices (`工锤.ecm`) e aparece em pedaços — conversor, não o Estúdio.
+    - Próximas subcategorias (Armaduras, Ornamentos, Moda…) e as outras categorias.
+    - Não commitado.
+
+367. **Sessão 2026-10-23: ajustes do Estúdio pedidos pelo Murillo (depois de testar o B366).**
+    ### a. O que mudou
+    - **Abrir nos Editores:** levava à tela inicial. Agora o Estúdio abre em outra aba
+      `/#editores?realm=<id>&tabela=<T>&indice=<i>&rascunho=<n>`; o painel (`painel.js::abrirLinkDireto`, depois da
+      primeira carga dos realms) escolhe o realm e deixa o pedido em `estudio.pedido`, que o `carregarEstudio`
+      (`estudio.js`) aplica: rascunho, vista Tabelas, tabela, ficha e a busca pelo id.
+    - **Tipo de munição:** `require_projectile` mostra o nome do `PROJECTILE_TYPE` e abre um modal com os tipos
+      (`ExpTypes.h:185`, "需要的弹药类型(从弹药类型中选取)"); 0 = não exige.
+    - **Descrição dos efeitos:** os cartões mostravam o nome interno do `EQUIPMENT_ADDON` (`A_A24`, `Y_E23`). A edição
+      de personagem usa `GET /api/realms/{r}/efeitos?item=&ids=` (B209): o GS devolve o valor de cada id e o painel
+      monta o texto do cliente. O Estúdio passou a usar a mesma rota (`api.ts::descreverEfeitos`, em lotes de 150 ids),
+      nos cartões, no seletor de efeitos e no refino. Ex. (Marreta, id 11): "Ataque físico +2", "Ataque Máx +3", "HP +15",
+      "Constituição +1". Limite: o valor vem do GS, logo do `elements` publicado. O refino 1712 não tem texto no cliente:
+      mostra os parâmetros (7, 0).
+    ### b. Provas
+    - `svelte-check` 0/0; `chances.test.ts` 18/18; build OK.
+    - Navegador (dev e, depois de publicar, `localhost:8000`): descrições nos cartões; munição "nenhuma (não exige)" e o
+      modal com "Flechas para Arco de Nível 1-3" (id 8), "…4-6" (392), "Dardos para Besta…" (393)…; o link abriu
+      "Editores", realm 1.5.5, ficha "☆Marreta do Trabalhador · id 11".
+    - `pw-admin-api` publicado (a pedido, continuação do B366).
+    ### c. Falta
+    - Murillo ver no painel. Não commitado.
+
+368. **Sessão 2026-10-23: busca de efeitos da arma com todos os que servem na família (Mordaz).** Relato do Murillo:
+     o "Punho da Luz Fixa" tem o efeito Mordaz, que nunca aparecia na busca, e a busca não trazia todos os efeitos.
+    ### a. Causa
+    - O seletor do Estúdio procurava pelo nome interno (`espacos/ADDON`) e pelo catálogo `/api/efeitos` (texto com
+      parâmetros 0). O Mordaz (id 1286) é efeito de habilidade (tipo 55): o texto vem da introdução da habilidade, com o
+      valor do id (B213/B214), então não estava em nenhum dos dois. E não havia filtro por família.
+    ### b. Correção
+    - `web-admin/estudio/src/lib/efeitos.ts`: lista todos os ids do `EQUIPMENT_ADDON` (≤ 8191) e pergunta ao GS, pela
+      rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209), quais servem na família da peça e
+      entram na busca — a mesma regra (`validar_efeito` + `ligar_familias`). Filtro na tela por texto do cliente, nome
+      da habilidade, nome interno ou id; cache por realm/rascunho/tabela.
+    - `SeletorDeEfeito.svelte` nas listas da arma (add-on, aleatórios, únicos); o refino continua no seletor do espaço.
+    ### c. Provas
+    - `vitest`: **25/25** (7 novos de `filtrarEfeitos`); `svelte-check` 0/0.
+    - Navegador (dev, rascunho de teste #61 do 1.5.5, descartado): Punho da Luz Fixa (id 8292) mostra "Mordaz: Aumenta
+      seu poder de ataque físico." · habilidade Garra · id 1286; o seletor lista **1.299 de 2.977** efeitos (1.213 de
+      outra família, 389 fora da busca, 76 inexistentes); "Mordaz" e "Garra" acham o 1286; "Crítico" dá 51. 1.2.6:
+      1.649 efeitos, a rota responde com a mesma classificação.
+    - `pw-admin-api` publicado.
+    ### d. Falta
+    - Murillo ver no painel. Não commitado.
+
+369. **Sessão 2026-10-23: de onde vem o item — 4 cards na edição do Estúdio.** Pedido do Murillo: Dropado de,
+     Recompensa de, Vendido por (NPC ou Loja Gold), Forjado por (NPC e forja).
+    ### a. O que mudou
+    - `pw-recursos`: `Estudio::origens_do_item` + `GET /admin/{v}/estudio/origens/{id}` (só leitura, do rascunho, até 300
+      por lista): drops do `MONSTER_ESSENCE.drop_matters_N` (soma das chances das linhas), prêmios do `tasks.data`
+      (`TaskReward.grupos_de_itens` do sucesso e da falha e as escalas do v129), lojas `NPC_SELL_SERVICE` → NPCs pelo
+      `id_sell_service`, Loja Gold (`gshop*.data`, id no byte 140 da oferta) e receitas `RECIPE_ESSENCE.targets_N` → forjas
+      `NPC_MAKE_SERVICE.pages_P_id_goods_G` → NPCs pelo `id_make_service`.
+    - Painel: `GET /api/realms/{r}/estudio/origens/{id}` (repasse). Estúdio: `componentes/Origens.svelte` embaixo da
+      edição; cada registro abre nos Editores (link direto do B367).
+    ### b. Provas
+    - `pw-recursos` com `TEST_DATABASE_URL`: **29 passaram, 0 falharam**; o `tests/estudio.rs` ganhou as origens pelo
+      caminho inverso das telas no `elements` real do 1.2.6 (loja → item → loja; forja → receita → item → receita e
+      forja; monstro → drop → monstro; id 0 → 400).
+    - Estúdio: `svelte-check` 0/0, `vitest` 25/25, build OK.
+    - `pw-recursos` e `pw-admin-api` publicados; navegador em `localhost:8000` (1.5.5): Marreta (id 11) — recompensa da
+      missão 1059 "Armas Elementares" (sorteada), vendida por 2 lojas "Produtos à Venda" de ferreiros; Punho da Luz Fixa
+      (id 8292) — 3 receitas (100%) em "Forjar Arma"/"Cartão Novato Europa"/"Armas Divinas" com os NPCs Armas
+      Sagradas, MR.19th e Emissário Divino do Vazio; id 6 — dropado pelo "Monstro para o Teste de Queda" (0,34%); Tintura
+      de Roupa (15609) na Loja Gold `gshop.data` e `gshop1.data`.
+    - Ajustes vistos no teste: o nome de missão/NPC vem com o código de cor `^RRGGBB` (agora tirado na tela) e o ícone
+      de NPC não é do atlas de itens (agora não desenha nada no lugar).
+    ### c. Falta
+    - Murillo ver no painel. Drop por `npcgen`/GS fora do `elements` não entra. Não commitado.
+
+370. **Sessão 2026-10-23: Estúdio — todas as subcategorias de Equipáveis.** Pedido do Murillo: "implemente todos os
+     outros Equipáveis seguindo os mesmos padrões".
+    ### a. O que mudou
+    - `EdicaoArma.svelte` → `EdicaoEquipavel.svelte`, guiada por `BOXES_DO_EQUIPAVEL` (nome ou expressão sobre o layout;
+      campo ausente some). Box Voo nova; "Cobre" (`equip_location`), gênero, modo de voo, munição (`type`) pelo
+      `PROJECTILE_TYPE`; rótulos gerados (defesas mágicas pelo elemento, refino do voo) e `ROTULOS_EXTRA` do `ExpTypes.h`;
+      `ListaDeEfeitosFixos.svelte` (livro, munição, carta). Modelos 3D também de `file_model`/`file_model2`.
+    - Achado: o `equip_location` não é máscara de `EQUIP_MASK` (como eu tinha posto no primeiro rascunho) e sim o índice
+      `enumSkinShow*` (`EC_Player.h:94-104`, `EC_Player.cpp:4633-4640`) — os dados (1, 3, 4, 5, 8) confirmaram.
+    ### b. Provas
+    - `vitest` **31/31** (6 novos: `camposDaBox`, `rotuloGerado`); `svelte-check` 0/0.
+    - Navegador (dev): as 9 tabelas novas abrem no 1.5.5 com as boxes certas e **nenhum campo sem rótulo** (armadura 35
+      campos, ornamento 35, moda 7, voo 44, asa 7, munição 8, livro 3, carta 29, Daimon 13); 1.2.6: "Perneiras de Aço
+      Prateado" com "Cobre: 3 · parte de baixo", voo com a box Voo. `pw-admin-api` publicado.
+    ### c. Falta
+    - Murillo ver no painel.
+
+371. **Sessão 2026-10-23: Estúdio — Monstros, com o spawn no npcgen.** Pedido do Murillo: monstros na pegada dos
+     Equipáveis, uma box de spawn com a lista de spawners e o mapa (zoom, clique, área de spread), e os campos
+     confusos (comportamento, estratégia de ódio, habilidades) desenhados de forma intuitiva.
+    ### a. O que mudou
+    - `telas/EdicaoMonstro.svelte`, `lib/monstro.ts` (significados com evidência: `aipolicy.h:918-926`, `ainpc.h:17-24`,
+      `ainpc.cpp:209-225`, `npcgenerator.cpp:205-345, 2562-2600`, `ExpTypes.h:2781-2960`), `ListaDeHabilidades.svelte`,
+      `BoxDeSpawn.svelte`, `ModalMapa.svelte`; categoria Monstros ativa (`#/monstros/MONSTER_ESSENCE/{i}`).
+    - Área de spread: o npcgen só tem **retângulo** (`vPos ± vExts/2`, `npcgenerator.cpp:4348-4367`) — desenha-se e
+      arrasta-se o retângulo; polígono livre não existe no formato.
+    - Drops com `drop_times > 1`: gravação posicional (o servidor não compacta; 17–32 só na 1ª rodada).
+    - Sem caminho de escrita novo: ficha/PUT do elements e as rotas do npcgen dos Editores (B243, B248, B284).
+    ### b. Provas
+    - `svelte-check` 0/0; `vitest` 31/31.
+    - Navegador (dev, 1.5.5, rascunho de teste **#62, descartado**): "Inseto de Jade" (id 16) com 24 spawners no
+      `world`; mapa com 12 peças, o spawner em dourado e os outros 23 tracejados; quantidade 2→5 só do id 16 (o 3302 da
+      mesma área ficou 2); mover para (240, 2805) 30×26 com `vPos_y` 219,03 do `.hmap`; spawner novo 20558 (25 no
+      rascunho, 24 publicados) e removido de volta; "Agressivo" gravado. Monstro 13: Bola de Vento (ataque) em combate;
+      Fuga/Ira/Perseverança (bênção) a 33,3% abaixo de 50% da vida.
+    - Achados no teste: dois mapas com o mesmo caminho (`a72`) na lista do realm (chave da lista trocada); o mapa precisa
+      enquadrar depois de medir a caixa (ResizeObserver).
+    - `pw-admin-api` publicado.
+    ### c. Falta
+    - Murillo ver no painel. Minas no drop (`drop_mines`, só 1.5.5), facção por nome e o roteiro do aipolicy na própria
+      tela ficam nos Editores.
+
+372. **Sessão 2026-10-23: monstro — ajuda entre monstros e facção; ícones e filtro nos itens.** Relato do Murillo: faltava
+     a opção de ajuda (estava em Avançado), as políticas de ódio estavam confusas, a facção eram números sem sentido, e
+     os itens que caem estavam sem ícone e sem filtro por categoria.
+    ### a. Pesquisa (o que cada campo faz)
+    - Ajuda: `ainpc.h:800-876`, `npc.cpp:669-680, 2175-2190`, `config.h:67` — grito a cada ≥ 4 s até visão × 1,0; o vizinho
+      ajuda se `grupo do vizinho & pede do atacado`, `atende do vizinho & grupo do atacado` e ≤ 1 inimigo; +2 de ódio.
+      Sobrescrita por spawner no npcgen (`npcgenerator.cpp:3821-3826`; erro do original no "atende").
+    - `faction` = lado (bit k do `ENEMY_FACTION_CONFIG`, 32 nomes do cliente, conferem com `faction.h`); `monster_faction`
+      = grupo livre, sem nome em arquivo. Conferido nos dados: o Inseto de Jade é "30 · Monstro comum", grupo 26.
+    - Políticas: 0–4 iguais no GS 1.5.5 (`ainpc.cpp:209-225`), 5 segue o alvo do chefe (`aiaggro.h:9-27`), 6/7 mascote e torre.
+    ### b. O que mudou
+    - `EdicaoMonstro.svelte`/`lib/monstro.ts`: seção "Lado e ajuda entre monstros" (caixas com os nomes dos lados e os
+      grupos 1–32), invisibilidade em "O que enxerga", legenda das políticas.
+    - `ListaDeChances`: ícone do item e nota de linha separada do nome; `SeletorDeEspaco`: filtro por categoria.
+    ### c. Provas
+    - `svelte-check` 0/0; `vitest` 31/31. Navegador (dev): 32 ícones nos 32 itens que caem do Inseto de Jade; 74
+      categorias; "Materiais" + "pó" → só `MATERIAL_ESSENCE` (Pó de Esmeril 807, Pó de Corídon 808…). `pw-admin-api`
+      publicado.
+    ### d. Falta
+    - Murillo ver no painel. A sobrescrita de facção por spawner ainda não aparece na box de spawn.
+
+373. **Sessão 2026-10-23: monstro — "Avançado" explicado, ovo, modelo e animações; prévia dos itens.** Pedido do Murillo.
+    ### a. O que mudou
+    - Avançado distribuído (tabela em `ESTUDIO_DO_PAINEL.md` §9.9), cada campo com o efeito no jogo e o arquivo:linha;
+      campos 0/1 como não/sim; `role_in_war` como lista. Ovo ao capturar com seletor (categoria `PET_EGG_ESSENCE`).
+    - `ModeloDoMonstro.svelte`: ações pedidas pelo cliente com a animação de cada uma (trocar), prévia, criar a que falta,
+      exportar GLB e importar animações. Novo: `ecm::trocar_base` (+ teste em todos os `.ecm`, ida e volta byte a byte),
+      `Estudio::trocar_base_da_acao`, rota `modelos/base` (pw-recursos e painel). O efeito do refino saiu do monstro.
+    - Prévia do item: GS `item_de_exemplo` (gera como drop, não grava; `detalhe_de_registro` separado do slot), painel
+      `GET /api/realms/{r}/itens/{id}/exemplo`, `DicaFlutuante.svelte`; cartão com abrir em nova aba, trocar e tirar.
+    ### b. Provas
+    - `cargo test -p pw-data-loader trocar_base`: ok (todos os `.ecm` do cliente 1.5.5). `svelte-check` 0/0; `vitest` 31/31.
+    - `cargo test -p pw-gs --lib`: **167/0**.
+    - `pw-recursos` e `pw-admin-api` publicados. Navegador (`localhost:8000`, 1.5.5, monstro 13 "Cão-rei de Pedra"):
+      ações traduzidas com a animação de cada uma, 16 animações do esqueleto com prévia, boxes IA e "Campos antigos",
+      16 explicações, sem o refino; no rascunho de teste **#63 (descartado)** "Parado" (`站立`) passou a tocar `休闲` (o
+      publicado ficou `站立`) e a prévia animou o modelo; o seletor de ovo abre em "Ovos de mascote".
+    - A prévia de item responde 503 `consulta_desconhecida` com o GS atual nos mundos — esperado até publicar o GS.
+    ### c. Falta
+    - ~~Publicar o GS nos mundos~~ — publicado no B374 (a pedido); a prévia respondeu com o item gerado (Marreta: "Ataque
+      físico 8-14", "Durabilidade 10/10").
+
+374. **Sessão 2026-10-23: monstro — importar o modelo inteiro de um GLB.** Pedido do Murillo: além das animações, importar
+     modelo + texturas + esqueleto + animações, e commitar/publicar para testar.
+    ### a. O que mudou
+    - `ModeloDoMonstro.svelte`: "Trocar o modelo inteiro por um GLB" (pasta + título) → `modelos/novo` (B298/B299) com o
+      .ecm atual de molde (sem molde quando ele tem peles adicionais) → grava `file_model` do monstro com o .ecm novo.
+    - `pw-recursos`: o GLB (`modelos/glb`) e a ficha do .ecm leem os arquivos de modelo do rascunho antes do publicado
+      (`arquivos_de_modelo_do_rascunho`, `conteudo_de`, `ler_smd_de`, `achar_textura_de`); painel repassa `rascunho` ao GLB.
+    ### b. Provas
+    - Ida e volta no rascunho de teste #64 (1.5.5): o GLB do lobo (monstro 13, com `普攻1起`, 655.784 bytes) importado como
+      `models\npcs\estudio\teste_b374` → 35 ossos, 2 malhas, 1 animação, texturas, .smd/.bon/.ski/.ecm (o molde do lobo foi
+      recusado por ter peles adicionais; molde automático `灯笼.ecm`); `file_model` gravado; GLB do modelo novo com
+      rascunho: 200 (615.448 bytes parado, 653.672 com a animação).
+    - `svelte-check` 0/0.
+    ### c. Falta
+    - Murillo testar no painel (com um GLB dele).
+
+375. **Sessão 2026-10-24: Estúdio — modelo do monstro em cards e dica presa ao ícone.** Pedido do Murillo: menos
+     rolagens na parte de modelo e animações; a dica do item que cai aparecer sobre o ícone, não pela caixa inteira.
+    - `ModeloDoMonstro.svelte` em cinco cards (sem `max-height`/`overflow` na lista de ações nem na coluna da direita).
+    - `ListaDeChances.svelte`: a dica abre no `mouseenter` do ícone; `dica.svelte.ts`/`DicaFlutuante.svelte` ancoram pelo
+      pé (`bottom`) logo acima do ícone.
+    - Provas (navegador, `localhost:8000`): 5 cards, 0 áreas com rolagem na coluna; passar na caixa não abre a dica, no
+      ícone abre 6 px acima, alinhada à esquerda dele. `svelte-check` 0/0. `pw-admin-api` publicado. Commitado junto com o B376.
+376. **Sessão 2026-10-24: Estúdio — seletor de item em tabela, com prévia, filtro e ordenação.** Pedido (sessão do
+     Estúdio): no Trocar/Adicionar de "Itens que caem" e nos outros seletores do `ESSENCE`, prévia ao passar o mouse e
+     colunas para filtrar e ordenar sobre a tabela inteira.
+    - `pw-recursos`: `Estudio::listar` aceita `colunas`, `ordem` e `faixas` (`FiltroDeListagem::da_consulta`); só campos
+      `int32`/`float` do layout; faixa e ordem antes da página; colunas `id_*` com `nomes` e `opcoes` (valores distintos
+      da tabela inteira, nome pelo espaço da tabela). Painel repassa em `GET /api/realms/{r}/estudio/tabelas/{T}`.
+    - Campos conferidos em `specs/elements_layouts/v156.json` e `v7.json` (listas a partir de 1): WEAPON 4, ARMOR 7,
+      DECORATION 10, FASHION 84 (`id_major_type`, `id_sub_type`, `level`, `require_level`); FLYSWORD 23, WINGMANWING 24
+      (`require_player_level_min`); STONE 36 (`id_sub_type`, `level`); só v156: GOBLIN_EQUIP 122, POKER 185.
+    - `SeletorDeEspaco.svelte` vira tabela (cabeçalho fixo, mín./máx. por coluna numérica, lista nas de categoria,
+      ordenação ▲/▼ no clique, 100 por página) com a dica do item no ícone (`dica.svelte.ts`); sem prévia para monstro,
+      NPC, mina e tabelas de tipo. Título "escolher item" (era "escolher efeito") no seletor de item dos cartões.
+    - Provas: `tests/estudio.rs` com banco 1/1 (faixa 30–40 = contagem da tabela inteira, ordem ▲ e ▼ através das
+      páginas, nomes/opções de `id_sub_type`, faixa mín.=máx., 400 para número inválido); `svelte-check` 0/0; vitest
+      34/34 (3 novos, `lib/filtro.test.ts`). Navegador (realm_155, rascunho de teste 65, descartado): Armas 2.741 → nível
+      mín. 30–40 = 153, ordenadas por nível (4 → 5); dica do "★Ju Que" com fundo 6 px acima do ícone, mesma esquerda,
+      "Nv. necessário: 30". Commitado com o B375.
+377. **Sessão 2026-10-24: seletor de item — só item; troca de drop atualiza o cartão.** Relato do Murillo: ao trocar
+     um item dos drops só mudavam o ícone e o resumo, não a descrição e o id; e o seletor deixava escolher
+     `WEAPON_MAJOR_TYPE` como drop.
+    - Causa do cartão: `EdicaoMonstro.svelte::cartoesDeDrop` preferia `nomes[campo]` (nome da ficha ao abrir) ao nome do
+      item escolhido. Agora vale como o ícone: só enquanto o campo tem o valor original.
+    - Só item: `TABELAS_DE_ITEM` = os `case` do `generate_item` (`cgame/gs/template/generate_item_temp.h:5-145`); o resto
+      cai no `default` (:147-153) e devolve -1. `SeletorDeEspaco` (prop `soItens`, padrão no `ESSENCE`) filtra
+      categorias e a busca em "Todas"; a prévia usa a mesma lista.
+    - Provas: `svelte-check` 0/0, vitest 35/35 (1 novo). Navegador (realm_155, rascunho 66, descartado): 65 categorias sem
+      `*_TYPE`/serviço/monstro/NPC/mina; "Espada" em "Todas" só traz `WEAPON_ESSENCE`; trocar o 1º drop (Poção Refinada
+      de Cura, 8620) pela "☆Espada de Ponta Azulada" mostra nome e "id 22" no cartão.
+378. **Sessão 2026-10-24: drop do Batatinha sem efeito; reinício agendado com aviso.** Relato do Murillo: editou os drops
+     do Batatinha, publicou a versão 5 (dois rascunhos), reiniciou, e o monstro seguia com os drops antigos.
+    - Diagnóstico: a 1.2.6 v5 = alterações {1, 59} (o rascunho "v1" com o Batatinha, id 15955, e mapas) gravou o
+      `elements.data` no `config` do realm_126 às 15:01:50; o `pw-world-126` tinha subido às 14:37:53 (reinício por fora
+      do painel, sem log de encerramento) e não subiu de novo — o painel mostrava `aguarda_reinicio: true`. O arquivo
+      publicado tinha as pedras nv. 5. O GS lê o `MONSTER_ESSENCE` só na partida (`monstros.rs:478`). Reiniciado pelo painel
+      às 16:04 (0 online); `aguarda_reinicio: false`. A 1.5.5 v5 = {58}, só mapas.
+    - Pedido: depois de publicar, tempo para avisar os jogadores e reiniciar sozinho; 0 = na hora.
+    - GS: consulta `avisar` → `ChatSingleCast` canal 9, `srcroleid` 0 (a fala `$S`, `aitrigger.cpp:552-668`; cliente
+      `EC_GameSession.cpp:4752-4909`) a todos do processo. Painel: `reiniciar` com `em_minutos` (agenda, avisa nos marcos,
+      reinicia), `DELETE` cancela, `servidor` mostra o agendado. Recursos do cliente: caixa "Reiniciar os mundos desta
+      versão em [5] min" ao publicar; Editores: "Cancelar o reinício".
+    - Provas: `canal_administrativo` 39/39 com banco (1 novo: o aviso chega ao jogador como canal 9/remetente 0; vazio e
+      >200 recusados); painel `teste_recursos` 14/14 no contêiner (1 novo: 5 min → 5 avisos e o reinício; cancelar não
+      reinicia; 0–120). Publicados `pw-admin-api` e `pw-world-155` (o `up` interrompido deixou os dois "Dead"; removidos
+      e subidos de novo). `pw-world-126` com a imagem nova pronta, não recriado (1 jogador online).
+    - Navegador/mundo 155: caixa "Reiniciar os mundos desta versão em [5] min" na tela; agendado 1 min no realm_155 →
+      avisos às 19:31:09 (1 minuto), :39 (30 s) e :59 (10 s) UTC, `reiniciar` às 19:32:10, mundo de volta às 19:32:19,
+      `reinicio_agendado` nulo depois. Agendado 2 min e cancelado: aviso "2 minutos", aviso "cancelado", sem reinício.
+      Falta ver a mensagem no chat do cliente (ninguém online no 155 no teste: `enviados` 0).
+379. **Sessão 2026-10-24: Avaliar item no 1.2.6.** Relato do Murillo: avaliar a Perneiras do Purgatório (5020) no char WB
+     (11458) não fazia nada.
+    - Log do `pw-world-126` às 19:15–19:17 UTC: "11458 pediu o serviço de NPC 17, ainda não tratado" — o GS ignorava.
+      17 = `SERVICE_ID_IDENTIFY` (`serviceprovider.h:282`), `GP_NPCSEV_IDENTIFY` no cliente. O item do WB (bolsa, slot
+      14) tem 3 efeitos id 336 (`item_addon_random`) — "a avaliar".
+    - Porte: `identify_provider`/`identify_executor` (`serviceprovider.cpp:2256-2388`), `IdentifyItemAddon`
+      (`player.cpp:11646-11675`), `RegenAddon` (`equip_item.cpp:157-183`), `generate_addon_from_rands`
+      (`itemdataman.cpp:1059-1104`). Taxa de `NPC_IDENTIFY_SERVICE.fee` (`servicos.rs`, campo `avaliar`); S2C
+      `ITEM_IDENTIFY` 162 `{u8, u8}` (`EC_GPDataType.h:2870-2874`); erro 15 `ERR_SERVICE_ERR_REQUEST`.
+    - O commit do B378 (`f08277b`, outra sessão) levou a linha `servico::AVALIAR` do `bus_server.rs` sem o resto: só
+      compila com o commit do B379.
+    - Provas: `geracao::avaliar_troca_os_efeitos_a_avaliar` com o elements do realm_126 (5020); `avaliar_155`/`_126`
+      no `subcomandos_no_mundo` com banco (taxa, `OWN_ITEM_INFO`, 162 = 0, efeitos 336 → 300; de novo → 15 e 2 sem
+      cobrar; sem dinheiro → 16); `item_identify` contra o IR e campo a campo (protocolo 45/45). Suíte do workspace com banco: interrompida
+      (201 aprovados até `carga_dos_realms::a_geracao_de_equipamento_do_126`, que falha porque o rascunho "v1" do
+      Murillo, publicado na 1.2.6 v5, trocou os efeitos da foice 15964 para 591/415/1323 — dado, não código); a segunda
+      rodada foi parada a pedido: CPU a 100% e 5,4 GB num binário.
+    - Limites (pedido do Murillo): `.cargo/config.toml` com `jobs = 6` e `RUST_TEST_THREADS = 3`; regra de uma suíte por
+      vez e um serviço por `docker compose build` na skill `pw-testar-e-publicar`, no `AGENTS.md` e no agente.
+
+380. **Sessão 2026-10-24/25: modelo do monstro ↔ Blender — exportar tudo, importar em três modos, modelo antigo sem uso.**
+     Relato do Murillo: "Exportar GLB (blender)" saía sem as animações; editou e usou "Trocar o modelo inteiro → Escolher
+     GLB", a prévia não atualizou e as animações sumiram.
+    ### a. Diagnóstico
+    - O "Exportar" baixava o GLB da animação em prévia (`acao=`) — na pose parada, nenhuma: `do_modelo_com` só aceitava
+      uma ação.
+    - A prévia: o `$effect` só chamava `tocar("")` com `!parar`; depois do primeiro desenho `parar` nunca volta a `null`,
+      então o `caminho` novo (o `file_model` trocado) recarregava a ficha e não o GLB. Sem cache envolvido (o painel não
+      manda cabeçalho de cache no GLB); mesmo assim o `fetch` agora é `no-store`.
+    - As animações "perdidas": o GLB que voltou não tinha nenhuma (o exportado não as levava).
+    - Achado no teste: `importar_acoes` (B295) gravava a `.stck` em `tcks_<título>` sem gravar a pasta no `.smd` v8 que a
+      tinha vazia — e no v8 o motor usa a pasta do arquivo (`A3DSkinModelMan.cpp:214-224`): a trilha não seria achada.
+    ### b. O que mudou
+    - `pw-data-loader`: `glb::do_modelo_com_acoes` (várias animações; `AnimacaoDoModelo::nome_original` →
+      `extras.angelica.nome`); `importar::nome_original` (extras → depois do último " · " → nome inteiro), usado por
+      `acoes_do_glb`; `importar::conferir_esqueleto` (nome e mãe de cada osso); `ecm::Ecm::filhos` (`ChildPath:`,
+      `EC_Model.cpp:152/4777`).
+    - `pw-recursos`: `modelos/glb?todas=true` (todas as ações-base, nome legível pela tabela `TRADUCOES_DE_ACAO`, a mesma
+      da tela); `POST modelos/importar_glb?modo=modelo|animacoes` (`Estudio::importar_glb_no_modelo`: confere o esqueleto;
+      modelo → `<.ecm>.ski`, a pele do NPC/monstro, B282); `POST modelos/sem_uso` (`Estudio::remover_modelo_sem_uso`:
+      elements com o rascunho, `ChildPath`, objetos dinâmicos; `.smd`, `.bon`, peles, `.stck` e texturas só se nada mais
+      usa); índice de `.ecm` com `filhos` e `dependencias` por `.smd`; `importar_acoes` grava a pasta das trilhas no v8.
+    - Painel: rotas `importar_glb` (modo conferido), `sem_uso` e `todas` no GLB.
+    - Estúdio: card Modelo 3D com "Exportar GLB (Blender)" (tudo) e "Importar GLB" em três modos; o card "Trocar o modelo
+      inteiro" saiu; prévia redesenha quando o `.ecm` ou o rascunho muda.
+    - Extensão PW Estúdio 1.1.0: "Importar GLB do Estúdio" grava o nome do cliente em cada ação (o importador glTF do
+      Blender não leva os `extras` da animação — `io_scene_gltf2/blender/imp/animation_utils.py:110`, só o nome); o
+      exportador devolve as propriedades da ação como `extras` (`exp/animation/action.py:992-994`); "Verificar" confere o
+      GBK pelo nome do cliente.
+    - Nomes em português no GLB: viável e sem quebrar o cliente — o arquivo do jogo continua com o original (GBK); o
+      legível só existe no GLB e no Blender, e volta pelo `extras` ou pelo " · ".
+    - Achados na conferência no navegador e corrigidos: o painel cortava o GLB (> 8 KiB) na rota nova (`seguranca.py`,
+      lista de rotas de envio); o "Tudo" sobre um modelo que só existe no rascunho falhava (o molde lia só o publicado);
+      a remoção sem uso tirava as `Textures\` que um modelo novo do rascunho, na mesma pasta, usava (só olhava as `.ski`
+      publicadas); nomes mistos ("— golpe石术lançar…") — 起/落 só como sufixo e, se sobra ideograma, só o original.
+    ### c. Provas
+    - `pw-data-loader --lib` 127/0 (`acoes_ida_e_volta`: 40 modelos reais — esqueleto do GLB confere, com osso renomeado
+      não; duas ações num GLB voltam com o nome do cliente pelo extras e pelo " · "; `nome_original_da_animacao`).
+    - `pw-recursos` com `TEST_DATABASE_URL` 30/0 (`tests/estudio.rs`: GLB `todas`; só animações com nome legível sem
+      extras → "andar"; esqueleto trocado → 400 com "raiz" e "tudo"; só modelo → `caixa.ski`; prévia da ação acha a
+      `.stck` com a pasta gravada; sem uso: `caixa.ecm` sai e o `.smd` fica (outro `.ecm`); o modelo do rascunho sai
+      inteiro menos a textura que outro modelo novo da pasta usa; modelo citado no elements fica). Painel
+      `teste_recursos` 14/14 no contêiner. `svelte-check` 0/0; `vitest` 35/35. Clippy sem aviso novo.
+    - Blender 5.1 sem janela (extensão do repositório): GLB real do registro 12 (`地洞侏儒商人.ecm`, 21 animações,
+      1,36 MB) → 21 ações com o nome do cliente guardado → "Verificar" OK → exportado com `extras.angelica.nome` nas 21.
+    - Navegador (`localhost:8000`, realm_155, monstro 997, rascunho **#70, descartado**): exportar 21 animações; "Só o
+      modelo" com o GLB do Blender → 200 (3 malhas, 842 vértices, texturas iguais não regravadas); "Só as animações" →
+      21 substituídas; GLB de outro monstro → recusa "28 ossos no modelo, 26 no GLB: faltam 7…"; "Tudo" → `file_model`
+      novo, prévia pediu o GLB do `.ecm` novo, antigo mantido ("usado por MONSTER_ESSENCE 6493"); "Tudo" de novo →
+      o modelo do rascunho anterior saiu (25 arquivos) e as 3 texturas ficaram (usadas pelo novo). Sem o card "Trocar o
+      modelo inteiro".
+    ### d. Falta
+    - Murillo: reinstalar a extensão 1.1.0 e testar com o Blender dele (roteiro no ESTADO §3.3).
+    - `.bon` v5: reimportar animações iguais faz o `.bon` crescer (ESTADO §5).
+
+381. **Sessão 2026-10-25: "Só as animações" no `.bon` v5 sem crescer.** Pedido do Murillo: resolver a pendência do B380
+     sem precisar apagar no Blender as ações que não mudou.
+    ### a. O que mudou
+    - `importar::acao_v5_igual` / `diferenca_da_acao_v5`: a ação existente passa pelo mesmo caminho do Estúdio (trilhas
+      embutidas → `do_modelo_com_acoes` → `acoes_do_glb`) e é comparada chave a chave com a importada
+      (`TOLERANCIA_DE_ACAO_IGUAL`: posição 1e-3, quatérnio 5e-3). Comparar direto com a trilha não serve: chaves fora da
+      grade de quadros dão até 1e-2 entre chaves. `importar_acoes` (v5) pula a igual ("igual à do cliente (não gravada)");
+      todas iguais → nada gravado (`igual_ao_publicado`).
+    - Achado na medida: o Blender devolvia 8 de 21 ações com **um quadro a menos**. Duas causas: (1) tempo final do GLB
+      um tico abaixo do quadro (10/15 s × 15 = 9,9999…) — `glb::tempo_na_grade` grava o tempo que cai na grade exatamente
+      nela, conferido em 32 e 64 bits; (2) a chave da trilha em ms truncado (14.933) a 0,005 quadro do fim exato
+      (14.933,33): o Blender junta chaves a menos de 0,01 quadro, a faixa fica 124,995 e o exportador trunca
+      (`int(frame_range[1])`, `io_scene_gltf2/blender/exp/animation/action.py:245-246`) — a extensão (1.1.1) fixa a faixa
+      de cada ação, arredondada, ao importar. (Juntar chaves próximas no exportador foi tentado e desfeito: piorava a
+      fidelidade — há chaves quase juntas de propósito.)
+    ### b. Provas
+    - `pw-data-loader --lib` 127/0: `acoes_ida_e_volta` — 20 de 20 ações v5 reais iguais, uma chave mexida em 0,05 é
+      diferente; fidelidade da ida e volta intacta (posição 1,3e-6, quatérnio na chave 9,6e-5). `pw-recursos` com
+      `TEST_DATABASE_URL` 30/0.
+    - Medida real (`medir_b381`, `#[ignore]`): GLB do registro 12 (`侏儒卫兵.bon` v5, FPS 15, 21 ações) pelo Blender 5.1
+      com a extensão — 21 de 21 com o número certo de quadros; maior diferença 3,0e-4 na posição e 3,2e-3 no quatérnio.
+    - `pw-recursos` publicado; no contêiner, rascunhos de teste **72 e 73 (descartados)**: o GLB do Blender sem mudança →
+      21 iguais, `igual_ao_publicado`; com a rotação de `Bip01` mexida (+0,2) em "Parado" → 20 iguais, 1 gravada.
+    ### c. Falta
+    - Murillo: reinstalar a extensão 1.1.1. Uma edição menor que ~0,6° em todos os quadros de uma ação passa por igual.
+
+382. **Sessão 2026-10-25: morrer golpeando prendia o cliente na morte (1.2.6).** Relato do Murillo: WB (bárbaro, 1.2.6)
+    morto pelo "Dino Full Putasso"; a morte não "subiu" direito, clicou "Reviver na cidade mais próxima", e depois de
+    renascer o botão continuava lá e não fazia nada.
+    ### a. Log do `pw-world-126`
+    - 16:04:31.65 `Jogador #11458 morreu` com a sessão de golpe aberta (golpes de 31.15); 31.68 um `CANCEL_ACTION`;
+      35.72 `renasceu na cidade` + teleporte (o servidor fez tudo); de 36.25 a 16:07:34, 828 `CANCEL_ACTION` a ~200 ms
+      e `pediu para renascer na cidade sem estar morto` a cada clique.
+    ### b. Causa (evidência)
+    - Original: `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `TerminateSession` (`actsession.h:109-115`) →
+      `session_normal_attack::EndSession` → `stop_attack(_stop_flag)`, 0 (`actsession.cpp:383-391`, `actsession.h:261`);
+      a de habilidade `stop_skill` (`:557-570`). O nosso `world.rs` zerava `ataque`/`conjuracao` em silêncio.
+    - Cliente: `m_bMelee` só desliga no `OnMsgHstStopAttack` (`EC_HostMsg.cpp:4076-4080`); com ele ligado o `WORK_DEAD`
+      do `Killed` (`EC_HostPlayer.cpp:7641-7642`) é adiado por `DelayWork`, que manda `CANCEL_ACTION` e espera
+      (`EC_HPWork.cpp:361-364`) — o das 31.68; o `PLAYER_REVIVAL` chega e o `Revive` sai em `!m_pWorkMan->IsDead()`
+      sem fechar a janela (`EC_HostPlayer.cpp:4107-4111`). Cada trabalho novo repete o `CANCEL_ACTION`. Vale para as
+      duas versões (o B155 testou o reviver sem golpe aberto).
+    ### c. Correção
+    - `EventoDoMundo::JogadorMorreu { golpeava, conjurava }` nos dois lugares de morte (`world.rs`); o barramento manda
+      `HOST_STOPATTACK` (23, motivo 0, 6 B) e/ou `SELF_STOP_SKILL` (123) antes do `HOST_DIED`. Codificadores já
+      existentes e usados nas duas versões — nenhum layout novo.
+    - Teste `morrer_golpeando_encerra_o_golpe_antes_do_aviso_de_morte` (23 logo antes do 28, motivo 0; reviver não
+      reabre o golpe; sem golpe aberto, nenhum 23 de sobra).
+    ### d. Falta
+    - Murillo: ver em jogo (roteiro no ESTADO §3.3). Commitado (`34c0922`); `pw-world-126` e `pw-world-155` publicados.
+
+
+383. **Sessão 2026-10-25: Equipáveis — refino explicado e modelo ↔ Blender (B383).** Pedido do Murillo em quatro partes:
+    o cartão do refino só mostrava `W_PB01` e "parâmetros 7, 0"; exportar/importar o modelo dos Equipáveis pelo Blender
+    como nos Monstros; animações de itens; e a Moda só tinha "No chão" no 3D.
+    ### a. Refino (evidência)
+    - `get_item_refine_addon` (`itemdataman.cpp:205-228`) devolve o `levelup_addon` da arma/armadura/acessório como está
+      (sem filtro de família). `RefineAddon` grava `(int)(arg0 × refine_factor[nível] + 0.1f)` (`equip_item.cpp:319, 330`;
+      fator `:208-223`) — o valor do nível **substitui** o anterior. `arg0` = `param1` (`refine_addon_template`,
+      `item_addon.cpp:1235-1244`). Os sete modelos (`:1505-1511`): dano físico; mágico **e** físico (`template2` chama os
+      dois `UpdateItem`, `:1277-1283`); HP; defesa da peça; esquiva (`armor` = 闪避率加值, `equip_item.h:203`); as 5
+      resistências (`actobject.h:1243-1250`); defesa do personagem + resistências.
+    - Código: `pw_data_loader::refino::{FATOR_DE_REFINO, valor_do_refino, EFEITOS_DE_REFINO}` (o GS reexporta o fator);
+      `addons::tratador_do_id`; `Estudio::refinos` → `GET estudio/refinos` (uso por família no rascunho); tela
+      `lib/refino.ts`, `SeletorDeRefino.svelte`. 1.5.5: 210 efeitos de refino, 75 usados por armas; o 1712 da Espada de
+      Bronze: 7…262.
+    ### b. Como o cliente monta o equipamento
+    - Arma: `.ecm` carregado com as peles do `.smd` (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`) —
+      não a `<.ecm>.ski` do NPC (o "Só o modelo" do Monstro gravaria na pele errada) —, pendurado por `CC_weapon`/`CC_qiu`
+      (`:9930-9993`). Asa `CC_chibang`, voo e rodas `CC_feijian` (`:1940-1966`).
+    - Armadura e moda: pele `…\装备\{男|女}\<realname>\<grupo><realname>{一级,二级,三级}.ski` (`LoadPlayerSkin`,
+      `:1720-1740`). O **binário** BR difere do fonte: "Models\" no lugar de "Evolved\" e duas tabelas — a genérica
+      (0xdd83f0, função 0x4e1ff0, chamada pelo `ChangeArmor` em 0x4e28f7: `男通用`/`女通用`, `妖兽` e `妖精`) e uma por
+      classe (0xdd8450, função 0x4e2020, só a roupa padrão). Corpos: `…\形象\<classe>\躯干\<classe>.ecm` (0x9cdc04-0x9ce4b8).
+    ### c. Pesos (decisão com evidência)
+    - Motor: 3 pesos + 4 índices; para no 1º peso zero; o 4º é `1 − soma` só com os 3 primeiros não nulos
+      (`A3DSkinMesh.cpp:1036-1066`); osso da pele ausente no esqueleto → `BindSkeleton` recusa a pele (`A3DSkin.cpp:851-856`);
+      a pose de repouso vem do `.bon` (`A3DSkinModel.cpp:1341`); malha com muitos ossos é dividida sozinha (`:500-640`).
+    - `ski_do_glb` agora: não nulos na frente, 4 maiores de `JOINTS_0`+`JOINTS_1`, soma 1, sem peso → vaga do esqueleto,
+      osso inexistente → ancestral que existe (sem ancestral: recusa com o que fazer no Blender), pose de repouso
+      diferente → vértices repostos (`v' = Σ wᵢ · inversa(matBoneInit)ᵢ · IBMᵢ · v`); tudo no relatório. Primeira versão
+      reordenava pesos quase iguais e quebrava a ida e volta de 848 modelos do cliente (0,45 × 0,45000002) — a ordem
+      entre não nulos não importa ao motor, ficou a do glTF. Segunda: a 紫金胸甲 relatava 26 "zeros no meio" — o 4º peso
+      `1 − soma` ≈ 6e-8 do exportador; só se relata quando o peso de depois passa de 1e-5 (descartar pesos pequenos
+      quebrava a ida e volta: o cliente tem pesos legítimos de 3e-6).
+    ### d. Rotas e telas
+    - `modelos/glb?como=equipamento|peles=a|b`; `modelos/importar_glb?como=equipamento&validar=`; `modelos/novo?ganchos=
+      &validar=`; `GET/POST estudio/equipamentos/pele` (spec 07 §6c B383). Painel repassa; limite de 64 MB na rota nova.
+    - `ModeloDoEquipavel.svelte` (prévia, exportar, três modos, conferir, relatório, animações), `PeleDoEquipavel.svelte`
+      (gênero, grupo, corpo da classe, com/sem corpo, aviso de nível faltando e de `realname` compartilhado).
+    ### e. Provas
+    - `pw-data-loader`+`pw-gs` (lib, com `TEST_DATABASE_URL`): 298/0; `importar` 7/0 com a ida e volta de 848 `.smd`
+      do cliente; teste novo `pesos_corrigidos_como_o_motor_le`; `refino::testes_do_valor` 2/0. `pw-recursos`: 30/0
+      (asserções novas em `tests/estudio.rs`). `pw-data-loader` integração: 274/2 — as duas leem dados publicados do realm
+      (foice 15964 do 1.2.6 e `a61/precinct.sev`), nada desta mudança. Estúdio: svelte-check 0/0, vitest 43/43.
+    - Ida e volta no `pw-recursos` publicado (rascunhos 107–109, descartados; depois do ajuste do 1e-5 o relatório das duas sai vazio): Espada de Bronze — exportado 87 vértices, 1 malha,
+      ganchos `CC_weapon/HH_base/HH_tip`; importado na `青铜剑.ski`; o GLB do rascunho **igual**. Armadura Azul (`紫金胸甲`,
+      masculino comum, corpo do Guerreiro) — 636 vértices, 12 ossos, conferida em 10 classes; os três níveis gravados,
+      textura "igual à do cliente (não gravada)"; GLB do rascunho **igual**.
+    - Navegador (localhost:8000, aba recarregada com `?v=`): cartão do refino e tabela; seletor "75 de 210"; armadura
+      vestida no Guerreiro (com e sem corpo); Luvas de Fada no corpo feminino, aviso "usada por 2 registros".
+    ### f. Falta
+    - Murillo: Blender (arma, asa, armadura) e em jogo; LOD menor nos níveis 二级/三级; roupa padrão por local na prévia;
+      `ChangeArmor` do 1.2.6 não rastreado (mesmas strings).
+
+384. **Sessão 2026-10-25: nomes das animações de voo em português (B384).** Pedido do Murillo: "nos voos as animações
+    estão com nome em chinês" — traduzir e o exportar/importar considerar a tradução, como nos Monstros.
+    - Medido: as ações-base de 130 modelos de voo, asa e arma (1.5.5 e 1.2.6, pela ficha do `pw-recursos`): 低空下降 29,
+      高空下降 27, 展开 26, 飞行悬停/飞行前进 24, 飞剑… 20, 翅膀收起 16, 起飞 14, 滑翔 10, 收起 10, e as com prefixo do modelo
+      (`天鹅之翼_起飞`, `机械翼_地空下降` — 地空 é grafia do cliente).
+    - A tabela existia duas vezes (tela do Monstro e `admin.rs`). Agora só no servidor: `TRADUCOES_DE_ACAO` com os termos
+      de voo (compostos antes), prefixo do modelo fora do legível, 起/落 de ataque só quando o fim não é termo da tabela
+      (`翅膀收起` virava "asas recolh— início"), maiúscula inicial; a ficha do `.ecm` manda `nomes_legiveis` e as duas telas
+      usam esse. A volta é a mesma de antes (`importar::nome_original`, o nome do cliente depois de " · ").
+    - Provas: `admin::testes_b380::nome_legivel_da_acao` com os 23 nomes de voo (todos traduzidos e o original recuperado);
+      `pw-recursos` 30/0; svelte-check 0/0, vitest 43/43. Publicado: 天鹅之翼 e 机械翼 exportados ("Voando parado ·
+      天鹅之翼_飞行悬停"…) e importados de volta num rascunho (110, 111, descartados) — todas "igual à do cliente (não
+      gravada)". Navegador: Voo → registro 3 mostra "Descendo de baixa altura | Pousando | Voando para frente | Voando
+      parado | … | Decolando | Recolhendo | Abrindo".
+    - Falta: o Murillo ver no Blender.
+
+385. **Sessão 2026-10-25: Estúdio G-Shop — a Loja Gold no Estúdio Svelte (B385).** Pedido do Murillo: card "G-Shop" com
+    tela própria no layout do §4.6 (abas, vitrine, oferta), abas e subabas editáveis, imagem de aba, itens por aba
+    (adicionar, mover, remover), painel da oferta com os campos de cada versão, imagem da oferta, conferência e prévia.
+    - Evidência (cliente 1.5.5 e GS 1.5.5): 3 lojas (`globaldataman.cpp:614-760`; `Win_QShop`/`Win_BackShop`,
+      `DlgQShop.cpp:1087-1121`; VIP na aba 5, :1705-1736); 8 abas fixas (:643) com o texto do `szName` (:1287); 8 botões
+      de subaba + "todos" no `qshop.xml` BR e no `qshop.dtf` 1.2.6; imagem por aba só no 1.5.5 (TGA 32 bits, medida);
+      `icon` da oferta = imagem 128×128 (`DlgQShop.cpp:989`); ordem da vitrine pelo selo (`GShopCollector`, :170-232);
+      preço em centavos (`EC_GameUIMan.cpp:7951`); regras de carga do GS (`globaldataman.cpp:135-200`,
+      `playermall.cpp:97-380`); limite 0–4 (`template/globaldataman.cpp:79`). Achado: 751 das 1.726 ofertas do BR não
+      têm preço (o cliente as esconde) e a aba Roupas do BR tem 9 subabas — a 9ª ("Cabeça", 165 ofertas) não tem
+      botão (diagnosticado; falta ver em jogo se só aparece no "todos").
+    - Feito: `gshop_editavel::conferir_oferta` e `imagem::tga_32` (pw-data-loader); `pw-recursos`: abas do diálogo,
+      imagem em PNG, troca da imagem da aba e da oferta, conferência, `clonar_oferta` com campos, editar recusa erro
+      novo, subaba limitada aos botões, 7 colunas novas na listagem; proxy do painel; Estúdio: `GShop.svelte`,
+      `ArvoreDeAbas`, `CartaoDaOferta`, `PainelDaOferta`, `lib/gshop.ts`.
+    - Provas: `tga_32` 37 TGA reais byte a byte; `testes_da_conferencia` (regras e as 4 lojas reais sem erro de opção);
+      `pw-recursos` integração: listagem, abas, imagem PNG, adicionar → mover → remover volta ao publicado byte a byte
+      (`igual_ao_publicado`), subaba além dos botões recusada, imagem da aba (tamanho errado recusado) e da oferta
+      (DDS novo, `icon`), rascunho descartado. Suítes `pw-data-loader` + `pw-recursos` com o banco: **307 passaram, 2 falharam** — as duas de dado, não da loja: `carga_dos_realms::a_geracao_de_equipamento_do_126` (a foice 15964 trocada pelo rascunho "v1" publicado na 1.2.6 v5, já registrado no B379) e `progressao_do_realm::o_distrito_do_nascimento_no_161…` (o `precinct.sev` do realm); `pw-recursos` sozinho depois do ajuste de desempenho: 30/0. Painel `teste_recursos` 14/14 no contêiner.
+      svelte-check 0/0; vitest 52/52.
+    - Desempenho: a rota das abas levava 16,6 s no 1.5.5 — `item_do_cliente` percorria os 327 mil arquivos do manifesto e
+      `gov.publicado()` relia o manifesto inteiro a cada imagem. Agora o índice do cliente publicado fica em cache com o
+      caminho GBK (`indice_do_cliente`) e o cache confere só o `versao.json` (`Governanca::versao_publicada`): 0,14 s
+      (1,15 s na primeira). Vale para toda leitura de arquivo do cliente no Estúdio. O 1.5.5 BR traz um `qshop.dtf` velho
+      fora do `ingame.dcf`: o `.dtf` só vale quando não há `.xml`.
+    - Navegador (localhost:8000, publicado): 1.5.5 — 1726 ofertas, 751 desativadas, 0 com erro, árvore com as imagens das
+      abas nos dois temas; rascunho 112: preço da #5 → 2,50 gold (250 no arquivo) gravado; "Nova oferta" com a Espada de
+      Bronze → #1726 no fim da aba Especial › Ofertas (cópia da #5); remover → 1726 de novo; rascunho descartado. 1.2.6 —
+      668 ofertas, só `gshop.data`, aviso de imagem compartilhada (`Button\按钮_文本1.dds`) e os campos do v126.
+    - Falta: o Murillo abrir a Loja Gold no 1.5.5 e no 1.2.6 depois de publicar (aba renomeada, oferta nova na aba
+      certa, compra com o goods_index certo); a 9ª subaba do BR em jogo; ordem da vitrine do 1.2.6 no binário.
+
+
+386. **Sessão 2026-10-25: Itens e minas no Estúdio Svelte (B386).** Pedido do Murillo: ativar o card "Itens" com as
+     tabelas de item que não são Equipáveis, agrupadas, edição por tipo com significado e unidade pelo fonte, modelo 3D
+     do item no chão e da mina como nos Equipáveis, e "Onde aparece" (minas nas áreas de recurso do npcgen).
+     - **Evidência levantada:** a classe que o GS dá a cada tabela (`template/setclassid.cpp:23-289`; -1 = usar não faz
+       nada: material, missão, livro de habilidade, reviver, `UNIONSCROLL`…); remédio pela categoria
+       (`generate_item_temp.h:913-1000`: 1794/1802/1810/1815/2038, outra não gera item; `cool_time` < 1000 → ×100;
+       `item_potion.cpp`; o filtro entrega `total/tempo` por segundo e o resto da divisão se perde,
+       `potion_filter.h:16-65`); amuleto (`player.cpp:9105-9130`, `item_amulet.cpp`); pedra (`require_equip` do layout é
+       o `combined_switch`, `IsStoneFit`, `item.cpp:332-353`; preços em `serviceprovider.cpp:1374-1385`,
+       `item_list.cpp:205`, `player.cpp:23879`); talismã (`player.cpp:11719-11747`, `equip_item.cpp:192-205, 265-273`,
+       `RandSelect` em `arandomgen.h:129-139`); o livro de habilidade não guarda a habilidade — é o `item_exigido` dela;
+       a mina (`npcgenerator.cpp:1280-1365`, sorteio de material e quantidade ao nascer `:5003-5016`, coleta
+       `matter.cpp:265-440`); a área de recurso (`npcgenerator.cpp:3888-3932`: centro ± `fExt/2`, renascer
+       `15 + dwRefreshTime` s, mín. 15; `iResType`/`bInitGen`/`bValidOnce`/`dwGenID` não lidos); nenhum item nasce no chão
+       pelo npcgen sem mina. No cliente: o item caído e a mina são `CECMatter` (`EC_Matter.cpp:71-107`): `CECModel::Load`
+       comum, peles do `.smd` e, sem nenhuma, a `<.smd>.ski`; tocam `掉落保护`/`_水中`/`_空中` pelo ambiente
+       (`:300-311`); fogos são um `.gfx` (`EC_Player.cpp:9022-9024`); nada pende no personagem.
+     - **Servidor:** `pw_data_loader::minas::montar` (a montagem do GS com o motivo da recusa; `carregar` usa a mesma);
+       `GET estudio/usos/{id}` e `GET estudio/minas/{indice}` no `pw-recursos` e no painel; `como=matter` no GLB e na
+       importação; o resumo do `importar_pele` passou a contar as malhas rígidas (dava 0 nos modelos sem osso); 14 termos
+       novos na tabela única de nomes de animação (medidos em 1.681 modelos das duas versões: `掉落保护` em 1.006, `刀光`
+       em 614…) e o `_` de um termo da tabela deixou de ser lido como prefixo de modelo.
+     - **Estúdio:** `lib/itens.ts` (10 grupos + Minas, regras com evidência), `telas/EdicaoItem.svelte`,
+       `componentes/BoxDeRecurso.svelte`, `ModeloDoEquipavel` com `como="matter"`, busca agrupada (`optgroup`), rota
+       `#/itens/<tabela>/<indice>`, "abrir em nova aba" pela categoria da tabela. O seletor de item continua pedindo
+       colunas só para Equipáveis/Monstros/pedras (o teste do B376 pegou a mudança).
+     - **Testes:** `pw-data-loader` 161/1 (a falha, `a_geracao_de_equipamento_do_126`, é o `elements.data` do realm
+       1.2.6 editado por publicações — a foice 15964 tem outros efeitos; não é deste bloco); `pw-recursos` 30/0 com
+       `TEST_DATABASE_URL`, incluindo a área de recurso de uma mina real do mapa principal do 1.2.6: criar, mover,
+       redimensionar, 2 minas, voltar e remover → `igual_ao_publicado: true` (npcgen byte a byte); `svelte-check` 0/0;
+       vitest 70/70 (17 novos: grupos contra os dois layouts, remédio, pedra, talismã, renascer); painel 14/14 com
+       banco e Redis. No publicado (rascunhos 113–114, descartados): GLB do material 795 (`标准原料掉落.ecm`, 1 malha,
+       44 vértices) e da mina 3074 (`枯树.ecm`, 3 malhas, 241 vértices) exportado e importado de volta — nada a corrigir,
+       texturas iguais às do cliente; os dois não têm animação.
+     - **Falta:** o Murillo ver a mina nascer num lugar novo e colher; NPCs e Mascotes no Estúdio.
+
+387. **Sessão 2026-10-25: painel do jogador — cadastro e acesso de conta comum (B387).** Pedido do Murillo: centralizar
+    no painel admin; criar conta pela tela; conta comum entra com Visão geral, Minha conta (criada em, cash, personagens
+    por realm, trocar a senha), Recursos do cliente só com o histórico de versões, e no realm só o Painel do realm e
+    Personagens (só os dela, só ver); nenhuma outra ação; o resto bloqueado mesmo mexendo na URL.
+
+    ### a. Decisão
+    - Centralizar com **deny por padrão**: o papel (`gm`/`jogador`) sai do banco a cada requisição e a conta comum só
+      alcança a lista fechada `ROTAS_DO_JOGADOR` (`web-admin/backend/painel/jogador.py`); rota nova nasce só de GM.
+      Leitura de personagem confere dono **e** realm da URL (404 sem dizer se existe). Mesma conferência no GS
+      (defesa em profundidade): `ServidorAdministrativo::liberado_a_conta_comum`.
+    - O GS recusava todo autor sem GM (`administrador_recusado`). Liberações estreitas: `trocar_senha` da própria
+      conta (o repositório confere de novo sob o lock), `mundos` e as leituras de personagem do dono; e a consulta nova
+      `cadastrar_conta`, só com autor 0 (o painel, provado pelo HMAC), com a mesma reserva idempotente da
+      `criar_conta` (`criar_conta_por`, sem conferir GM).
+
+    ### b. Feito
+    - GS/armazenamento: `Consulta::CadastrarConta`, `liberado_a_conta_comum`, `dono_do_personagem`,
+      `cadastrar_conta`; `trocar_senha` aceita a própria conta.
+    - Painel: `jogador.py` (barra, cadastro com 5/IP/hora e `PAINEL_CADASTRO=fechado`, Minha conta, troca da própria
+      senha refazendo a sessão, histórico só do publicado e sem autor), login aceita conta comum, lista de personagens
+      filtrada pela sessão, `canal.py` aceita `criar_conta` como resposta de `cadastrar_conta`.
+    - Tela: "Criar conta" no login, `body.modo-jogador` esconde `[data-somente-gm]`, páginas Minha conta e Recursos do
+      cliente (histórico), ficha sem botões, arrasto nem clique de edição (a dica continua).
+    - Numeração: o B386 já era de outra sessão do mesmo dia (Itens e minas); este bloco é o B387.
+
+    ### c. Provas
+    - `cargo test -p pw-gs --test canal_administrativo` (banco): 37/40; o novo
+      `cadastro_publico_cria_conta_comum_e_ela_so_troca_a_propria_senha` passa e o de revogação foi ajustado (sem GM
+      lê o próprio personagem, `templates` recusado). Das 3 falhas, `modificar_e_redistribuir…` e `templates_editados…`
+      passam em série (carga do paralelo); **`missoes_ver_dar_concluir_cancelar_e_esquecer` falha igual com os três
+      arquivos deste bloco revertidos** (fecha a conexão; pré-existente, não investigado).
+    - Painel no `pw-admin-api` (cópia em `/tmp/tp`): `teste_jogador` 6/6; suíte inteira 96 testes com as **mesmas 14
+      falhas/erros do commit `bc3258f`** rodado lado a lado (`/tmp/tb`) — nenhuma nova.
+    - `teste_fluxo_contas.cjs` (Node): 13/13 falham **também no commit anterior** (`location` indefinido no
+      `abrirLinkDireto`); não é deste bloco.
+    - Navegador numa instância temporária (`docker run` da imagem do painel com `painel/` e `static/` montados, porta
+      8099, parada no fim): login, Criar conta, menu do jogador, Minha conta, histórico, lista e ficha só do próprio
+      personagem (`testuser`), botões de edição com `display: none`; por curl, `admin` = `gm` (contas 200) e `testuser`
+      = 403 em contas e Estúdio. Com o GS de hoje, online/inventário do jogador aparecem como "recusado pelo daemon".
+
+    ### d. Falta
+    - Publicados a pedido do Murillo, um por vez: `pw-world-126` (27.327 monstros, canal na 29110), `pw-world-155`
+      (mapas 1, 161, 169) e `pw-admin-api`; `public` conferido antes (vazio), nenhum contêiner parado. Por curl com
+      `testuser`: estado do realm 126 `consultado`, inventário próprio 200, `/api/contas` 403. A imagem do painel levou
+      também o que a sessão do B386 tinha na árvore (`recursos.py`, Estúdio Svelte), que ela já publicara.
+    - Código commitado em `e70e25e`; a documentação inicial deste bloco entrou no `0fcdca8` (commit de documentação do
+      B386, que levou os arquivos inteiros) e o registro da publicação no commit seguinte. Falta o Murillo ver no navegador.
+
+388. **Sessão 2026-10-29: cultivo pelo painel dá junto o teto de chi das missões (B388).**
+
+    ### a. Pedido
+    O Murillo deu cultivo 8 pelo painel ao WB do 1.2.6: o cultivo mudou, mas a barra de chi ficou como estava, e sem
+    chi as habilidades não saem. Pedido: dar o chi que a missão de cultivo daria.
+
+    ### b. Causa, no original
+    Cultivo e teto de chi são dois prêmios independentes da missão: `m_ulNewPeriod` → `SetCurPeriod` → `SetSecLevel`
+    e `m_ulFuryULimit` → `SetFuryUpperLimit` → `SetMaxAP` (`gs/task/TaskProcess.cpp:1284,1293`,
+    `gs/task/taskman.cpp:251-254,499-502`, `gs/actobject.h:1634-1640`). O painel (B182) só fazia o primeiro.
+    Nos `tasks.data` (exemplos `missoes_de_chi`/`missoes_de_cultivo`): 1.2.6 — 915 cultivo 1 + teto 99, 922 cultivo 3 +
+    199, 925 cultivo 6 + 299, 2804/2818 cultivo 20/30 + 399; 1.5.5 — o 99 vem da 32394 ("Só um Pouco de Progresso"),
+    **mãe** da 32416 que dá o cultivo 1; o resto igual.
+
+    ### c. Correção
+    - `TasksData::teto_de_chi_do_cultivo` (`pw-data-loader/src/tasks.rs`): o maior `m_ulFuryULimit` entre as missões
+      que concedem cultivo de ordem ≤ (`ordem_do_cultivo`: 0–8, 20/30, 21/31, 22/32, pela sequência 2153 → 2804/2818
+      → 3227/3204 → 3273/3244), subindo a cadeia de pais de cada uma. Resultado nos dois realms: 1–2 → 99, 3–5 → 199,
+      6–8 → 299, 20–22/30–32 → 399; fora da progressão → 0.
+    - Online (`jogo.rs`, `EdicaoDePersonagem::Cultivo`): `definir_cultivo` + `definir_teto_de_chi` (o mesmo da missão:
+      chi atual preso ao teto, `SELF_INFO_00` ao próprio). Offline: `definir_cultivo_offline` grava `max_ap` e
+      `ap = LEAST(ap, teto)`; o roteador pede o teto ao mapa (`BusServer::teto_de_chi_do_cultivo`).
+    - Baixar o cultivo pelo painel baixa o teto (o painel define o estado correspondente).
+
+    ### d. Provas
+    - `carga_dos_realms::o_teto_de_chi_de_cada_cultivo`: a tabela acima nos `tasks.data` reais do 1.2.6 e do 1.5.5 (ok,
+      sem aviso de dado ausente).
+    - `canal_administrativo::editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155` (banco): missões de teste no
+      formato das duas versões (mãe com teto 99 + filha cultivo 1; uma com cultivo 3 + 199); online cultivo 5 → `max_ap`
+      199; offline cultivo 8 → (8, 199) no banco, cultivo 1 → 99. Ok.
+    - Suíte inteira com o banco (`--no-fail-fast`, 2 threads): **1265 passaram, 2 falharam**, e as duas falham igual com
+      as mudanças deste bloco guardadas (`git stash`): `carga_dos_realms::a_geracao_de_equipamento_do_126` (os addons da
+      foice 15964 no `elements` do realm agora são 591/415/1323, o teste espera 473/1008/1321 — dado editado depois do
+      teste) e `progressao_do_realm::o_distrito_do_nascimento_no_161…`. Não investigadas.
+
+    ### e. Falta
+    - Publicados a pedido do Murillo, um por vez (`--no-deps`): `pw-world-126` às 23:55 (27.327 monstros, canal na 29110)
+      e `pw-world-155` às 23:57 (mapas 1, 161, 169); `public` conferido antes (vazio), nenhum contêiner parado.
+    - Código commitado em `dc1f096`, documentação em `933c922`. Falta o Murillo ver no WB: cultivo 8 → teto 299.
+
+389. **Sessão 2026-10-31: painel de GM (Ctrl+G) no 1.2.6 — respostas 175/176 e modo de depuração do realm (B389).**
+
+    ### a. Sintoma / pedido
+    - O Murillo usou o Ctrl+G no cliente 1.2.6 e "nenhum comando funcionou"; no 1.5.5 o painel funciona (B159). O log
+      do teste se perdeu (contêineres reiniciados antes da análise).
+
+    ### b. Causa
+    - **O cliente manda o mesmo que o 1.5.5.** O binário 1.2.6 (`F:/Games/perfectworld_126/element/elementclient.exe`)
+      tem as mesmas classes `CGMCommand*` (RTTI em 0x8c1d40–0x8c2478). `CGMCommandInvisible`/`Invincible` (vtables
+      0x848c0c/0x848c24) chamam 0x5a7c60/0x5a7ca0, que alocam 2 B, gravam `0xcc`/`0xcd` (204/205) e mandam pelo
+      `SendGameData`. O link repassa o `GamedataSend` sem filtro e o mundo aplica o `sec_level` na entrada em caminho
+      comum (`bus_server.rs:1764`). Os opcodes GNET de GM no 1.2.6 (construtores): `GMOnlineNum` 350, `GMKickoutUser`
+      354, `GMShutup` 356, `GMKickoutRole` 360, `GMShutupRole` 362, `GMToggleChat` 364 — os do 1.5.5.
+    - **Falta 1 — resposta:** `gm_alternar_invencivel`/`invisivel` respondem por `self.sub.gm_invincible/gm_invisible`, e o
+      `V126Protocol` não os tinha: caía no padrão `None` do `traits.rs:244-251`. O servidor ligava o estado, mas o cliente
+      nunca recebia o 175/176 (sem a mensagem nem o estado do GM). O validador 1.2.6 (VA 0x584610) mede 175 = 176 = 1 B
+      (caso 0x584db6), entre 174 = 5 B e 177 = 14 B — a vizinhança `PLAYER_END_TRAVEL`/`HOST_CORRECT_POS` do IR 1.5.5.
+    - **Falta 2 — dado:** `data/realm_126/config/ptemplate.conf` não tinha `debug_command_mode = active` (o do 155 tem,
+      linha 5); sem ele o 208 (criar monstro) é ignorado calado (`playercmd.cpp:4991`).
+    - O "dar itens" do 1.5.5 é o painel web (B186/B216); o 206 do Ctrl+G (`GM_GENERATE`) é `falta` nas duas versões.
+
+    ### c. Correção
+    - `crates/pw-protocol/src/versions/v126/mod.rs`: `gm_invincible`/`gm_invisible` com o codificador comum (1 B).
+    - `data/realm_126/config/ptemplate.conf` (ignorado pelo git, volume do `pw-world-126`): `debug_command_mode = active`.
+    - Teste `o_gm_alterna_invencivel_e_invisivel` vira `conferir_…(versao)`, com a variante `_126`.
+    - Specs 04 (§ comandos de GM: 1.2.6 incluído; corrigido o "o link ainda não trata nenhum" que o B363 já tornara falso)
+      e 05 (linha do painel de GM).
+
+    ### d. Provas
+    - `subcomandos_no_mundo` com o banco, filtro `o_gm_`: **3 passaram, 0 falharam** — `o_gm_alterna_invencivel_e_invisivel`
+      (1.5.5), `…_126` (novo: 175 com `is_invincible` 1/0 e 176 com `is_visible` 0/1, 3 B cada) e o GOTO do GM. Sem o
+      `gm_invincible` do `v126` a variante 126 esperaria um 175 que nunca sai (não rodado com o código antigo).
+    - `pw-protocol` + `pw-data-loader`: **404 passaram, 2 falharam** — as duas já registradas no B388
+      (`a_geracao_de_equipamento_do_126`, `o_distrito_do_nascimento_no_161…`), sem relação com este bloco.
+
+    ### e. Falta
+    - Publicado a pedido do Murillo: `pw-world-126` às 11:11 (`--no-deps`; 27.327 monstros, canal 29110; o contêiner lê
+      `debug_command_mode = active` na linha 4 do `ptemplate.conf`); `public` conferido antes (vazio). Commitado em `e04fac2`.
+    - Murillo ver em jogo no 1.2.6 (roteiro no §3.3 do estado).
+    - Criar item (206, ler o `GM_GENERATOR_ESSENCE`) e gerador (207) — nas duas versões.
+
+390. **Sessão 2026-11-01: drop global do GS (`extra_drops.sev`) — leitor, sorteio no `pw-gs` e "Dropado de" do Estúdio (B390).**
+
+    ### a. Sintoma / pedido
+    - O Murillo abriu no Estúdio (aba Itens, 1.2.6) o "Molde de Gume s/ Corte em Areia" (`MATERIAL_ESSENCE` 15, id 521) e o
+      "Dropado de" vinha vazio: faltava implementar ou nenhum monstro dropa?
+
+    ### b. Diagnóstico
+    - **O 521 não vem de lugar nenhum**, nos dois realms: nenhum `drop_matters`, receita, mina, loja ou missão o cita (busca
+      de todo campo = 521 com o exemplo `campo_com_valor`; `missoes_com_item` vazio). Os moldes 516–525 idem; no 1.5.5 os
+      acertos são o `HOME_ITEM` 521 (outra numeração). Item órfão nos dados.
+    - **Mas havia uma fonte de drop que não líamos:** o `extra_drops.sev`. A spec 03 dizia "origem desconhecida" — errado: é
+      o `[Template] DropData` do `gs.conf:59`, lido por `load_extra_drop_tables` (`worldmanager.cpp:884`,
+      `template/extra_drop_table.cpp:7-40`) e validado por `drop_template::LoadDropList` (`global_drop.cpp:8-61`). Ao morrer,
+      `gnpc_imp::DropItem` chama `DropItemFromGlobal` primeiro (`npc.cpp:2721-2725`, `:2587-2647`).
+    - `realm_126`: 39.352 B, fecha no último byte; 15 tabelas, todas tipo 2 (soma), 1.526 monstros, somas dentro de 1e-6.
+      `realm_155`: 2.228 B, 1 tabela sem itens (o GS a ignora).
+
+    ### c. Correção
+    - `crates/pw-data-loader/src/drop_global.rs` (novo): `DropGlobal::ler` — `Err` no que faz o GS não subir (versão ≠ 1,
+      tipo fora de 1/2, monstro em duas tabelas, arquivo que não fecha), tabelas vazias e com soma ≠ 1 em `ignoradas`;
+      `do_monstro`, `chance_por_morte` (`Σ P(k)·(1−(1−p)^k)`). `GameDataManager::drop_global`, carregado da raiz do config.
+    - `crates/pw-gs/src/economia.rs::gerar_queda`: o drop global antes do normal — um teste de ajuste de item (sem
+      `double_drop`), nº de itens por `drop_num_probability`, cada um sorteado; tipo 1 corta o drop normal e sorteia o
+      dinheiro uma vez (`> 0,7` perde; cai junto, `worldmanager.cpp:541-554`).
+    - `crates/pw-recursos/src/estudio.rs::origens_do_item`: `dropado_de_global` (monstros de cada tabela com o item, chance
+      por morte, tabela, tipo) e `dropado_de_global_erro`; `web-admin/estudio` (`api.ts`, `Origens.svelte`): sublista
+      "Drop global (extra_drops.sev)" no card; build regerado.
+    - Specs 03 (linha do `extra_drops.sev` corrigida; fora da lista de não lidos), 05 (drop de monstro), 06 e 07 (origens).
+
+    ### d. Provas
+    - `pw-data-loader` `drop_global`: 3/3 (aceita/ignora como o `LoadDropList`, recusa o que derruba o GS, os dois arquivos
+      reais). `pw-gs` `tests/drop_global.rs`: 2/2 (monstro da tabela 0 do 1.2.6: itens globais a < 10% de Σ k·P(k) em 40.000
+      mortes e o drop normal continua; tabela tipo 1 sintética: só os itens dela, ≤ 1 monte de dinheiro, ~70% com dinheiro).
+      `pw-recursos` `tests/estudio.rs`: as asserções novas (12962 → 10 chefes da tabela 14, chance 1) passam; o teste cai
+      depois, na Loja Gold (linha 1476: o arquivo tem 670 ofertas, o teste espera 668), porque o `gshop.data` do `realm_126` foi trocado no disco em
+      2026-11-01 23:12 — fora deste bloco. `svelte-check`: 0 erros.
+    - Suítes `pw-data-loader` + `pw-gs` com o banco: **861 passaram, 3 falharam** — as três por dado do realm trocado no
+      disco depois do teste, nenhuma pelo código deste bloco: `gshop_do_realm` (670 ofertas, espera 668; `gshop.data` do
+      126 de 2026-11-01 23:12), `carga_dos_realms::a_geracao_de_equipamento_do_126` (addons da foice `[591, 415, 1323]`,
+      espera `[473, 1008, 1321]`; `elements.data` do 126 de 2026-10-29 21:22) e `progressao_do_realm` (27 distritos na
+      `a61/precinct.sev` do 155, espera 25; arquivo de 2026-10-24 15:02, o alinhamento do B365).
+
+    ### e. Falta
+    - Commitado na `studio-svelte` em `21bc67f` (código) e `e509d80` (docs); publicados a pedido do Murillo, um por vez:
+      `pw-world-126` 00:41, `pw-world-155` 00:43, `pw-recursos` 00:55, `pw-admin-api` 01:03 (2026-11-02), nenhum contêiner
+      para trás. `pw-world-126`: 133 arquivos carregados (eram 132), sem falha; `/app/data/config/extra_drops.sev` com 39.352 B.
+      O relatório de carga só loga a contagem, não a lista.
+    - O Murillo ver no Estúdio e em jogo (§3.3).
+    - O ajuste do teste de 668 ofertas ao `gshop.data` novo (ou restaurar o arquivo), depois de saber quem o trocou.
+    - O drop global ignora, como o drop normal daqui, `_drop_rate`, `_money_scale` e o bônus global de dinheiro.
+
+391. **Sessão 2026-11-02: botão "Criar conta / Painel" no launcher, com a URL do painel anunciada pelo servidor de atualização (B391).**
+
+    ### a. Pedido
+    O Murillo pediu um botão no launcher para abrir o painel (ou criar conta), com a URL vinda do próprio servidor de
+    atualização conforme o serviço no Docker: em teste local abre pelo endereço local, hospedado abre pelo IP/DNS certo.
+
+    ### b. Decisão
+    - O painel (`pw-admin-api`, porta publicada 8000) já tem login de jogador com "Criar conta" (B387); faltava o launcher
+      saber onde ele está. Quem sabe é a configuração do Docker: `PW_PAINEL_URL` no `pw-recursos`
+      (`${PAINEL_URL:-http://{host}:8000/}` no compose).
+    - `{host}` é trocado **no launcher** pelo host do servidor de atualização configurado nele — o mesmo que já vai para a
+      `serverlist.txt` (B280). Não se usa o cabeçalho `Host` da requisição: o servidor assinaria um valor escolhido pelo
+      cliente, e um intermediário conseguiria uma URL assinada para qualquer host.
+    - `painel.json` assinado (Ed25519, a chave dos manifestos) porque o launcher abre a URL para o jogador digitar senha;
+      HTTP sem TLS não pode trocá-la por uma página falsa. URL validada dos dois lados (só `http`/`https`, ASCII visível
+      sem aspas/espaço, `{host}` uma vez e como host inteiro) antes do `ShellExecuteW`.
+
+    ### c. Correção
+    - `crates/pw-atualizador/src/painel.rs` (novo): `Painel`, `validar_modelo`, `montar_url`; `cliente.rs`:
+      `Servidor::painel()` (404 → `None`).
+    - `crates/pw-recursos/src/servir.rs`: `painel_assinado`, `rotas_com_painel` (`/painel.json`, `/painel.json.sig`);
+      `main.rs` lê `PW_PAINEL_URL` (inválida vira aviso no log, sem painel).
+    - `tools/pw-launcher`: botão "Criar conta / Painel" no alto (título encolhido para 172 px, "Opções do jogo…" para 136),
+      `acoes::endereco_do_painel` numa thread, `WM_PAINEL` → `ShellExecuteW("open")`, mensagem com a URL ou o erro.
+    - `docker/docker-compose.yml`: `PW_PAINEL_URL` no `pw-recursos`. Spec 07 §1 e §5.
+
+    ### d. Provas
+    - `pw-atualizador` 10/10 (3 novos: host local/rede/DNS/IPv6, URL fixa, 9 modelos e 3 hosts recusados);
+      `pw-recursos` lib 26/26; `tests/painel.rs` 2/2 (HTTP real: modelo conferido, `localhost` e IP, chave errada recusada,
+      sem painel = `None`, modelos `file://` e `{host}.mal.com` recusados ao montar). Sem banco: não tocam no Postgres.
+    - `docker compose config`: `PW_PAINEL_URL: http://{host}:8000/`. Launcher 64 bits (`compilar.ps1`) compilado em 27 s,
+      2,7 MB.
+    - A checagem de origem do painel (`seguranca.py:142-155`) compara com a própria requisição: o cadastro funciona por
+      qualquer IP/DNS acessado direto.
+
+    ### e. Falta
+    - `pw-recursos` publicado a pedido do Murillo em 2026-11-02 18:42 (build 6 min 18 s): log `painel anunciado ao launcher:
+      http://{host}:8000/`; `GET /painel.json` = `{"formato":1,"url":"http://{host}:8000/"}` com `.sig`, 200 por
+      `127.0.0.1` e por `192.168.1.13`; painel 8000 responde 200 pelo IP; chave pública do servidor = `chave_publica.txt`.
+    - O Murillo ver o botão no launcher novo (local e por IP). Código no commit `378f2e9` (branch `studio-svelte`).
+    - Atrás de proxy HTTPS: `PAINEL_URL` fixa no `docker/.env`; o `verificar_origem` usa `requisicao.url.scheme`, que sem
+      `--proxy-headers` no uvicorn sai `http` — conferir quando houver proxy.
+    - Launcher 32 bits não recompilado (`compilar.ps1 -Bits 32`).
+
+392. **Sessão 2026-11-03: proposta desenhada do NPC no Estúdio, com Serviços e Missões como áreas próprias (B392, sem código).**
+
+    ### a. Pedido
+    - NPC no padrão das telas do Estúdio (busca, ficha, modelo 3D e animação de ocioso, ponto e rotação no mapa) com o
+      diferencial do editor de conversa (cores, botões) e dos serviços (loja, forja, avaliação, chocar ovo…) num modal de
+      busca/edição/criação/vínculo. Na mesma sessão: Serviços e Missões ganham botão próprio no Estúdio, com atalho no NPC.
+
+    ### b. Evidência levantada
+    - Menu do NPC = `hello_msg` + uma linha por serviço na ordem fixa do cliente, texto = `Name` do serviço
+      (`DlgNPC.cpp:339-441, 852-1015`); bits do `combined_services` (`ExpTypes.h:3763-3775`; chocar ovo = bit 9,
+      restaurar = bit 10; `DlgNPC.cpp:448-620`); `id_dialog` mostra conversa antes do serviço (`DlgNPC.cpp:2854-3023`).
+    - Cor `^RRGGBB` e demais códigos (`AUInterface/AUICommon.cpp:870-910`); opção de conversa com 63 caracteres
+      (`conversas.rs::texto_fixo`).
+    - NPC parado toca `ACT_NPC_STAND` e a cada 25 s `ACT_NPC_IDLE1/2` sorteado (`EC_NPC.cpp:367, 1907-1922`;
+      `EC_NPCModel.cpp:722-727`); CHAT não é tocado (`EC_NPCModel.cpp:912-914`).
+    - Limites dos serviços pelos layouts v156/v7 (loja 8×32, produção 8×32, receita 4 resultados/32 materiais,
+      teleporte 32, missões 256/256/144); `hello_msg` 512 B; v7 com 39 campos no `NPC_ESSENCE` (v156: 47).
+
+    ### c. Entregue
+    - `docs/admin/ESTUDIO_DO_PAINEL.md` §9.13 (proposta, evidência, a levantar, fases N1–N6) e a página desenhada
+      `docs/admin/estudio_npc_proposta.html` (publicada como artefato "Estúdio de NPC").
+
+    ### d. Falta
+    - Aprovação do Murillo e a ordem das fases. A levantar: `pedidos_de_npc`, uso do `vDir` do spawn de NPC no GS/cliente,
+      arranjo da loja no `DlgShop`, índice reverso serviço → NPCs.
+
+    ### e. Implementação (mesmo dia, aprovada pelo Murillo: "pode implementar todo o plano")
+    - **Servidor (`pw-recursos`):** `ecm::pedidos_de_npc` (as ações `ACT_NPC_*`, `EC_NPC.cpp`/`EC_NPCModel.cpp`; teste com a
+      tabela inteira do cliente BR: 站立, 休闲动作1/2, 行走, 跑动, 攻击起/落, 死亡, 受伤叠加→受伤, 出生, 消失); `npc=true` na ficha
+      do modelo; nomes legíveis novos; `Estudio::servicos` (`GET estudio/servicos/{T}`: quantos NPCs usam, resumo, busca
+      pelo item listado, filtro de uso) e `Estudio::missoes_resumo` (`GET estudio/missoes_resumo?ids&npc`); painel Python
+      repassa as duas e o `npc`.
+    - **Estúdio:** NPC em 5 abas (`telas/EdicaoNpc.svelte`), busca por função (`ModalBuscaDeNpc`), ponto e direção
+      (`BoxDePontosDoNpc`, `ModalMapa` com `comDirecao`: grava `vDir` e zera `vExts`, que é o que faz o GS usar a direção
+      — `npcgenerator.cpp:4348-4367`, `pw-gs::entity::direcao_do_gerador`), conversa (`EditorDeConversa`, cores
+      `^RRGGBB` pela regra do `AUICommon.cpp:870-910`), serviços (`PainelDeServicos`/`EditorDeServico`/`EditorDeReceita`,
+      regra da receita `player.cpp:16419-16423`) e missões (`FichaDaMissao`, `lib/missao.ts`); áreas próprias
+      `#/servicos` e `#/missoes`.
+    - **Achados:** v7 com a vaga `id_cross_server_service` sem a tabela; catálogo de referências sem `cita` nas vagas de
+      missão do NPC no 1.2.6 (a tela acha pela tabela da vaga); chave duplicada na lista de ações do modelo (ataque com
+      `起`/`落` no mesmo índice — erro no modo de desenvolvimento, linha reaproveitada no build; corrigido também para os
+      Monstros); spec 05 dizia que teleporte, pedras, forja e item de missão faltavam (corrigido).
+    - **Provas:** vitest 90/0 (marcação, conversa, missão, npc, serviços), svelte-check 0/0, `vite build` ok;
+      `pw-data-loader --lib ecm` 8/0; `pw-recursos --lib` 26/0; painel Python `teste_recursos` 14/0 (no contêiner, schema
+      `test`); `pw-recursos --test estudio` com o banco: as asserções novas (serviços, missões_resumo, `npc=true`) passam e
+      o teste quebra adiante na Loja Gold (espera 668 ofertas; o `gshop.data` do 1.2.6 tem 670, arquivo de 01/11 23:12 —
+      anterior). Navegador (Vite dev → painel publicado): NPC 3517 (ficha, ponto 204°), Domesticadora Rilay (janela do
+      NPC na ordem do cliente, conversa 3317), missão 1173 (diálogos), busca Lojas+Treinadores = 11.
+    - **Falta:** publicar `pw-recursos` e o painel (as rotas novas e o `npc=true` só existem depois) e ver no navegador o
+      painel de serviços; o teste da Loja Gold precisa do número novo (ou do arquivo antigo) — decisão do Murillo.
+
+    ### f. Publicação (2026-11-03)
+    - `pw-recursos` 11:40→11:46; painel 11:49→11:52 e de novo 12:01 (90/90 no build). O primeiro build do painel falhou:
+      o teste da conversa lê `specs/estudio/funcoes_de_conversa.json`, que o Dockerfile não copiava — acrescentado ao
+      `web-admin/backend/Dockerfile`.
+    - Conferido nas rotas publicadas (de dentro do contêiner do painel, API administrativa :8101): `servicos/NPC_SELL_SERVICE`
+      83 em uso, a mais usada ("Produtos à Venda") em 56 NPCs; `missoes_resumo` 1173 com os 8 que o 3517 entrega;
+      `modelos/ficha?npc=true` do `女npc8`: Parado, Ocioso 1 e 2 presentes, o resto ausente — por isso, no NPC, as ações
+      que não sejam parado/ocioso passaram a "opcional" (nascer só toca se existir, `EC_NPC.cpp:638-639`).
+
+393. **Sessão 2026-11-03: ajustes do NPC e dos Serviços pelo teste do Murillo no painel (B393).**
+    - **Pedido:** o Murillo testou o G-Shop do Estúdio no painel e aprovou (B385 → testado). No NPC/Serviços: (1) a
+      grade da forja "Itens Jurássicos" (id 15963) mostrava `???` sem ícone e sem a dica do item; (2) a aba Serviços do
+      Bocchinelson (NPC 15967) misturava o que ele tem com as vagas vazias; (3) o modelo 3D não subia nem descia e (4) o
+      rosto saía sem textura, no visualizador e no GLB do Blender.
+    - **(1) Receita pelo produto.** No cliente a receita é desenhada com o ícone, o nome e a descrição do item de
+      `targets[0].id_to_make` (`CECIvtrRecipe`: `m_pGenItem1 = CreateItem(targets[0].id_to_make)`, `GetIconFile`/`GetName`
+      devolvem os dele, `EC_IvtrMaterial.cpp:165,200-218`; a forja usa esse ícone, `DlgProduce.cpp:487-496`). O
+      `pw-recursos` passou a mandar `produto` {id, nome, ícone} (`estudio::produto_da_receita`) na referência a receita, na
+      ficha, na lista e na busca do espaço RECIPE (que também acha pelo nome do produto). A grade e o seletor mostram o
+      ícone do produto com a dica do item (`mostrarDica` com o id do produto); o lado mostra o produto e o nome da receita.
+    - **(2) Aba Serviços:** no alto "Serviços deste NPC" (vagas ligadas e bits simples ligados) em cartões de 118 px;
+      embaixo "Vincular", uma caixa de 300 px por categoria, com rolagem; os simples com rolagem a partir de 320 px.
+    - **(3) Visualizador (`lib/glb.ts`, vale para todos):** botão direito, do meio ou Shift + arrastar sobe e desce o ponto
+      que a câmera olha (um pixel = a altura que ele cobre na distância, fov 45°; limite ±2 raios); duplo clique recentra.
+    - **(4) Rosto.** O `bocchi.ski` cita `eyes.dds`, `bocchi2.png`, `body.dds`, `face.tga`; as 4 são achadas em
+      `models\npcs\bocchi\textures`, mas o GLB saía com 3 imagens e 4 materiais. O `face.tga` é **TGA tipo 10 (RLE)**,
+      1024×1024 de 24 bits (cabeçalho `00 00 0a … 00 04 00 04 18 00`), e `imagem::tga` só aceitava o tipo 2.
+      Acrescentado o RLE (pacote com bit 7 = repetição); RLE truncado não decodifica. O GLB do Blender é o mesmo
+      construtor, então a textura vai junto.
+    - **Loja Gold:** o teste `estudio` passou a esperar 670 ofertas (as duas a mais vêm da publicação de 01/11 pelo G-Shop,
+      que o Murillo aprovou).
+    - **Provas:** `pw-data-loader --lib imagem` 5/0 (o RLE novo e os TGA reais do cliente BR); `pw-recursos` com o banco
+      32/0 — o `estudio` inteiro volta a passar; vitest 90/0, svelte-check 0/0. Publicado `pw-admin-api` (90/90 no build)
+      e `pw-recursos` às 13:48. Conferido no publicado: GLB do `bocchi.ecm` com 4 imagens (`face.tga` incluída) e nenhum
+      material sem textura, o mesmo no GLB do Blender (`todas=true`); "Itens Jurássicos" (NPC_MAKE_SERVICE 81): 224 receitas,
+      todas com produto, 54 com ícone; a busca RECIPE por "★Espad" acha pelo nome do produto.
+    - **Dado, não falha:** as outras 170 vagas são a receita 1744 `???`, cujo produto é o 13189 (`MATERIAL_ESSENCE`,
+      `Name` `???`, `file_icon` vazio) — enchimento das abas no `elements` do 1.2.6; no jogo também aparecem sem ícone.
+    - **(5) Ordem da loja no 1.2.6 — layout errado.** O Murillo viu na loja 2241 ("Produtos à Venda") os itens em vagas
+      alternadas, com buracos que o jogo não tem. O cliente não compacta (`CECHostPlayer::FillNPCPack` põe o id `i` na vaga
+      `i`, `EC_HostPlayer.cpp:7587-7611`); o erro era o `NPC_SELL_SERVICE` do v7, cortado do v156 (página com
+      `require_*` e itens de 16 B). O 1.2.6 tem a loja antiga: `ID`, `Name`, 8 × {`page_title[8]`, 32 ids} e `id_dialog`
+      (1224 B, o `sizeof` do gs 1.2.6). Medido no registro 0: título 1 em +68 ("Espadas"), ids 36, 37, 39, 40, 41, 151…
+      logo depois, e o texto "Lanças" em +212 (lido como `goods_8_contrib_cost` = `0x0061004C`…). Corrigido no
+      `generate_v7.py` (que também passou a reproduzir o `combined_services` do B163, antes só no JSON); no `v7.json` só
+      o `NPC_SELL_SERVICE` muda (282 → 267 campos). O GS não lê essa lista; quem lia errado era o Estúdio (grade, "Vendido
+      por", resumo dos serviços) — e gravar uma loja do 1.2.6 pelo Estúdio antes disto mexia em ids pelos campos de custo.
+      Testes: `pw-recursos` 32/0; `pw-data-loader` (`--no-fail-fast`) 282/3 — as 3 do §390, todas dado de realm: foice
+      15964 (`elements.data` do 126), distrito do 161 (`a61/precinct.sev` do 155) e o `gshop` do 126 com 670 ofertas, que
+      passou a esperar 670 (3/0 no `gshop_do_realm`). `pw-recursos` publicado às 14:18; conferido no publicado: a loja
+      2241 com as 7 abas (Espadas, Lanças, Mach., Punhos, Dist., Instr., Munição; 24/18/24/12/18/24/9 itens) — antes o
+      Estúdio via 3 abas e 13 itens em Espadas.
+    - **Commit:** código em `cb6d5fd` (B392 e B393 juntos, na `studio-svelte`); documentação no commit seguinte.
+
+394. **Sessão 2026-11-03: Mascotes no Estúdio, com o simulador de combate (B394).**
+    - **Pedido do Murillo:** a aba Mascotes do Estúdio (a última do planejamento) com os campos editáveis, o editor de modelo
+      3D como o dos monstros (importar), o ovo que gera o mascote com um seletor fácil, e uma parte para simular o mascote num
+      nível contra outro mascote do mesmo nível ou um monstro — o recurso do script de rascunho usado para achar o mascote
+      mais forte contra o **Lobo-rei de Hades** (4359, sessão "Problemas item WB 1.2.6", 2026-09-30: nível 42, 146.772 de
+      vida, 925–2.157 a cada 1,75 s, defesa 1.782, acerto 21.850; "nenhum aguenta sozinho no nível 40"). Layout amigável.
+    - **O script antigo não ficou no repositório** (era de rascunho; os exemplos `ranking_de_mascotes` e `simula_golpe` são
+      vizinhos). Reconstruído sobre o que o GS já faz: `ModeloDeMascote::atributos` (`petdataman.h:23-76`),
+      `corpo_do_mascote` (`CreatePetBase`, `npcgenerator.cpp:2021-2040`), `MonsterEntity::do_template` e
+      `combat::resolver` (NPC contra NPC: sem crítico, punição de nível ou camada), regeneração em combate
+      (`npc.cpp:1946-1958`). Em TypeScript (`web-admin/estudio/src/lib/mascote.ts`) para responder na hora a cada campo
+      editado, com as contas em `float` (Math.fround) e o `(int)` do original.
+    - **Tela** (`telas/EdicaoMascote.svelte`, `ModalBuscaDeMascote`, `OvoDoMascote`, `SimuladorDeCombate`): busca por tipo e
+      ambiente; abas Ficha, Atributos por nível, Ovo, Modelo 3D, Simulador. Detalhe e evidência de cada campo em
+      `docs/admin/ESTUDIO_DO_PAINEL.md` §9.14 (campos do `ExpTypes.h:2983-3060`; recusas do `petdataman.cpp:120-133`;
+      lealdade do `pet_filter.cpp:8`; ações por ambiente do B281).
+    - **Achados no navegador:** (1) a listagem do `pw-recursos` devolve até 12 colunas por pedido (`estudio.rs:208`) — o
+      ranking pede os 34 campos em 3 grupos e junta pelo registro, sem mexer no servidor; (2) a conta "pela média" dizia que o
+      Lobo-rei nunca derruba o Raptor de Combate (regenera 420/s contra 405/s de dano médio), mas um golpe de até 1.009
+      mata os 924 de vida de uma vez: o ranking usa o tempo das lutas sorteadas e o painel do esperado avisa quando um golpe
+      só derruba; (3) os floats apareciam como `0.100000001` — mostrados com 7 algarismos (digitar 0,1 grava o mesmo float).
+    - **Testes:** vitest 98/98 (8 novos em `lib/mascote.test.ts`, com os campos reais do realm_126: dano no nível 30 =
+      Vespão Pequeno 466 e Filhote de Lobo Feroz 332, o "Atq" da janela do mascote no jogo do B135; vida 780 e defesa 1.921
+      do Vespão pela conta à mão; nenhum mascote vence o Lobo-rei no nível 40); svelte-check 0 erros, 0 avisos; build ok.
+      Navegador (servidor de desenvolvimento do Estúdio com o proxy para o painel publicado, só leitura): 1.2.6 — busca (414
+      de combate), Filhote de Lobo Feroz em todas as abas, o Lobo-rei vence 100% das 400 lutas contra ele no nível 30, o
+      ranking no nível 40 (todos caem em ~5–7 s; o Raptor de Combate é o primeiro), Filhote × Vespão no nível 30 (60% a
+      40%); 1.5.5 — Rei Macaco (Evolução, ambiente 6): ficha com a parte de evolução e o modelo com as ações `_地面/_水中/_空中`
+      (consulta com `habitat=6`). Gravar no rascunho não foi exercitado (sem rascunho aberto nesta sessão).
+    - **Publicado** a pedido do Murillo: `pw-admin-api` reconstruído e no ar em 2026-11-03 17:26 (o Estúdio vai no Dockerfile
+      do painel; nenhum serviço Rust mudou; nenhum contêiner ficou para trás). Conferido no publicado (`localhost:8000`):
+      Filhote no nível 30 com 332 de dano, Lobo-rei vence 100% das 400 lutas, ranking no nível 40 com o Raptor de Combate em
+      primeiro.
+    - **Commit:** código em `15581e4`, documentação em `6f4ff2b` (na `studio-svelte`).

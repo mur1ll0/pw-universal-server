@@ -126,6 +126,21 @@ impl FonteDePacote for Pacotes {
         receber(b"maps\\world\\world_targets.txt".to_vec(), txt.gravar())?;
         // A Loja Gold real do 1.2.6 (B254): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\gshop.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/gshop.data")).unwrap())?;
+        // Estúdio G-Shop: o diálogo da loja como o do cliente 1.5.5 BR (`qshop.xml` em UTF-16, 8 abas com imagem
+        // própria e 8 botões de subaba) e a imagem solta da aba 0 (TGA de 32 bits 4×2).
+        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<DIALOG Name=\"Win_QShop\">\r\n");
+        for i in 0..8 {
+            xml += &format!("<STILLIMAGEBUTTON Name=\"Btn_MainType{i}\" Command=\"maintype{i}\">\r\n<Text String=\"Aba{i}\"/>\r\n<Resource>\r\n<FrameUpImage FileName=\"loja\\aba{i}n.tga\"/>\r\n<FrameDownImage FileName=\"loja\\aba{i}s.tga\"/>\r\n</Resource>\r\n</STILLIMAGEBUTTON>\r\n");
+        }
+        for i in -1..8 {
+            xml += &format!("<STILLIMAGEBUTTON Name=\"Btn_SubType{i}\" Command=\"subtype{i}\"></STILLIMAGEBUTTON>\r\n");
+        }
+        xml += "</DIALOG>\r\n";
+        let mut b = vec![0xFFu8, 0xFE];
+        xml.encode_utf16().for_each(|c| b.extend_from_slice(&c.to_le_bytes()));
+        receber(b"interfaces\\qshop.xml".to_vec(), b)?;
+        let aba = pw_data_loader::imagem::Imagem { largura: 4, altura: 2, rgba: (0..32).map(|x| x as u8 * 7).collect() };
+        receber(b"surfaces\\loja\\aba0n.tga".to_vec(), pw_data_loader::imagem::tga_32(&aba))?;
         // tasks.data (B255/B256): o cliente e o realm usam o mesmo arquivo.
         receber(b"data\\tasks.data".to_vec(), fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config/tasks.data")).unwrap())?;
         // Tabelas de texto (B260): uma indexada e uma sequencial, no formato do cliente.
@@ -256,6 +271,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("tasks.data"), realm.join("tasks.data")).expect("tasks do realm_126");
     // world_targets.sev real do 1.2.6, na raiz do config (B245).
     fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world_targets.sev"), realm.join("world_targets.sev")).expect("world_targets do realm_126");
+    // extra_drops.sev real do 1.2.6 (drop global do GS), na raiz do config.
+    fs::copy(npcgen.parent().unwrap().parent().unwrap().join("extra_drops.sev"), realm.join("extra_drops.sev")).expect("extra_drops do realm_126");
     let (chave, _) = Chave::carregar_ou_criar(&dados.join("_chave").join("k")).unwrap();
     let res = importar(&Importacao {
         versao: LINHA,
@@ -306,6 +323,52 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let id0 = lista["registros"][0]["id"].as_i64().unwrap();
         let por_id = json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("busca", &id0.to_string()).call().unwrap());
         assert_eq!(por_id["total"], 1);
+
+        // B376: colunas, faixas e ordenação valem sobre a tabela inteira, não só sobre a página.
+        let todos = |q: &[(&str, &str)]| -> (u64, Vec<Value>, Value) {
+            let (mut pagina, mut regs) = (0, Vec::new());
+            let ultima = loop {
+                let mut p = pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("por_pagina", "200").query("pagina", &pagina.to_string());
+                for (k, v) in q {
+                    p = p.query(k, v);
+                }
+                let r = json_de(p.call().unwrap());
+                let n = r["registros"].as_array().unwrap().len();
+                regs.extend(r["registros"].as_array().unwrap().iter().cloned());
+                if n < 200 {
+                    break r;
+                }
+                pagina += 1;
+            };
+            (ultima["total"].as_u64().unwrap(), regs, ultima)
+        };
+        let campo = |r: &Value, c: &str| r["campos"][c].as_f64().unwrap();
+        let (total_armas, todas, _) = todos(&[("colunas", "require_level,level")]);
+        assert_eq!(total_armas as usize, todas.len());
+        let esperado = todas.iter().filter(|r| (30.0..=40.0).contains(&campo(r, "require_level"))).count();
+        assert!(esperado > 0, "o elements do 1.2.6 tem armas de nível mínimo 30–40");
+        let (total, filtradas, r) = todos(&[
+            ("colunas", "require_level,level,id_sub_type,nao_existe"),
+            ("faixas", "require_level:30:40"),
+            ("ordem", "level"),
+        ]);
+        assert_eq!((total as usize, filtradas.len()), (esperado, esperado), "a faixa vale sobre a tabela inteira");
+        assert_eq!(r["colunas"], json!(["require_level", "level", "id_sub_type"]), "campo que a tabela não tem é ignorado");
+        assert_eq!(r["ordem"], "level");
+        assert!(filtradas.iter().all(|x| (30.0..=40.0).contains(&campo(x, "require_level"))));
+        assert!(filtradas.windows(2).all(|w| campo(&w[0], "level") <= campo(&w[1], "level")), "ordem crescente através das páginas");
+        // A subcategoria vem com o nome (WEAPON_SUB_TYPE, espaço ESSENCE) e as opções contam a tabela inteira.
+        assert!(filtradas.iter().all(|x| x["nomes"]["id_sub_type"].as_str().is_some_and(|n| !n.is_empty())));
+        let opcoes = r["opcoes"]["id_sub_type"].as_array().unwrap();
+        assert_eq!(opcoes.iter().map(|o| o["registros"].as_u64().unwrap()).sum::<u64>(), total_armas);
+        let (_, desc, _) = todos(&[("colunas", "level"), ("faixas", "require_level:30:40"), ("ordem", "-level")]);
+        assert!(desc.windows(2).all(|w| campo(&w[0], "level") >= campo(&w[1], "level")), "ordem decrescente");
+        assert_eq!(desc.len(), esperado, "filtrar por campo que não está nas colunas");
+        let sub = opcoes[0]["valor"].as_i64().unwrap();
+        let (n_sub, _, _) = todos(&[("faixas", &format!("id_sub_type:{sub}:{sub}"))]);
+        assert_eq!(n_sub, opcoes[0]["registros"].as_u64().unwrap(), "faixa mín.=máx. escolhe uma subcategoria");
+        assert_eq!(erro_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE").query("faixas", "level:x:1").call()).0, 400);
+
         let ficha = json_de(pedir("GET", "estudio/tabelas/WEAPON_ESSENCE/0").call().unwrap());
         let valor = |f: &Value, nome: &str| f["campos"].as_array().unwrap().iter().find(|c| c["nome"] == nome).unwrap()["valor"].clone();
         let (nome0, preco0) = (valor(&ficha, "Name"), valor(&ficha, "price"));
@@ -499,6 +562,63 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
             .send_json(json!({"operacao_id": "t_p4_r3"})).unwrap())["rascunho"].as_i64().unwrap();
         pedir("POST", "publicar").send_json(json!({"rascunhos": [rv]})).unwrap();
         assert_eq!(fs::read(realm2.join("world").join("npcgen.data")).unwrap(), npcgen_original, "reverter devolve o npcgen");
+
+        // Itens no Estúdio: área de recurso de uma mina real (NPCGENFILERESAREA) — a mina como o GS a monta, o material
+        // dela "sai das minas", e criar/mover/redimensionar/remover a área volta o npcgen byte a byte. A a01 não tem área
+        // de recurso: neste bloco o "world" do teste usa o npcgen do mapa principal do 1.2.6, devolvido no fim.
+        fs::copy(npcgen.parent().unwrap().parent().unwrap().join("world").join("npcgen.data"), realm2.join("world").join("npcgen.data"))
+            .expect("npcgen do mundo do realm_126");
+        let ng = json_de(pedir("GET", "estudio/mapas/world/npcgen").call().unwrap());
+        let recursos = ng["recursos"].as_array().unwrap().clone();
+        assert!(!recursos.is_empty(), "a a01 tem áreas de recurso");
+        // A primeira área cuja mina dá um material de verdade (mina de missão dá o item 0 e é válida no GS).
+        let mut achado = None;
+        for linha in recursos.iter().take(200) {
+            let ia = linha[0].as_u64().unwrap();
+            let ar = json_de(pedir("GET", &format!("estudio/mapas/world/npcgen/recursos/{ia}")).call().unwrap());
+            let Some(mina) = ar["filhos"][0]["idTemplate"].as_i64() else { continue };
+            let achada = json_de(pedir("GET", "estudio/espacos/ESSENCE").query("busca", &mina.to_string()).call().unwrap());
+            let Some(reg_mina) = achada.as_array().unwrap().iter().find(|a| a["id"] == mina && a["tabela"] == "MINE_ESSENCE").cloned() else { continue };
+            let gs = json_de(pedir("GET", &format!("estudio/minas/{}", reg_mina["indice"])).call().unwrap());
+            if gs["valida"] != true {
+                continue;
+            }
+            if let Some(material) = gs["mina"]["materiais"].as_array().unwrap().iter().filter_map(|m| m["item"]["id"].as_i64()).find(|&x| x > 0) {
+                achado = Some((ia, ar, mina, material));
+                break;
+            }
+        }
+        let (ia, ar, mina, material) = achado.expect("nenhuma área de recurso com mina que dá material");
+        let (x_ar, z_ar) = (ar["campos"]["vPos_x"].as_f64().unwrap(), ar["campos"]["vPos_z"].as_f64().unwrap());
+        let (ex_ar, ez_ar) = (ar["campos"]["fExtX"].as_f64().unwrap(), ar["campos"]["fExtZ"].as_f64().unwrap());
+        let usos = json_de(pedir("GET", &format!("estudio/usos/{material}")).call().unwrap_or_else(|e| panic!("usos: {}", erro_de(Err(e)).1)));
+        assert!(usos["minas"].as_array().unwrap().iter().any(|m| m["id"] == mina && m["valida"] == true && m["chance"].as_f64() > Some(0.0)), "{usos}");
+        assert_eq!(erro_de(pedir("GET", "estudio/usos/0").call()).0, 400);
+        let nasc = json_de(pedir("GET", "estudio/nascimentos").query("id", &mina.to_string()).call().unwrap());
+        assert!(nasc["locais"].as_array().unwrap().iter().any(|l| l["tipo"] == "recurso" && l["area"] == ia), "{nasc}");
+        let r8 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "areas de recurso", "operacao_id": "t_itens_r8"})).unwrap())["id"].as_i64().unwrap();
+        let em8 = |rel: &str| format!("{rel}?rascunho={r8}");
+        // Criar (clone), pôr no lugar novo com outro tamanho e 2 minas; mover a área original.
+        let nova = json_de(pedir("POST", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}/clonar"))).call().unwrap())["resultado"]["indice"].as_u64().unwrap();
+        assert_eq!(nova as usize, recursos.len());
+        pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}")))
+            .send_json(json!({"campos": {"vPos_x": x_ar + 20.0, "vPos_z": z_ar - 20.0, "fExtX": 30.0, "fExtZ": 40.0}, "filhos": [{"dwNumber": 2}]}))
+            .unwrap();
+        pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}"))).send_json(json!({"campos": {"vPos_x": x_ar + 5.0, "fExtX": ex_ar + 4.0}})).unwrap();
+        let an = json_de(pedir("GET", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}"))).call().unwrap());
+        assert_eq!((an["campos"]["fExtX"].as_f64(), an["campos"]["fExtZ"].as_f64()), (Some(30.0), Some(40.0)));
+        assert_eq!((an["filhos"][0]["idTemplate"].as_i64(), an["filhos"][0]["dwNumber"].as_u64()), (Some(mina), Some(2)));
+        let nasc8 = json_de(pedir("GET", "estudio/nascimentos").query("id", &mina.to_string()).query("rascunho", &r8.to_string()).call().unwrap());
+        assert!(nasc8["locais"].as_array().unwrap().iter().any(|l| l["tipo"] == "recurso" && l["area"] == nova && l["quantidade"] == 2), "{nasc8}");
+        // Desfazer: a original volta ao lugar e a nova sai — o npcgen do rascunho fica igual ao publicado, byte a byte.
+        let volta = json_de(pedir("PUT", &em8(&format!("estudio/mapas/world/npcgen/recursos/{ia}")))
+            .send_json(json!({"campos": {"vPos_x": x_ar, "vPos_z": z_ar, "fExtX": ex_ar, "fExtZ": ez_ar}})).unwrap());
+        assert_eq!(volta["igual_ao_publicado"], false, "a área nova ainda está lá");
+        let fim = json_de(pedir("DELETE", &em8(&format!("estudio/mapas/world/npcgen/recursos/{nova}"))).call().unwrap());
+        assert_eq!(fim["igual_ao_publicado"], true, "desfeito, o npcgen volta byte a byte: {fim}");
+        let ng8 = json_de(pedir("GET", &em8("estudio/mapas/world/npcgen")).call().unwrap());
+        assert_eq!(ng8["recursos"].as_array().unwrap().len(), recursos.len());
+        fs::write(realm2.join("world").join("npcgen.data"), &npcgen_original).unwrap();
 
         // Distritos e portais (B244): só ponto de renascer / chegada; carimbo intacto; publicar grava os dois.
         let sev = |f: &str| fs::read(realm2.join("world").join(f)).unwrap();
@@ -757,6 +877,26 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(mi["ficha"]["npc_que_entrega"], 3517, "{}", mi["ficha"]["name"]);
         assert!(mi["nomes"]["3517"]["nome"].is_string(), "o NPC 3517 tem nome: {}", mi["nomes"]);
         assert_eq!(erro_de(pedir("GET", "estudio/missoes/999999999").call()).0, 400);
+        // B392: resumo de missões por id e as que o tasks.data liga ao NPC (a 1173 é entregue pelo 3517).
+        let rm = json_de(pedir("GET", "estudio/missoes_resumo").query("ids", "1173,999999").query("npc", "3517").call().unwrap());
+        assert_eq!(rm["missoes"][0]["id"], 1173);
+        assert!(rm["missoes"][0]["nome"].is_string() && rm["missoes"][1]["ausente"] == json!(true), "{rm}");
+        assert!(rm["do_npc"]["entrega"].as_array().unwrap().iter().any(|m| m["id"] == 1173), "{}", rm["do_npc"]);
+        // B392: serviços de NPC com quem usa cada um e a busca pelo item vendido.
+        let lojas = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("por_pagina", "200").call().unwrap());
+        let regs = lojas["registros"].as_array().unwrap();
+        assert!(lojas["total"].as_u64().unwrap() > 10, "{}", lojas["total"]);
+        let usada = regs.iter().find(|r| r["npcs"].as_u64().unwrap() > 0 && r["resumo"]["itens"].as_u64().unwrap() > 0).expect("uma loja usada e com itens");
+        assert!(!usada["nomes_dos_npcs"].as_array().unwrap().is_empty());
+        let fl = json_de(pedir("GET", &format!("estudio/tabelas/NPC_SELL_SERVICE/{}", usada["indice"])).call().unwrap());
+        let item = fl["campos"].as_array().unwrap().iter().find_map(|c| c["referencia"]["nome"].as_str().filter(|n| n.chars().count() >= 2 && c["nome"].as_str().unwrap().contains("goods"))).expect("item com nome").to_string();
+        let pelo_item = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("busca", &item).query("por_pagina", "200").call().unwrap());
+        assert!(pelo_item["registros"].as_array().unwrap().iter().any(|r| r["indice"] == usada["indice"]), "busca por {item}");
+        let sem_uso = json_de(pedir("GET", "estudio/servicos/NPC_SELL_SERVICE").query("uso", "sem_uso").query("por_pagina", "200").call().unwrap());
+        assert!(sem_uso["registros"].as_array().unwrap().iter().all(|r| r["npcs"] == 0));
+        assert_eq!(erro_de(pedir("GET", "estudio/servicos/MONSTER_ESSENCE").call()).0, 400, "só tabelas NPC_*_SERVICE");
+        let tele = json_de(pedir("GET", "estudio/servicos/NPC_TRANSMIT_SERVICE").query("uso", "em_uso").call().unwrap());
+        assert!(tele["registros"].as_array().unwrap().iter().any(|r| r["resumo"]["destinos"].as_u64().unwrap() > 0), "{tele}");
         // Editar no lugar (B256): campos de tamanho fixo; publicar grava o mesmo tasks.data no cliente e no realm.
         assert!(mi["editaveis"].as_array().unwrap().iter().any(|c| c[0] == "min_level"));
         let r12 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "missão", "operacao_id": "t_p4_r12"})).unwrap())["id"].as_i64().unwrap();
@@ -890,6 +1030,9 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert!(estado("站立").unwrap().contains("sem ação-base"), "{fe}");
         assert!(estado("普攻1起").unwrap().contains("ausente no .smd"), "{fe}");
         assert!(estado("普攻1落").unwrap().contains("sem ação combinada"), "{fe}");
+        // B392: com `npc=true` o diagnóstico pede as ações ACT_NPC_* (índices 13–26): a tabela de teste só tem 7 nomes.
+        let fn_ = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("npc", "true").call().unwrap());
+        assert_eq!(fn_["diagnostico_de_monstro"].as_array().map(Vec::len), Some(0), "{}", fn_["diagnostico_de_monstro"]);
         // B365: ações de habilidade — o nome nativo do habilidades.pwsk (火球) + 吟唱/施放起/施放落; a 99 não está no .pwsk.
         let fh = json_de(pedir("GET", "estudio/modelos/ficha").query("caminho", ml["linhas"][0]["caminho"].as_str().unwrap()).query("habilidades", "1,99,0").call().unwrap());
         let dh = fh["diagnostico_de_habilidades"].as_array().unwrap_or_else(|| panic!("{fh}"));
@@ -921,6 +1064,41 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         }).expect("um NPC_TRANSMIT_SERVICE com destino");
         assert!(tp.iter().any(|d| d["existe_no_servidor"] == true && d["pos"].is_array() && d["preco"].is_number()), "{tp:?}");
         assert_eq!(erro_de(pedir("GET", "estudio/telas/MONSTER_ESSENCE/0").call()).0, 400);
+        // B369: de onde vem o item — o caminho inverso das telas: item da loja → a loja; item da receita → a receita e a
+        // forja que a tem; item do drop → o monstro.
+        let (loja, item_da_loja) = (0..60).find_map(|i| {
+            let tl = json_de(pedir("GET", &format!("estudio/telas/NPC_SELL_SERVICE/{i}")).call().ok()?);
+            let x = tl["paginas"].as_array()?.iter().flat_map(|p| p["itens"].as_array().cloned().unwrap_or_default()).next()?;
+            Some((i, x["item"]["id"].as_i64()?))
+        }).expect("loja com item");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{item_da_loja}")).call().unwrap());
+        assert!(o["vendido_por"].as_array().unwrap().iter().any(|v| v["tabela"] == "NPC_SELL_SERVICE" && v["indice"] == loja
+            && v["paginas"].as_array().is_some_and(|p| !p.is_empty()) && v["npcs"].is_array()), "{o}");
+        let (forja, receita, feito) = (0..60).find_map(|i| {
+            let tl = json_de(pedir("GET", &format!("estudio/telas/NPC_MAKE_SERVICE/{i}")).call().ok()?);
+            let x = tl["paginas"].as_array()?.iter().flat_map(|p| p["receitas"].as_array().cloned().unwrap_or_default())
+                .find(|x| x["faz"].as_array().is_some_and(|f| !f.is_empty()))?;
+            Some((i, x["receita"]["id"].as_i64()?, x["faz"][0]["item"]["id"].as_i64()?))
+        }).expect("forja com receita que faz item");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{feito}")).call().unwrap());
+        let r = o["forjado_por"].as_array().unwrap().iter().find(|r| r["id"] == receita).unwrap_or_else(|| panic!("receita {receita}: {o}"));
+        assert!(r["forjas"].as_array().unwrap().iter().any(|f| f["indice"] == forja && f["tabela"] == "NPC_MAKE_SERVICE"), "{r}");
+        let (monstro, caido) = (0..200).find_map(|i| {
+            let f = json_de(pedir("GET", &format!("estudio/tabelas/MONSTER_ESSENCE/{i}")).call().ok()?);
+            let v = f["campos"].as_array()?.iter().find(|c| c["nome"].as_str().is_some_and(|n| n.starts_with("drop_matters_") && n.ends_with("_id"))
+                && c["valor"].as_i64().is_some_and(|x| x > 0))?["valor"].as_i64()?;
+            Some((i, v))
+        }).expect("monstro com drop");
+        let o = json_de(pedir("GET", &format!("estudio/origens/{caido}")).call().unwrap());
+        assert!(o["dropado_de"].as_array().unwrap().iter().any(|m| m["indice"] == monstro && m["chance"].is_number()), "{o}");
+        assert!(o["recompensa_de"].is_array() && o["loja_gold"].is_array(), "{o}");
+        // Drop global: a última tabela do extra_drops.sev do 1.2.6 dá o 12962 a 10 chefes, 1 item por morte, chance 1.
+        let g = json_de(pedir("GET", "estudio/origens/12962").call().unwrap());
+        let gl = g["dropado_de_global"].as_array().unwrap();
+        assert_eq!(gl.len(), 10, "{g}");
+        assert!(gl.iter().all(|m| m["tabela_global"] == 14 && m["tipo"] == "soma" && (m["chance"].as_f64().unwrap() - 1.0).abs() < 1e-6), "{g}");
+        assert!(g["dropado_de_global_erro"].is_null(), "{g}");
+        assert_eq!(erro_de(pedir("GET", "estudio/origens/0").call()).0, 400);
         // B280: corrigir — criar 普攻1落 clonando 普攻1起 (no rascunho); a ficha com o rascunho já não acusa a falta.
         let ecm_cam = ml["linhas"][0]["caminho"].as_str().unwrap().to_string();
         let r16 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "ação", "operacao_id": "t_p4_r16"})).unwrap())["id"].as_i64().unwrap();
@@ -1160,6 +1338,124 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "nova.ski").send_bytes(&gm)).0, 400, "o .smd já a cita");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "caixa.ski").send_bytes(&gm)).0, 400, "já existe no cliente");
         assert_eq!(erro_de(pedir("POST", "estudio/modelos/pele_nova").query("rascunho", &ri.to_string()).query("smd", &smd).query("nome", "a\\b.ski").send_bytes(&gm)).0, 400, "só o nome");
+        // B380: "Exportar GLB" do .ecm com todas as ações-base (no rascunho, o .smd tem "andar", do B295): malha,
+        // esqueleto e a animação com o nome do cliente em extras.angelica.nome.
+        let ler_glb = |rel: ureq::Request| -> Vec<u8> {
+            let mut b = Vec::new();
+            std::io::Read::read_to_end(&mut rel.call().unwrap().into_reader(), &mut b).unwrap();
+            b
+        };
+        let doc_de = |g: &[u8]| -> Value {
+            let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
+            serde_json::from_slice(&g[20..20 + nj]).unwrap()
+        };
+        // O mesmo GLB com o JSON mudado (BIN igual) — o que o Blender devolveria com outro nome ou outro esqueleto.
+        // O GLB com o JSON (e o BIN) mudados — o que o Blender devolveria com outro nome, outro esqueleto ou animado.
+        let reempacotar = |g: &[u8], mudar: &dyn Fn(&mut Value, &mut Vec<u8>)| -> Vec<u8> {
+            let nj = u32::from_le_bytes(g[12..16].try_into().unwrap()) as usize;
+            let mut d: Value = serde_json::from_slice(&g[20..20 + nj]).unwrap();
+            let mut bin = g[20 + nj + 8..].to_vec();
+            mudar(&mut d, &mut bin);
+            d["buffers"][0]["byteLength"] = json!(bin.len());
+            let mut t = serde_json::to_vec(&d).unwrap();
+            while t.len() % 4 != 0 { t.push(b' '); }
+            let mut s = b"glTF".to_vec();
+            s.extend_from_slice(&2u32.to_le_bytes());
+            s.extend_from_slice(&((12 + 8 + t.len() + 8 + bin.len()) as u32).to_le_bytes());
+            s.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            s.extend_from_slice(b"JSON");
+            s.extend_from_slice(&t);
+            s.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            s.extend_from_slice(b"BIN\0");
+            s.extend_from_slice(&bin);
+            s
+        };
+        let rs = ri.to_string();
+        let gt = ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("todas", "true").query("rascunho", &rs));
+        let dt = doc_de(&gt);
+        // O osso do modelo sintético não tem junta (`primeira_junta` −1): nenhuma trilha se aplica e a ação "andar" (B295)
+        // não vira animação — com modelos reais, `importar::testes::acoes_ida_e_volta` (várias ações, nome legível).
+        assert!(dt["meshes"].is_array() && dt["skins"][0]["joints"].as_array().is_some_and(|j| j.len() == 2), "malha e esqueleto juntos: {dt}");
+        // Uma animação em "raiz" com nome legível e sem extras (a rotação de 90° em 1 s do B295): volta como "andar".
+        let animado = |nome: &'static str| move |d: &mut Value, bin: &mut Vec<u8>| {
+            let o = bin.len();
+            bin.extend([0.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.7071, 0.0, 0.7071].iter().flat_map(|x| x.to_le_bytes()));
+            let (nv, na) = (d["bufferViews"].as_array().unwrap().len(), d["accessors"].as_array().unwrap().len());
+            d["bufferViews"].as_array_mut().unwrap().extend([json!({ "buffer": 0, "byteOffset": o, "byteLength": 8 }), json!({ "buffer": 0, "byteOffset": o + 8, "byteLength": 32 })]);
+            d["accessors"].as_array_mut().unwrap().extend([json!({ "bufferView": nv, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] }), json!({ "bufferView": nv + 1, "componentType": 5126, "count": 2, "type": "VEC4" })]);
+            let raiz = d["nodes"].as_array().unwrap().iter().position(|n| n["name"] == "raiz").unwrap();
+            d["animations"] = json!([{ "name": nome, "channels": [{ "sampler": 0, "target": { "node": raiz, "path": "rotation" } }], "samplers": [{ "input": na, "output": na + 1 }] }]);
+        };
+        let legivel = reempacotar(&gt, &animado("Andando · andar"));
+        let ia = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes").send_bytes(&legivel).unwrap());
+        assert_eq!((ia["resultado"]["acoes"][0]["nome"].as_str(), ia["resultado"]["acoes_do_modelo"].as_u64()), (Some("andar"), Some(1)), "{ia}");
+        // O .smd v8 passa a citar a pasta das trilhas onde a .stck foi gravada (`A3DSkinModelMan.cpp:214-224`): a prévia
+        // da ação (com o rascunho) acha a .stck — antes, 400 ("\andar.stck" fora da pasta).
+        let (sa, ma) = erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").query("rascunho", &rs).call());
+        assert_eq!(sa, 200, "{ma}");
+        let outro_esq = reempacotar(&gt, &|d, _| {
+            for n in d["nodes"].as_array_mut().unwrap() { if n["name"] == "raiz" { n["name"] = json!("outro_osso"); } }
+        });
+        let (s, m) = erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes").send_bytes(&outro_esq));
+        assert!(s == 400 && m.contains("esqueleto do GLB não é o do modelo") && m.contains("raiz") && m.contains("tudo"), "{s} {m}");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo").send_bytes(&outro_esq)).0, 400, "modelo também exige o esqueleto");
+        assert_eq!(erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "x").send_bytes(&gt)).0, 400, "modo");
+        // Só o modelo: a pele <.ecm>.ski (caixa.ski, a que o jogo põe no monstro) com a malha do GLB; as ações ficam.
+        let im = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo").send_bytes(&gt).unwrap());
+        assert_eq!((im["resultado"]["malhas"].as_u64(), im["resultado"]["esqueleto"].as_str().map(|x| x.to_lowercase())), (Some(1), Some("models\\teste\\caixa.bon".into())), "{im}");
+        // B383: equipamento — conferir sem gravar (relatório, ganchos do esqueleto) e importar na 1ª pele do .smd.
+        let cv = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo")
+            .query("como", "equipamento").query("validar", "true").send_bytes(&gt).unwrap());
+        assert!(cv["validacao"] == true && cv["resultado"]["malhas"] == 1 && cv["resultado"]["relatorio"].is_array() && cv["resultado"]["ganchos"].is_array(), "{cv}");
+        let ie = json_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "modelo")
+            .query("como", "equipamento").send_bytes(&gt).unwrap());
+        let pele_do_smd = ie["pele"].as_str().unwrap_or("").to_lowercase();
+        assert!(pele_do_smd.starts_with("models\\teste\\") && pele_do_smd.ends_with(".ski"), "{ie}");
+        let (sv, mv) = erro_de(pedir("POST", "estudio/modelos/importar_glb").query("rascunho", &rs).query("caminho", &ecm_cam).query("modo", "animacoes")
+            .query("validar", "true").send_bytes(&outro_esq));
+        assert_eq!(sv, 400, "conferir também exige o esqueleto: {mv}");
+        // O GLB do equipamento (peles do .smd) e o das peles escolhidas sobre o esqueleto do .ecm.
+        let ge = doc_de(&ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("como", "equipamento").query("rascunho", &rs)));
+        assert!(ge["meshes"].as_array().is_some_and(|m| !m.is_empty()), "{ge}");
+        let gp = doc_de(&ler_glb(pedir("GET", "estudio/modelos/glb").query("caminho", &ecm_cam).query("peles", &pele_do_smd).query("rascunho", &rs)));
+        assert_eq!(gp["meshes"].as_array().map(|m| m.len()), Some(1), "{gp}");
+        // "Tudo" de arma: o GLB sem o gancho CC_weapon é recusado com o que fazer no Blender; conferir não grava nada.
+        let (sg, mg) = erro_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_arma").query("titulo", "espada")
+            .query("ganchos", "CC_weapon,CC_qiu").send_bytes(&gm));
+        assert!(sg == 400 && mg.contains("CC_weapon ou CC_qiu") && mg.contains("Blender"), "{sg} {mg}");
+        let nv = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_arma").query("titulo", "espada")
+            .query("validar", "true").send_bytes(&gm).unwrap());
+        assert!(nv["validacao"] == true && nv["resultado"]["ossos"] == 1, "{nv}");
+        assert_eq!(erro_de(pedir("GET", "estudio/modelos/ficha").query("caminho", "models\\teste_arma\\espada.ecm").query("rascunho", &rs).call()).0 / 100, 4, "conferir não grava");
+        // A pele de armadura/moda: grupos do binário (masculino: comum e Bárbaro) e realname inválido.
+        let pe = json_de(pedir("GET", "estudio/equipamentos/pele").query("realname", "紫金胸甲").query("genero", "0").call().unwrap());
+        let grupos: Vec<&str> = pe["grupos"].as_array().unwrap().iter().filter_map(|g| g["grupo"].as_str()).collect();
+        assert_eq!(grupos, ["男通用", "妖兽"], "{pe}");
+        assert_eq!(pe["grupos"][0]["arquivos"][0]["caminho"].as_str(), Some("Models\\Players\\装备\\男\\紫金胸甲\\男通用紫金胸甲一级.ski"), "{pe}");
+        assert_eq!(erro_de(pedir("GET", "estudio/equipamentos/pele").query("realname", "a\\b").query("genero", "0").call()).0, 400);
+        assert_eq!(erro_de(pedir("POST", "estudio/equipamentos/pele").query("rascunho", &rs).query("realname", "x").query("genero", "1").query("grupo", "妖兽").send_bytes(&gm)).0, 400, "Bárbaro só masculino");
+        // Sem uso: caixa.ecm sai (nenhum registro o cita); o .smd fica (doador.ecm usa), e com ele caixa.ski e o .bon.
+        // (No rascunho r16, que já tem o caixa.ecm: um caminho só fica em um rascunho aberto — 409 em outro.)
+        let su = json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={r16}")).send_json(json!({"caminho": ecm_cam})).unwrap());
+        let tirados: Vec<String> = su["removidos"].as_array().unwrap().iter().map(|x| x["caminho"].as_str().unwrap().to_lowercase()).collect();
+        assert_eq!(tirados, [ecm_cam.to_lowercase()], "{su}");
+        assert!(su["mantidos"].as_array().unwrap().iter().any(|x| x["motivo"] == "outro .ecm usa o mesmo .smd"), "{su}");
+        // O modelo do B298 (só no rascunho) sai do rascunho — .ecm, .smd, .bon, .ski —, mas a textura em Textures\ fica:
+        // um segundo modelo novo na mesma pasta (só no rascunho) a usa.
+        let mn2 = json_de(pedir("POST", "estudio/modelos/novo").query("rascunho", &rs).query("pasta", "models/teste_novo").query("titulo", "boneco2").send_bytes(&gm).unwrap());
+        assert_eq!(mn2["resultado"]["ecm"].as_str(), Some("models\\teste_novo\\boneco2.ecm"), "{mn2}");
+        let sb =json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={rs}")).send_json(json!({"caminho": "models\\teste_novo\\boneco.ecm"})).unwrap());
+        let mut tb: Vec<String> = sb["removidos"].as_array().unwrap().iter().map(|x| format!("{} {}", x["caminho"].as_str().unwrap().to_lowercase(), x["acao"].as_str().unwrap())).collect();
+        tb.sort();
+        assert_eq!(tb, ["models\\teste_novo\\boneco.bon tirado do rascunho", "models\\teste_novo\\boneco.ecm tirado do rascunho", "models\\teste_novo\\boneco.ski tirado do rascunho",
+            "models\\teste_novo\\boneco.smd tirado do rascunho"], "{sb}");
+        assert!(sb["mantidos"].as_array().unwrap().iter().any(|x| x["caminho"].as_str().is_some_and(|c| c.to_lowercase().ends_with("textures\\caixa.dds"))), "{sb}");
+        // Um modelo citado no elements fica: o 1º registro com `file_model` não vazio.
+        let fm0 = json_de(pedir("GET", "estudio/tabelas/MONSTER_ESSENCE/0").call().unwrap());
+        if let Some(cit) = fm0["campos"].as_array().and_then(|c| c.iter().find(|x| x["nome"] == "file_model")).and_then(|x| x["valor"].as_str()).filter(|x| !x.is_empty()) {
+            let sc = json_de(pedir("POST", &format!("estudio/modelos/sem_uso?rascunho={rs}")).send_json(json!({"caminho": cit})).unwrap());
+            assert!(sc["removidos"].as_array().unwrap().is_empty() && sc["usado_por"]["tabela"].is_string(), "{sc}");
+        }
         // B276: a ação (o .smd sintético não tem nenhuma) — pedir uma que não existe → 400.
         assert_eq!(fm["lista_de_acoes"].as_array().map(|x| x.len()), Some(0), "{fm}");
         assert_eq!(erro_de(pedir("GET", "estudio/modelos/glb").query("caminho", &smd).query("acao", "andar").call()).0, 400);
@@ -1199,10 +1495,11 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
 
         // Loja Gold (B254): ofertas do gshop.data; editar preço e nome, clonar, remover; publicar grava o cliente e o
         // realm (item "ambos") com o carimbo intacto.
+        // B393: 670 desde 2026-11-01 23:12 (publicação pelo G-Shop do Estúdio; o Murillo testou o G-Shop e aprovou em 2026-11-03).
         let lj = json_de(pedir("GET", "estudio/loja/gshop.data").call().unwrap());
-        assert_eq!((lj["formato"].as_str(), lj["ofertas"].as_array().unwrap().len(), lj["categorias"].as_array().unwrap().len()), (Some("V126"), 668, 8), "{}", lj["formato"]);
+        assert_eq!((lj["formato"].as_str(), lj["ofertas"].as_array().unwrap().len(), lj["categorias"].as_array().unwrap().len()), (Some("V126"), 670, 8), "{}", lj["formato"]);
         let comitem = lj["ofertas"].as_array().unwrap().iter().filter(|o| o[7].is_string()).count();
-        assert!(comitem * 10 >= 668 * 9, "{comitem} ofertas com o item no elements");
+        assert!(comitem * 10 >= 670 * 9, "{comitem} ofertas com o item no elements");
         assert_eq!(erro_de(pedir("GET", "estudio/loja/outra.data").call()).0, 400);
         let of0 = json_de(pedir("GET", "estudio/loja/gshop.data/0").call().unwrap());
         let carimbo0 = lj["carimbo"].as_u64().unwrap();
@@ -1211,8 +1508,8 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         assert_eq!(erro_de(pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"szName": "x".repeat(40)}}))).0, 400);
         pedir("PUT", &em11("estudio/loja/gshop.data/0")).send_json(json!({"campos": {"buy_0_price": 777, "szName": "Oferta do Estúdio"}})).unwrap();
         let cl = json_de(pedir("POST", &em11("estudio/loja/gshop.data")).send_json(json!({"base": 0})).unwrap());
-        assert_eq!(cl["resultado"]["indice"], 668);
-        pedir("DELETE", &em11("estudio/loja/gshop.data/668")).call().unwrap();
+        assert_eq!(cl["resultado"]["indice"], 670);
+        pedir("DELETE", &em11("estudio/loja/gshop.data/670")).call().unwrap();
         let of1 = json_de(pedir("GET", &em11("estudio/loja/gshop.data/0")).call().unwrap());
         assert_eq!((of1["campos"]["buy_0_price"].as_u64(), of1["campos"]["szName"].as_str()), (Some(777), Some("Oferta do Estúdio")));
         assert_eq!(of1["campos"]["id"], of0["campos"]["id"]);
@@ -1229,9 +1526,61 @@ async fn editar_o_elements_pelo_estudio_e_publicar_no_realm() {
         let no_realm = fs::read(realm2.join("gshop.data")).unwrap();
         assert_eq!(no_realm, baixar("data\\gshop.data"), "cliente e realm com o mesmo arquivo");
         let g = pw_data_loader::gshop_editavel::GshopEditavel::ler(&no_realm).unwrap();
-        assert_eq!((g.ofertas.len(), g.carimbo as u64), (668, carimbo0));
+        assert_eq!((g.ofertas.len(), g.carimbo as u64), (670, carimbo0));
         let loja_do_gs = pw_data_loader::gshop::GShopData::load_from_bytes(&no_realm).unwrap();
         assert_eq!(loja_do_gs.ofertas[0].opcoes[0].preco, 777, "o leitor do GS vê o preço novo");
+
+        // Estúdio G-Shop: colunas da vitrine, abas do diálogo, imagens, conferência, adicionar/mover/remover.
+        let lj3 = json_de(pedir("GET", "estudio/loja/gshop.data").call().unwrap());
+        assert_eq!((lj3["colunas"].as_array().unwrap().len(), lj3["ofertas"][0].as_array().unwrap().len()), (15, 15));
+        assert!(lj3["conferencias"].is_object());
+        let abas = json_de(pedir("GET", "estudio/loja/gshop.data/abas").call().unwrap());
+        let t0 = &abas["temas"][0];
+        assert_eq!((t0["botoes_de_aba"].as_u64(), t0["botoes_de_subaba"].as_u64(), t0["imagem_compartilhada"].as_bool()), (Some(8), Some(8), Some(false)), "{abas}");
+        assert_eq!(t0["abas"][0]["imagens"]["normal"]["medida"], json!({"largura": 4, "altura": 2}));
+        assert_eq!((t0["abas"][0]["texto_do_dialogo"].as_str(), t0["abas"][1]["imagens"]["normal"]["existe"].as_bool()), (Some("Aba0"), Some(false)));
+        let mut png0 = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", "loja\\aba0n.tga").call().unwrap().into_reader(), &mut png0).unwrap();
+        assert!(png0.starts_with(b"\x89PNG"), "imagem da aba em PNG");
+        let r15 = json_de(pedir("POST", "rascunhos").send_json(json!({"descricao": "gshop", "operacao_id": "t_p4_gshop"})).unwrap())["id"].as_i64().unwrap();
+        let em15 = |rel: &str| format!("{rel}?rascunho={r15}");
+        // Adicionar no fim (cópia da 0 com aba/subaba novas), mover de aba e remover: o arquivo volta byte a byte.
+        let id0 = of0["campos"]["id"].clone();
+        let nova = match pedir("POST", &em15("estudio/loja/gshop.data")).send_json(json!({"base": 0, "campos": {"main_type": 1, "sub_type": 0, "id": id0}})) {
+            Ok(r) => json_de(r),
+            Err(e) => panic!("nova oferta recusada: {:?}", erro_de(Err(e))),
+        };
+        assert_eq!(nova["resultado"]["indice"], 670);
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data")).send_json(json!({"base": 0, "campos": {"main_type": 9}}))).0, 400, "aba inexistente");
+        pedir("PUT", &em15("estudio/loja/gshop.data/670")).send_json(json!({"campos": {"main_type": 2, "sub_type": 1}})).unwrap();
+        let movida = json_de(pedir("GET", &em15("estudio/loja/gshop.data")).call().unwrap());
+        assert_eq!((movida["ofertas"][670][1].as_i64(), movida["ofertas"][670][2].as_i64()), (Some(2), Some(1)));
+        assert_eq!(erro_de(pedir("PUT", &em15("estudio/loja/gshop.data/670")).send_json(json!({"campos": {"sub_type": 40}}))).0, 400, "subaba inexistente");
+        let conf = json_de(pedir("POST", "estudio/loja/gshop.data/0/conferir").send_json(json!({"campos": {"main_type": 8}})).unwrap());
+        assert!(conf["erros"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("aba 8")), "{conf}");
+        let fim = json_de(pedir("DELETE", &em15("estudio/loja/gshop.data/670")).call().unwrap());
+        assert_eq!(fim["igual_ao_publicado"], true, "adicionar, mover e remover volta ao arquivo publicado byte a byte");
+        // Subaba nova além dos 8 botões do diálogo: recusada (a aba 1 do 1.2.6 já tem 8).
+        assert_eq!(lj3["categorias"][1]["subcategorias"].as_array().unwrap().len(), 8);
+        let (st, msg) = erro_de(pedir("POST", &em15("estudio/loja/gshop.data/categorias")).send_json(json!({"acao": "nova", "categoria": 1, "nome": "Nona"})));
+        assert!(st == 400 && msg.contains("botões de subaba"), "{st} {msg}");
+        // Imagem da aba: PNG do mesmo tamanho vira TGA de 32 bits; outro tamanho é recusado.
+        let png = |w: u32, h: u32| pw_recursos::mapas::png(w, h, &vec![200u8; (w * h * 4) as usize]).unwrap();
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data/abas/0/imagem")).query("estado", "normal").send_bytes(&png(3, 3))).0, 400);
+        pedir("POST", &em15("estudio/loja/gshop.data/abas/0/imagem")).query("estado", "normal").send_bytes(&png(4, 2)).unwrap();
+        let mut no_rascunho = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", "loja\\aba0n.tga").query("rascunho", &r15.to_string()).call().unwrap().into_reader(), &mut no_rascunho).unwrap();
+        assert_ne!(no_rascunho, png0, "o rascunho tem a imagem nova");
+        // Imagem própria da oferta: 128×128 vira um DDS novo em surfaces\百宝阁\ e o `icon` aponta para ele.
+        assert_eq!(erro_de(pedir("POST", &em15("estudio/loja/gshop.data/0/imagem")).send_bytes(&png(64, 64))).0, 400);
+        let im = json_de(pedir("POST", &em15("estudio/loja/gshop.data/0/imagem")).send_bytes(&png(128, 128)).unwrap());
+        let of_im = json_de(pedir("GET", &em15("estudio/loja/gshop.data/0")).call().unwrap());
+        let icon = of_im["campos"]["icon"].as_str().unwrap().to_string();
+        assert!(icon.starts_with("Surfaces\\百宝阁\\estudio_") && im["caminho"].as_str().unwrap().ends_with(&icon[9..]), "{icon} {im}");
+        let mut dds = Vec::new();
+        std::io::Read::read_to_end(&mut pedir("GET", "estudio/imagem").query("caminho", &icon).query("rascunho", &r15.to_string()).call().unwrap().into_reader(), &mut dds).unwrap();
+        assert!(dds.starts_with(b"\x89PNG"));
+        pedir("POST", &format!("rascunhos/{r15}/descartar")).send_json(json!({})).unwrap();
 
         // Altura do chão (B248): o realm do teste não tem .hmap — a rota responde sem altura; coordenada inválida é 400.
         let al = json_de(pedir("GET", "estudio/mapas/world/altura").query("x", "10").query("z", "-20").call().unwrap());

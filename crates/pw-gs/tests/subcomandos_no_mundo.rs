@@ -1865,6 +1865,16 @@ async fn morrer_pelo_monstro(
     link: &mut pw_bus::transport::BusConnection,
     roleid: i32,
 ) -> Vec<Vec<u8>> {
+    morrer_pelo_monstro_com(mundo, link, roleid, false).await
+}
+
+/// `golpeando`: morre com a sessão de golpe ainda aberta (o WB do relato de 2026-10-25).
+async fn morrer_pelo_monstro_com(
+    mundo: &Arc<RwLock<WorldInstance>>,
+    link: &mut pw_bus::transport::BusConnection,
+    roleid: i32,
+    golpeando: bool,
+) -> Vec<Vec<u8>> {
     {
         let mut m = mundo.write().await;
         m.mover_jogador(roleid, Vector3::new(5.0, 0.0, 5.0));
@@ -1886,7 +1896,9 @@ async fn morrer_pelo_monstro(
     .await
     .unwrap();
     receber(link, 3).await; // HOST_START_ATTACK + ATTACK_ONCE + HOST_ATTACKRESULT
-    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    if !golpeando {
+        mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().ataque = None;
+    }
     let morreu = tickar_ate(mundo, |m| m.players.get(&(roleid as i64)).is_some_and(|p| p.hp == 0)).await;
     assert!(morreu, "o jogador não chegou a zero");
     let mut vistos = Vec::new();
@@ -1961,6 +1973,38 @@ async fn morrer_voando_ou_montado_pousa_e_desmonta_antes_do_aviso_de_morte() {
     assert!(desmontou < recolheu && recolheu < cmds.len() - 1, "ordem: {cmds:?}");
     assert!(!cmds.contains(&97), "não voava: não há pouso");
     assert!(mundo.read().await.players[&(roleid as i64)].montaria.is_none(), "continuou montado morto");
+}
+
+/// B382 — quem morre golpeando recebe `HOST_STOPATTACK` (23, motivo 0) **antes** do `HOST_DIED`:
+/// `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `session_normal_attack::EndSession` →
+/// `stop_attack(_stop_flag = 0)` (`actsession.cpp:383-391`). Sem ele o cliente segue com `m_bMelee`, adia o
+/// `WORK_DEAD` e o `PLAYER_REVIVAL` não o tira da morte (`EC_HostPlayer.cpp:4107-4111`). Depois de
+/// reviver, o golpe não volta sozinho.
+#[tokio::test]
+async fn morrer_golpeando_encerra_o_golpe_antes_do_aviso_de_morte() {
+    let (mundo, addr, roleid, _convidado) = cenario!();
+    let mut link = entrar(&mundo, addr, roleid).await;
+    let vistos = morrer_pelo_monstro_com(&mundo, &mut link, roleid, true).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    let parou = cmds.iter().rposition(|&c| c == 23).unwrap_or_else(|| panic!("sem HOST_STOPATTACK: {cmds:?}"));
+    assert_eq!(parou, cmds.len() - 2, "o HOST_STOPATTACK vem logo antes do HOST_DIED: {cmds:?}");
+    assert_eq!(vistos[parou].len(), 6, "cmd_host_stop_attack: 2 + 4 B");
+    assert_eq!(i32_em(&vistos[parou], 2), 0, "o _stop_flag de quem morreu é 0");
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none());
+    link.enviar(BusMessage::ClientToGame {
+        roleid,
+        localsid: LOCALSID,
+        data: subcomando(ids::REVIVE_VILLAGE, &0i32.to_le_bytes()),
+    })
+    .await
+    .unwrap();
+    let _ = esperar_comando(&mut link, 29).await;
+    assert!(mundo.read().await.players[&(roleid as i64)].ataque.is_none(), "o golpe voltou depois de reviver");
+
+    // Sem golpe aberto, nenhum HOST_STOPATTACK de sobra.
+    let vistos = morrer_pelo_monstro(&mundo, &mut link, roleid).await;
+    let cmds: Vec<u16> = vistos.iter().map(|d| cmd_de(d)).collect();
+    assert_ne!(cmds[cmds.len() - 2], 23, "HOST_STOPATTACK sem golpe aberto: {cmds:?}");
 }
 
 #[tokio::test]
@@ -9975,7 +10019,18 @@ async fn esperar_comando_por(link: &mut pw_bus::transport::BusConnection, id: u1
 /// (`gs/playercmd.cpp:4879-4910`).
 #[tokio::test]
 async fn o_gm_alterna_invencivel_e_invisivel() {
-    let (mundo, addr, roleid, _convidado) = cenario!();
+    conferir_gm_alterna_invencivel_e_invisivel(GameVersion::V1_5_5).await;
+}
+
+/// B389 — o 1.2.6 manda os mesmos 204/205 e espera os mesmos 175/176 de 1 byte; antes o
+/// `v126` devolvia `None` e o cliente nunca sabia que o GM ficou invencível ou invisível.
+#[tokio::test]
+async fn o_gm_alterna_invencivel_e_invisivel_126() {
+    conferir_gm_alterna_invencivel_e_invisivel(GameVersion::V1_2_6).await;
+}
+
+async fn conferir_gm_alterna_invencivel_e_invisivel(versao: GameVersion) {
+    let (mundo, addr, roleid, _convidado) = cenario!(versao);
     let repo = mundo.read().await.char_repo.clone();
     let conta = repo
         .get_details_por_role(roleid)
@@ -10139,6 +10194,80 @@ async fn conferir_pedras_e_refino(versao: GameVersion) {
     assert_eq!(c4.furos, vec![0, 0], "o segundo furo");
     let resto = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 6).await.unwrap();
     assert_eq!(resto.map(|i| i.count), Some(10), "weapon_slot_material_count[1][0] = 10");
+}
+
+/// B379 — Avaliar (serviço 17, `identify_executor`): `{ int iSlot; int tidItem; }`. Os efeitos a avaliar
+/// (`item_addon_random`, id 336) viram efeitos da lista `rands`; cobra a taxa do NPC (`SPEND_MONEY`), reenvia o item
+/// (`OWN_ITEM_INFO`) e responde `ITEM_IDENTIFY` (162) com 0. Sem efeito a avaliar: `ERR_SERVICE_ERR_REQUEST` (15) e
+/// `ITEM_IDENTIFY` 2, sem cobrar. Sem dinheiro: `ERR_OUT_OF_FUND` (16).
+async fn conferir_avaliar(versao: GameVersion) {
+    let Some((mundo, addr, roleid, _)) = montar(versao).await else { return };
+    let mut link = entrar(&mundo, addr, roleid).await;
+    {
+        let mut m = mundo.write().await;
+        let dados = Arc::make_mut(&mut m.data_manager);
+        dados.geracao.get_mut(&(ARMA_GERADA as u32)).unwrap().addons_da_producao = vec![(300, 1.0)];
+        dados.addons.por_id.insert(
+            336,
+            pw_data_loader::addons::DadosDoAddon { tratador: "item_addon_random".into(), num_params: 0, params: [0, 0, 0], familias: None },
+        );
+        dados.servicos_de_npc.get_mut(&TEMPLATE_DO_NPC).unwrap().avaliar = Some(50);
+        let p = m.players.get_mut(&(roleid as i64)).unwrap();
+        p.npc_em_conversa = Some(NPC);
+        p.money = 1000;
+    }
+    let itens = mundo.read().await.char_repo.item_repo().clone();
+    let ficha = mundo.read().await.data_manager.equipamentos.ficha(ARMA_GERADA as u32).unwrap();
+    let a_avaliar = pw_core::AddonDoItem::novo(336, vec![]);
+    let mut bloco = pw_core::ConteudoDeEquipamento::novo(ficha.clone(), 100, 100);
+    bloco.addons = vec![a_avaliar.clone(), a_avaliar];
+    let mut arma = peca(roleid, pw_core::ContainerType::Inventory, 3, ARMA_GERADA, 100, 100);
+    arma.octets = bloco.escrever();
+    itens.upsert_item(&arma).await.unwrap();
+    let pedido = |slot: i32| {
+        let mut c = slot.to_le_bytes().to_vec();
+        c.extend_from_slice(&ARMA_GERADA.to_le_bytes());
+        BusMessage::ClientToGame { roleid, localsid: LOCALSID, data: pedido_ao_npc(17, &c) }
+    };
+
+    link.enviar(pedido(3)).await.unwrap();
+    let gasto = esperar_comando(&mut link, 77).await;
+    assert_eq!(i32_em(&gasto, 2), 50, "SPEND_MONEY: a taxa do NPC_IDENTIFY_SERVICE");
+    let info = esperar_comando(&mut link, 40).await;
+    assert_eq!(i32_em(&info, 4), ARMA_GERADA, "OWN_ITEM_INFO do item avaliado");
+    let r = esperar_comando(&mut link, 162).await;
+    assert_eq!(&r[2..], &[3, 0], "ITEM_IDENTIFY: slot 3, avaliado");
+    let i = itens.get_item_by_slot(roleid, pw_core::ContainerType::Inventory, 3).await.unwrap().expect("a arma");
+    let c = pw_core::ConteudoDeEquipamento::ler(&i.octets, &ficha).expect("bloco avaliado");
+    assert_eq!(c.addons, vec![pw_core::AddonDoItem { tipo: 300 | 1 << 13, args: vec![9] }; 2], "os dois 336 viram 300");
+    assert_eq!(mundo.read().await.players.get(&(roleid as i64)).unwrap().money, 950);
+
+    // De novo: nada a avaliar — erro 15 e resultado 2, sem cobrar.
+    link.enviar(pedido(3)).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 15, "ERR_SERVICE_ERR_REQUEST");
+    let r = esperar_comando(&mut link, 162).await;
+    assert_eq!(&r[2..], &[3, 2]);
+    assert_eq!(mundo.read().await.players.get(&(roleid as i64)).unwrap().money, 950);
+
+    // Sem dinheiro: ERR_OUT_OF_FUND.
+    let mut outra = arma.clone();
+    outra.slot = 4;
+    itens.upsert_item(&outra).await.unwrap();
+    mundo.write().await.players.get_mut(&(roleid as i64)).unwrap().money = 10;
+    link.enviar(pedido(4)).await.unwrap();
+    let e = esperar_comando(&mut link, 25).await;
+    assert_eq!(i32_em(&e, 2), 16, "ERR_OUT_OF_FUND");
+}
+
+#[tokio::test]
+async fn avaliar_155() {
+    conferir_avaliar(GameVersion::V1_5_5).await;
+}
+
+#[tokio::test]
+async fn avaliar_126() {
+    conferir_avaliar(GameVersion::V1_2_6).await;
 }
 
 #[tokio::test]

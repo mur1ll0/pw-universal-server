@@ -333,6 +333,79 @@ pub fn gerar_equipamento_de(dados: &GameDataManager, tid: u32, g: Geracao) -> Op
     Some(c)
 }
 
+/// B379: o efeito "a avaliar" — o tratador `item_addon_random` (`item_addon.cpp:724-740`, `IsRandomAddon` verdadeiro),
+/// registrado nos ids 336, 410 e 472 (`INSERT_ADDON`, `item_addon.cpp:1670,1764,1831`).
+pub fn efeito_a_avaliar(dados: &GameDataManager, a: &AddonDoItem) -> bool {
+    dados.addons.por_id.get(&a.id()).is_some_and(|x| x.tratador == "item_addon_random")
+}
+
+/// Avaliar (serviço 17, `SERVICE_ID_IDENTIFY`): `equip_item::RegenAddon` (`equip_item.cpp:157-183`) com o
+/// `regen_addon` do jogador (`player.cpp:11641-11644`) = `itemdataman::generate_addon_from_rands`
+/// (`itemdataman.cpp:1059-1104`). Cada efeito a avaliar é sorteado de novo da lista `rands` do equipamento (as 32
+/// posições, `RandSelect`), até 4 vezes enquanto sair o mesmo id; saindo o mesmo, ou um id sem tratador (0
+/// incluso), o efeito sai do item. O que entra é aplicado à essência (`addon_update_ess_data`). Os efeitos de pedra,
+/// conjunto e gravados (bits acima de `0x7FFF`) não são do `_total_addon` sorteável e ficam.
+///
+/// Devolve o bloco novo — cabeçalho igual, essência só nos campos tocados, rabo regravado —, ou `None` se o item
+/// não tem efeito a avaliar (o original responde `ERR_SERVICE_ERR_REQUEST` e `identify_result` 2) ou se o bloco não
+/// se lê.
+pub fn avaliar_equipamento(dados: &GameDataManager, tid: u32, bloco: &[u8], modelo: &FichaDoEquipamento) -> Option<Vec<u8>> {
+    let rands: Vec<(u32, f32)> = dados.geracao.get(&tid).map(|m| m.addons_da_producao.clone()).unwrap_or_default();
+    let probs: Vec<f32> = rands.iter().map(|x| x.1).collect();
+    let (mut b, novos) = ConteudoDeEquipamento::alterar_rabo(bloco, modelo, |c| {
+        let mut achou = false;
+        let mut novos = Vec::new();
+        let mut i = 0;
+        while i < c.addons.len() {
+            let a = &c.addons[i];
+            if a.tipo & !0x7FFF != 0 || !efeito_a_avaliar(dados, a) {
+                i += 1;
+                continue;
+            }
+            achou = true;
+            let atual = a.id();
+            let mut id = atual;
+            for _ in 0..4 {
+                if id != atual || rands.is_empty() {
+                    break;
+                }
+                id = rands[rand_select(&probs).min(rands.len() - 1)].0;
+            }
+            match (id != atual).then(|| gerar_addon(dados, id)).flatten() {
+                Some(novo) => {
+                    c.addons[i] = novo.clone();
+                    novos.push(novo);
+                    i += 1;
+                }
+                None => {
+                    c.addons.remove(i);
+                }
+            }
+        }
+        achou.then_some(novos)
+    })?;
+    let novos = novos?;
+    // A essência: só os bytes dos campos que os efeitos novos tocam (como o painel, B204).
+    let antes = ConteudoDeEquipamento::ler(&b, modelo)?;
+    let mut depois = antes.clone();
+    for a in &novos {
+        aplicar_na_essencia(dados, &mut depois.ficha, a);
+    }
+    if depois.ficha != antes.ficha {
+        let (x, y) = (antes.escrever(), depois.escrever());
+        if x.len() != y.len() || x.len() != b.len() {
+            return None;
+        }
+        for (k, v) in y.iter().enumerate() {
+            if x[k] != *v {
+                b[k] = *v;
+            }
+        }
+    }
+    ConteudoDeEquipamento::ler(&b, modelo)?;
+    Some(b)
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -381,5 +454,41 @@ mod testes {
         assert!(matches!(&ficha, FichaDoEquipamento::Armadura(r) if r.resistencias[0] == 150));
         aplicar_na_essencia_com(&dados, &mut ficha, &addon, -1);
         assert_eq!(ficha, original, "escala: tirar desfaz");
+    }
+
+    /// B379: avaliar troca cada efeito a avaliar por um da lista `rands` (ou o tira), mantém os outros e devolve
+    /// `None` sem efeito a avaliar — no `elements.data` do `realm_126`, com as Perneiras do Purgatório (5020).
+    #[test]
+    fn avaliar_troca_os_efeitos_a_avaliar() {
+        let pasta = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/realm_126/config");
+        if !pasta.join("elements.data").exists() {
+            eprintln!("AVISO: sem o elements.data do realm_126 — este teste NÃO verificou nada.");
+            return;
+        }
+        let mut dados = GameDataManager::new();
+        dados.load_from_directory(&pasta);
+        let tid = 5020;
+        let m = dados.geracao.get(&tid).expect("Perneiras do Purgatório no 1.2.6");
+        let rands: Vec<u32> = m.addons_da_producao.iter().filter(|x| x.0 > 0).map(|x| x.0).collect();
+        let a_avaliar: Vec<u32> = dados.addons.por_id.iter().filter(|(_, a)| a.tratador == "item_addon_random").map(|(i, _)| *i).collect();
+        assert!(!a_avaliar.is_empty(), "336/410/472 no EQUIPMENT_ADDON do 1.2.6");
+        let modelo = dados.equipamentos.ficha(tid).unwrap();
+        let fixo = gerar_addon(&dados, *rands.first().expect("rands da perneira")).unwrap();
+        let mut c = ConteudoDeEquipamento::novo(modelo.clone(), 100, 100);
+        c.addons = vec![fixo.clone(), AddonDoItem::novo(a_avaliar[0], vec![]), AddonDoItem::novo(a_avaliar[0], vec![])];
+        let bloco = c.escrever();
+        for _ in 0..20 {
+            let novo = avaliar_equipamento(&dados, tid, &bloco, &modelo).expect("tinha efeito a avaliar");
+            let lido = ConteudoDeEquipamento::ler(&novo, &modelo).expect("o bloco novo fecha");
+            assert_eq!(lido.addons[0], fixo, "o efeito comum fica");
+            assert!(lido.addons.len() <= 3);
+            for a in &lido.addons[1..] {
+                assert!(!efeito_a_avaliar(&dados, a), "não sobra efeito a avaliar");
+                assert!(rands.contains(&a.id()), "o novo vem da lista rands: {}", a.id());
+            }
+            assert_eq!(&novo[..10], &bloco[..10], "cabeçalho igual");
+        }
+        let sem = { let mut c2 = c.clone(); c2.addons = vec![fixo]; c2.escrever() };
+        assert!(avaliar_equipamento(&dados, tid, &sem, &modelo).is_none(), "nada a avaliar");
     }
 }

@@ -14,6 +14,21 @@ impl WorldProtocol for V126Protocol {
         GameVersion::V1_2_6
     }
 
+    // Painel de GM (Ctrl+G). O cliente 1.2.6 manda os mesmos C2S do 1.5.5: `CGMCommandInvisible`
+    // e `CGMCommandInvincible` (vtables 0x848c0c/0x848c24) chamam 0x5a7c60/0x5a7ca0, que montam
+    // o cabeçalho 204/205 (2 B) e o mandam pelo `SendGameData`. A resposta tem os números do
+    // IR 1.5.5 — o validador (VA 0x584610) mede 174 = 5 B (`PLAYER_END_TRAVEL`), 175 = 176 =
+    // 1 B (caso 0x584db6) e 177 = 14 B (`HOST_CORRECT_POS`), a mesma vizinhança do 1.5.5.
+    // Sem estes dois o padrão `None` deixava o GM invencível/invisível no servidor sem que o
+    // cliente soubesse (B389).
+    fn gm_invincible(&self, ligado: bool) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::gm_invincible(ligado))
+    }
+
+    fn gm_invisible(&self, visivel: bool) -> Option<S2CGamedataSend> {
+        Some(S2CGamedataSend::gm_invisible(visivel))
+    }
+
     // Mascote — o validador do cliente 1.2.6 (VA 0x584610, tabela de saltos em 0x584e90)
     // mede 233 = 12 B, 234 = 8 B e 249 = 12 B; a captura `full_interno.pcap` confirma 233 e 234.
 

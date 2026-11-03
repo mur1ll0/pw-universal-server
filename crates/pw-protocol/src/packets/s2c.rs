@@ -3247,6 +3247,19 @@ impl S2CGamedataSend {
         Self { data: stream.into_bytes().to_vec() }
     }
 
+    /// `ITEM_IDENTIFY` (162, `IDENTIFY_RESULT` no servidor) — `cmd_item_identify { u8 ivtr_index; u8 result; }`, 2 B
+    /// (`EC_GPDataType.h:2870-2874`; `gplayer_dispatcher::identify_result`, `player.cpp:4883-4889`). `result` 0 =
+    /// avaliado, 1 = sem item, 2 = nada a avaliar (`gplayer_imp::IdentifyItemAddon`, `player.cpp:11646-11675`). O
+    /// cliente fecha a janela de avaliar com ele (`OnMsgHstItemIdentify` → `NOTIFY_IDENTIFY_END`,
+    /// `EC_HostMsg.cpp:4443-4449`).
+    pub fn item_identify(ivtr_index: u8, result: u8) -> Self {
+        let mut stream = OctetsStream::new();
+        stream.write_u16_le(162);
+        stream.write_u8(ivtr_index);
+        stream.write_u8(result);
+        Self { data: stream.into_bytes().to_vec() }
+    }
+
     /// `CLEAR_TESSERA` (93, `CLEAR_EMBEDDED_CHIP` no servidor) — `{ u16 equip_idx; size_t cost; }`,
     /// 6 bytes (`common/protocol.h:1756-1761`). O cliente desconta `cost` sozinho e pede o item
     /// de volta (`OnMsgHstClearTessera`). Igual no `gs` 1.2.6 (`From(..., ushort, uint)`, `push 0x5d`,

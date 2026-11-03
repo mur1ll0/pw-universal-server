@@ -33,12 +33,15 @@ pub struct Ecm {
     pub acoes: Vec<AcaoCombinada>,
     /// `AddiSkinPath:` (B282) — relativas a `Models\` (`EC_Model.cpp:678-689`, só no editor).
     pub peles_adicionais: Vec<String>,
+    /// B380: `ChildPath:` — o `.ecm` de cada modelo filho (`EC_Model.cpp:152`, lido em `:4777`), para saber se um
+    /// modelo ainda é usado por outro.
+    pub filhos: Vec<String>,
 }
 
 pub fn ler(b: &[u8]) -> Option<Ecm> {
     let corpo = b.strip_prefix(b"MOXT").unwrap_or(b);
     let texto = crate::ski::gbk(corpo);
-    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new() };
+    let mut e = Ecm { versao: 0, smd: String::new(), acoes: Vec::new(), peles_adicionais: Vec::new(), filhos: Vec::new() };
     let mut viu_versao = false;
     let mut filha_aberta = false;
     for linha in texto.lines() {
@@ -73,6 +76,8 @@ pub fn ler(b: &[u8]) -> Option<Ecm> {
                 f.rastro = linha["IsTrail: ".len()..].trim().parse::<i32>().map_or(false, |x| x != 0);
             }
             filha_aberta = false;
+        } else if let Some(v) = linha.strip_prefix("ChildPath: ") {
+            e.filhos.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("AddiSkinPath: ") {
             e.peles_adicionais.push(v.trim().to_string());
         } else if let Some(v) = linha.strip_prefix("BaseActName: ") {
@@ -127,6 +132,30 @@ pub fn pedidos_de_monstro(tabela: &[String]) -> Vec<(usize, String, Option<Strin
             r.push((i, nome.clone(), tabela.get(26).cloned()));
         } else {
             r.push((i, nome.clone(), None));
+        }
+    }
+    r
+}
+
+/// B392: os nomes que o cliente pede a um NPC de serviço (`CECNPCServer`; `IsMonsterOrPet()` falso). O código toca as
+/// ações `ACT_NPC_*` (índices do enum de `EC_NPC.h:94-120`, nomes pela mesma tabela `actions_npc.txt`):
+/// parado (19, `StartWork_Stand`, `EC_NPC.cpp:1694-1701`), ocioso 1 e 2 (17/18, sorteados a cada 25 s parado,
+/// `EC_NPC.cpp:367, 1907-1922`, e a fila volta ao parado, `EC_NPCModel.cpp:722-727`), andar e correr (20/21,
+/// `EC_NPC.cpp:1160-1192`), atacar (22 com `起`/`落`, `EC_NPCModel.cpp:728-737, 755`), morrer (23, `EC_NPC.cpp:1718-1724`),
+/// ferido (13, alternativa 26 — `Damaged` toca `ACT_WOUNDED` em qualquer NPC, `EC_NPC.cpp:1360-1387`), nascer (24, só se
+/// o modelo tiver, `HasAction`, `EC_NPC.cpp:638-639`) e sumir (25, `Disappear`, `EC_NPC.cpp:1351-1355`). As de conversa
+/// (14–16) estão mapeadas a −1 e o código nunca as toca (`EC_NPCModel.cpp:912-914`). Devolve `(índice, nome, alternativa)`.
+pub fn pedidos_de_npc(tabela: &[String]) -> Vec<(usize, String, Option<String>)> {
+    let mut r = Vec::new();
+    for i in [19usize, 17, 18, 20, 21, 22, 23, 13, 24, 25] {
+        let Some(nome) = tabela.get(i) else { continue };
+        match i {
+            22 => {
+                r.push((i, format!("{nome}起"), None));
+                r.push((i, format!("{nome}落"), None));
+            }
+            13 => r.push((i, nome.clone(), tabela.get(26).cloned())),
+            _ => r.push((i, nome.clone(), None)),
         }
     }
     r
@@ -198,6 +227,34 @@ pub fn clonar_acao(b: &[u8], origem: &str, nova: &str, base: Option<&str>) -> Re
     let mut saida: Vec<Vec<u8>> = l.iter().map(|x| x.to_vec()).collect();
     saida[cont] = [format!("ComActCount: {}", n_atual + 1).as_bytes(), fl_cont].concat();
     saida.splice(fim..fim, clone);
+    Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
+}
+
+/// B373: troca a animação-base da ação combinada `acao` (a linha `BaseActName:` do bloco) por `base` — o que o monstro
+/// executa naquela ação (parado, andar, atacar, morrer…). Só para ação com exatamente uma ação-base (a de várias é uma
+/// sequência: edita-se nos Editores); texto fora do GBK é recusado. O resto do arquivo fica byte a byte igual, e o
+/// tamanho só muda pela diferença dos nomes.
+pub fn trocar_base(b: &[u8], acao: &str, base: &str) -> Result<Vec<u8>, String> {
+    if base.is_empty() || base.contains(['\r', '\n']) {
+        return Err("nome de ação-base inválido".into());
+    }
+    let (base_b, _, erro) = encoding_rs::GBK.encode(base);
+    if erro {
+        return Err(format!("\"{base}\" tem caracteres que não existem em GBK"));
+    }
+    let marca = b.starts_with(b"MOXT");
+    let corpo = if marca { &b[4..] } else { b };
+    let l = linhas_com_fim(corpo);
+    let (_, bl) = blocos(&l).ok_or("estrutura de ações não reconhecida")?;
+    let &(_, ini, fim) = bl.iter().find(|x| x.0 == acao).ok_or_else(|| format!("a ação {acao} não existe"))?;
+    let linhas: Vec<usize> = (ini..fim).filter(|&i| l[i].starts_with(b"BaseActName: ")).collect();
+    if linhas.len() != 1 {
+        return Err(format!("a ação {acao} tem {} ações-base; trocar só com uma", linhas.len()));
+    }
+    let i = linhas[0];
+    let fl: &[u8] = if l[i].ends_with(b"\r\n") { b"\r\n" } else { b"\n" };
+    let mut saida: Vec<Vec<u8>> = l.iter().map(|x| x.to_vec()).collect();
+    saida[i] = [b"BaseActName: ".as_slice(), &base_b, fl].concat();
     Ok([if marca { b"MOXT".as_slice() } else { b"" }, &saida.concat()].concat())
 }
 
@@ -395,6 +452,41 @@ pub fn diagnostico_de_voo(
 mod testes {
     use super::*;
 
+    /// B373: em todos os `.ecm` do cliente, trocar a base da 1ª ação de base única por outra nome relê com a base nova,
+    /// as outras ações iguais, e o arquivo só difere naquela linha.
+    #[test]
+    fn trocar_base_em_todo_o_cliente() {
+        let raiz = std::path::Path::new(r"F:\PW\1.5.5\1.5.5 BR launcher\element\models");
+        if !raiz.exists() {
+            eprintln!("AVISO: sem {} — este teste NÃO verificou nada.", raiz.display());
+            return;
+        }
+        let mut pilha = vec![raiz.to_path_buf()];
+        let mut trocados = 0usize;
+        while let Some(d) = pilha.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { pilha.push(p); continue; }
+                if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ecm")) { continue; }
+                let b = std::fs::read(&p).unwrap();
+                let Some(antes) = ler(&b) else { continue };
+                let Some((k, a)) = antes.acoes.iter().enumerate().find(|(_, a)| a.bases.len() == 1) else { continue };
+                let novo = trocar_base(&b, &a.nome, "测试基础").unwrap_or_else(|x| panic!("{}: {x}", p.display()));
+                let depois = ler(&novo).unwrap();
+                assert_eq!(depois.acoes.len(), antes.acoes.len());
+                assert_eq!(depois.acoes[k].bases, vec!["测试基础".to_string()], "{}", p.display());
+                for (j, (x, y)) in antes.acoes.iter().zip(&depois.acoes).enumerate() {
+                    if j != k { assert_eq!(x.bases, y.bases); }
+                }
+                let volta = trocar_base(&novo, &a.nome, &a.bases[0]).unwrap();
+                assert_eq!(volta, b, "ida e volta byte a byte: {}", p.display());
+                trocados += 1;
+            }
+        }
+        eprintln!("ecm: base trocada e desfeita em {trocados} arquivos");
+        assert!(trocados > 0);
+    }
+
     /// B280: em todos os `.ecm` do cliente, os blocos achados batem com o `ComActCount` e terminam onde devem; clonar a
     /// 1ª ação de cada arquivo relê com uma ação a mais, as outras iguais.
     #[test]
@@ -573,6 +665,21 @@ mod testes {
         assert!(!p.iter().any(|x| x.1 == "技能1"), "ACT_SKILL1 não é tocada");
         let m = pedidos_de_mascote(&t, 4);
         assert!(m.iter().any(|x| x.1 == "普攻1起_地面") && m.iter().any(|x| x.1 == "站立_空中") && !m.iter().any(|x| x.1.ends_with("_水中")), "habitat 4 = chão + ar");
+    }
+
+    /// B392: a tabela inteira do cliente 1.5.5 BR (`configs\actions_npc.txt`, 27 nomes) e o que o NPC de serviço pede.
+    #[test]
+    fn pedidos_do_npc() {
+        let nomes = ["站立", "休闲", "戒备", "技能1", "慢速移动", "普攻1", "普攻2", "快速移动", "死亡", "跳跃起", "跳跃落", "跳跃循环", "魔攻1",
+            "受伤叠加", "抱胸交谈", "伸手交谈", "交谈循环", "休闲动作1", "休闲动作2", "站立", "行走", "跑动", "攻击", "死亡", "出生", "消失", "受伤"];
+        let fonte: String = std::iter::once("#_begin".to_string()).chain(nomes.iter().map(|n| format!("\"{n}\""))).collect::<Vec<_>>().join("\n");
+        let t = tabela_de_nomes(&encoding_rs::GBK.encode(&fonte).0);
+        assert_eq!(t.len(), 27);
+        let p = pedidos_de_npc(&t);
+        let nomes_pedidos: Vec<&str> = p.iter().map(|x| x.1.as_str()).collect();
+        assert_eq!(nomes_pedidos, ["站立", "休闲动作1", "休闲动作2", "行走", "跑动", "攻击起", "攻击落", "死亡", "受伤叠加", "出生", "消失"]);
+        assert_eq!(p.iter().find(|x| x.0 == 13).unwrap().2.as_deref(), Some("受伤"), "ferido: alternativa 26");
+        assert!(!nomes_pedidos.iter().any(|n| n.contains("交谈")), "as ações de conversa nunca são tocadas");
     }
 
     /// B283: as ações filhas (com o `HHName:` de modelo filho do `.ecm` fora delas) e o diagnóstico de voo.

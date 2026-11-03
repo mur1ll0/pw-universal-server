@@ -10,7 +10,7 @@
 //!
 //! Ambiente: `PW_RECURSOS_DADOS` (padrão `/dados`), `PW_RECURSOS_PORTA` (8100),
 //! `PW_RECURSOS_CHAVE` (`/chave/assinatura_ed25519.key`), `DATABASE_URL`, `PYTHON`,
-//! `PW_PCK_EXTRACT`.
+//! `PW_PCK_EXTRACT`, `PW_PAINEL_URL` (modelo da URL do painel para o launcher, B391).
 
 use anyhow::{bail, Context, Result};
 use pw_recursos::assinatura::Chave;
@@ -86,7 +86,25 @@ async fn main() -> Result<()> {
             let porta = ambiente("PW_RECURSOS_PORTA", "8100");
             let escuta = tokio::net::TcpListener::bind(format!("0.0.0.0:{porta}")).await?;
             tracing::info!("pw-recursos servindo {} em :{porta}", dados.display());
-            let publico = axum::serve(escuta, pw_recursos::servir::rotas(dados.clone()));
+            // B391: `PW_PAINEL_URL` (ex.: `http://{host}:8000/`) vira o `painel.json` assinado que o
+            // launcher abre no botão "Criar conta / Painel"; sem ela, o botão avisa que não há painel.
+            let painel = match std::env::var("PW_PAINEL_URL").ok().filter(|u| !u.trim().is_empty()) {
+                Some(modelo) => {
+                    let (chave, _) = Chave::carregar_ou_criar(&caminho_da_chave())?;
+                    match pw_recursos::servir::painel_assinado(&modelo, &chave) {
+                        Ok(p) => {
+                            tracing::info!("painel anunciado ao launcher: {}", modelo.trim());
+                            Some(p)
+                        }
+                        Err(e) => {
+                            tracing::warn!("PW_PAINEL_URL ignorada ({modelo}): {e:#}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            let publico = axum::serve(escuta, pw_recursos::servir::rotas_com_painel(dados.clone(), painel));
             // API administrativa (P3, B235): só com segredo, e só na rede interna do Docker.
             let segredo = std::env::var("PW_RECURSOS_SEGREDO").unwrap_or_default();
             if segredo.trim().len() < 16 {

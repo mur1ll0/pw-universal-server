@@ -1,0 +1,40 @@
+<script lang="ts">
+  /* Ícones de traço 24×24 (os mesmos desenhos do `ICONES` do painel, `static/painel.js`). */
+  const TRACOS: Record<string, string> = {
+    espada: "M20 4l-9 9M20 4h-4M20 4v4M11 13l-3 3M5 14l5 5M7 17l-3 3",
+    caixa: "M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10",
+    pata: "M8 5a1.7 1.7 0 1 0 0 3.4a1.7 1.7 0 1 0 0-3.4M16 5a1.7 1.7 0 1 0 0 3.4a1.7 1.7 0 1 0 0-3.4M5 10a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2M19 10a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2M12 12c-3 0-5 3.5-5 5.5S9 20 12 20s5-.5 5-2.5S15 12 12 12z",
+    npc: "M12 4a4 4 0 1 0 0 8a4 4 0 1 0 0-8M4 21c0-4 3.6-6 8-6s8 2 8 6M17 3l2 2 3-3",
+    monstro: "M5 10l-2-6 5 3M19 10l2-6-5 3M5 10a7 7 0 0 0 14 0M9 13h.01M15 13h.01M9 17l1.5-1 1.5 1 1.5-1 1.5 1",
+    mais: "M12 5v14M5 12h14",
+    busca: "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4",
+    lixeira: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+    fechar: "M6 6l12 12M18 6L6 18",
+    editar: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+    voltar: "M15 18l-6-6 6-6",
+    copiar: "M8 8h12v12H8zM4 16V4h12",
+    abrir: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
+    editores: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
+    refino: "M12 19V5M5 12l7-7 7 7",
+    check: "M5 12l5 5 9-10",
+    olho: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+    loja: "M4 8h16l-1.5 12h-13zM9 8V6a3 3 0 0 1 6 0v2M9.5 13.5h5",
+    // B392: serviços, missões, conversa, mapa, setas
+    servico: "M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+    missao: "M7 3h10v18l-5-3-5 3zM10 8h4M10 12h4",
+    conversa: "M4 5h16v11H9l-5 4zM8 9h8M8 12h5",
+    mapa: "M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11zM12 8a2 2 0 1 0 0 4a2 2 0 1 0 0-4",
+    cima: "M6 15l6-6 6 6",
+    baixo: "M6 9l6 6 6-6",
+    seta: "M5 12h14M13 6l6 6-6 6",
+  };
+  let { nome, tamanho = 20 }: { nome: string; tamanho?: number } = $props();
+</script>
+
+<svg class="icone" width={tamanho} height={tamanho} viewBox="0 0 24 24" aria-hidden="true">
+  <path d={TRACOS[nome] ?? ""} />
+</svg>
+
+<style>
+  .icone { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+</style>

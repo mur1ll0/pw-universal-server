@@ -262,6 +262,9 @@ pub struct GameDataManager {
     /// Os pontos de destino do mundo (`world_targets.sev`), que é onde ficam as coordenadas
     /// dos destinos que o `NPC_TRANSMIT_SERVICE` cita por id.
     pub pontos_do_mundo: crate::world_targets::PontosDoMundo,
+    /// O drop global do GS (`extra_drops.sev`, `[Template] DropData`) — ver [`crate::drop_global`]. Vazio quando
+    /// o realm não traz o arquivo.
+    pub drop_global: crate::drop_global::DropGlobal,
     /// `pile_num_max` de cada item.
     pub pilhas: HashMap<u32, u32>,
     /// Nome de cada item (painel, B186).
@@ -502,6 +505,21 @@ impl GameDataManager {
                     self.pontos_do_mundo = p;
                 }
                 Err(e) => rel.falhou("world_targets.sev", e),
+            }
+        }
+
+        if let Some(data) = rel.ler(dir, "extra_drops.sev") {
+            match crate::drop_global::DropGlobal::ler(&data) {
+                Ok(d) => {
+                    rel.lidos.push(format!(
+                        "extra_drops.sev ({} tabelas, {} monstros, {} ignoradas)",
+                        d.tabelas.len(),
+                        d.monstros(),
+                        d.ignoradas.len()
+                    ));
+                    self.drop_global = d;
+                }
+                Err(e) => rel.falhou("extra_drops.sev", e),
             }
         }
 

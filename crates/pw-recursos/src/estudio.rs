@@ -14,7 +14,7 @@ use pw_data_loader::elements_editavel::{espaco_de_id, ElementsEditavel};
 use pw_data_loader::generic_elements::{FieldDef, FieldValue};
 use pw_storage::ItemDeRecurso;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub const CAMINHO: &str = "data\\elements.data";
@@ -96,6 +96,9 @@ const CAMPOS_EDITAVEIS: [(&str, &str); 11] = [
     ("precisao", "só o servidor (multiplica a taxa de ataque do golpe)"),
 ];
 
+/// Nome legível em minúsculas → (SHA, tamanho, caminho GBK) dos arquivos do cliente publicado.
+type IndiceDoCliente = HashMap<String, (Sha256Bytes, u64, Vec<u8>)>;
+
 #[derive(Default)]
 pub struct Estudio {
     /// Arquivos já lidos, pelo SHA-256 (o publicado e o de cada rascunho em uso).
@@ -104,7 +107,7 @@ pub struct Estudio {
     travas: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
     /// Índice dos arquivos do cliente publicado por versão: caminho em minúsculas → (sha, tamanho),
     /// com o SHA do manifesto de onde saiu (B242).
-    arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<HashMap<String, (Sha256Bytes, u64)>>)>>,
+    arquivos_do_cliente: Mutex<HashMap<String, (String, Arc<IndiceDoCliente>)>>,
     /// Peças do minimapa já convertidas em PNG.
     pecas: Mutex<HashMap<(String, String, String), Arc<Vec<u8>>>>,
     /// Terreno (`.hmap`) de cada mapa já lido, por (versão, caminho) — B248.
@@ -119,6 +122,32 @@ pub struct Estudio {
 pub struct IndiceDeEcm {
     pub ecms: Vec<(String, u32, String, Vec<(String, Vec<String>)>)>,
     pub smds: HashMap<String, (Option<String>, Vec<String>)>,
+    /// B380: os `.ecm` citados como modelo filho (`ChildPath:`) por algum `.ecm`, em minúsculas.
+    pub filhos: HashSet<String>,
+    /// B380: o que cada `.smd` (minúsculas) usa: `.bon`, peles e `.stck` (`dependencias_do_smd`), em minúsculas.
+    pub dependencias: HashMap<String, Vec<String>>,
+}
+
+/// B380: os arquivos que um `.smd` usa, como o motor os acha (`A3DSkinModelMan::LoadModelFromFile`, ao lado do `.smd`):
+/// o esqueleto, as peles e a `.stck` de cada ação (pasta das trilhas: a do `.smd` v8, senão `tcks_<título>`; com `.bon`
+/// v5 as trilhas são embutidas e a ação não cita `.stck`).
+fn dependencias_do_smd(smd: &str, c: &pw_data_loader::smd::CabecaDoSmd) -> Vec<String> {
+    let mut r = Vec::new();
+    if !c.esqueleto.is_empty() {
+        r.push(ao_lado(smd, &c.esqueleto));
+    }
+    r.extend(c.peles.iter().filter(|p| !p.trim().is_empty()).map(|p| ao_lado(smd, p)));
+    let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0);
+    let pasta = if c.versao >= 8 { c.pasta_das_trilhas.clone() } else { format!("tcks_{titulo}") };
+    for a in &c.lista_de_acoes {
+        if let Some(s) = a.stck.as_ref().filter(|s| !s.is_empty()) {
+            let caminho = ao_lado(smd, &format!("{pasta}\\{s}"));
+            if !r.contains(&caminho) {
+                r.push(caminho);
+            }
+        }
+    }
+    r
 }
 
 /// Um caminho relativo à pasta de outro (`A3DSkinModelMan::LoadModelFromFile`: `strPath + "\\" + strFile`).
@@ -159,6 +188,48 @@ pub fn valor_do_json(f: &FieldDef, v: &Value) -> Result<FieldValue> {
         }
         outro => bail!("tipo de campo desconhecido: {outro}"),
     })
+}
+
+/// B376: o que a listagem de uma tabela pode pedir além da busca (`Estudio::listar`). Só leitura.
+#[derive(Debug, Default, Clone)]
+pub struct FiltroDeListagem {
+    /// Campos numéricos a devolver em cada registro.
+    pub colunas: Vec<String>,
+    /// `campo`, `id` ou `nome`, com `-` na frente para decrescente.
+    pub ordem: Option<String>,
+    /// `(campo, mín., máx.)`, limites inclusivos.
+    pub faixas: Vec<(String, Option<f64>, Option<f64>)>,
+}
+
+impl FiltroDeListagem {
+    /// Da consulta: `colunas=a,b`, `ordem=-a`, `faixas=a:30:40,b::5` (lado vazio = sem limite).
+    pub fn da_consulta(colunas: Option<&str>, ordem: Option<&str>, faixas: Option<&str>) -> Result<Self> {
+        let lista = |s: Option<&str>| -> Vec<String> {
+            s.unwrap_or("").split(',').map(str::trim).filter(|x| !x.is_empty()).take(12).map(String::from).collect()
+        };
+        let mut f = FiltroDeListagem { colunas: lista(colunas), ordem: ordem.map(String::from), faixas: Vec::new() };
+        for x in lista(faixas) {
+            let mut p = x.splitn(3, ':');
+            let campo = p.next().unwrap_or("").to_string();
+            let lim = |s: Option<&str>| -> Result<Option<f64>> {
+                match s.map(str::trim) {
+                    None | Some("") => Ok(None),
+                    Some(v) => Ok(Some(v.parse::<f64>().with_context(|| format!("faixa de {campo}: número inválido"))?)),
+                }
+            };
+            let (min, max) = (lim(p.next())?, lim(p.next())?);
+            f.faixas.push((campo, min, max));
+        }
+        Ok(f)
+    }
+}
+
+fn valor_numerico(v: &FieldValue) -> Option<f64> {
+    match v {
+        FieldValue::Int(n) => Some(f64::from(*n)),
+        FieldValue::Float(x) => Some(f64::from(*x)),
+        _ => None,
+    }
 }
 
 impl Estudio {
@@ -224,6 +295,12 @@ impl Estudio {
         }))
     }
 
+    /// Listagem de uma tabela, paginada. B376: `colunas` (campos numéricos do layout a devolver em `campos`), `ordem`
+    /// (`campo`, `id` ou `nome`; `-` na frente = decrescente) e `faixas` (mín./máx. por campo) valem sobre a tabela
+    /// inteira, antes da página. Campo que a tabela não tem é ignorado (a resposta diz em `colunas` os que valeram).
+    /// Coluna `id_*` (categoria/subcategoria: ids do mesmo espaço da tabela) traz o nome em `nomes` e, em `opcoes`, os
+    /// valores distintos da tabela inteira com o nome e quantos registros usam cada um.
+    #[allow(clippy::too_many_arguments)]
     pub async fn listar(
         &self,
         gov: &Governanca,
@@ -233,29 +310,271 @@ impl Estudio {
         busca: &str,
         pagina: usize,
         por_pagina: usize,
+        filtro: &FiltroDeListagem,
     ) -> Result<Value> {
         let (e, _) = self.atual(gov, versao, rascunho).await?;
         let t = e.tabela(tabela)?;
-        let campo_nome = t.campos().into_iter().find(|(_, _, f)| f.name == "Name").map(|(_, _, f)| f.clone());
-        let busca = busca.trim().to_lowercase();
-        let mut achados = Vec::new();
-        for i in 0..t.registros.len() {
-            let id = t.id(i);
-            let nome = match &campo_nome {
-                Some(_) => match t.ler(i)?.get("Name") {
-                    Some(FieldValue::Text(s)) => s.clone(),
-                    _ => String::new(),
-                },
-                None => String::new(),
-            };
-            if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                achados.push(json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
+        let numericos: Vec<String> = t
+            .campos()
+            .into_iter()
+            .filter(|(_, _, f)| matches!(f.field_type.as_str(), "int32" | "float"))
+            .map(|(_, _, f)| f.name.clone())
+            .collect();
+        let tem = |c: &str| numericos.iter().any(|n| n == c);
+        let colunas: Vec<String> = filtro.colunas.iter().filter(|c| tem(c)).cloned().collect();
+        let faixas: Vec<&(String, Option<f64>, Option<f64>)> = filtro.faixas.iter().filter(|(c, _, _)| tem(c)).collect();
+        let (ordem, decrescente) = match filtro.ordem.as_deref().map(str::trim) {
+            Some(o) if !o.is_empty() => {
+                let (d, c) = o.strip_prefix('-').map_or((false, o), |c| (true, c));
+                (Some(c.to_string()).filter(|c| c == "id" || c == "nome" || tem(c)), d)
             }
+            _ => (None, false),
+        };
+        let precisa_ler: Vec<String> = colunas
+            .iter()
+            .cloned()
+            .chain(faixas.iter().map(|(c, _, _)| c.clone()))
+            .chain(ordem.iter().filter(|c| *c != "id" && *c != "nome").cloned())
+            .collect();
+        let campo_nome = t.campos().into_iter().any(|(_, _, f)| f.name == "Name");
+        let busca = busca.trim().to_lowercase();
+        // (índice, id, nome, valores dos campos pedidos)
+        type Achado = (usize, Option<i32>, String, HashMap<String, f64>);
+        let mut achados: Vec<Achado> = Vec::new();
+        'registro: for i in 0..t.registros.len() {
+            let id = t.id(i);
+            let reg = if campo_nome || !precisa_ler.is_empty() { Some(t.ler(i)?) } else { None };
+            let nome = match reg.as_ref().and_then(|r| r.get("Name")) {
+                Some(FieldValue::Text(s)) => s.clone(),
+                _ => String::new(),
+            };
+            if !(busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca)) {
+                continue;
+            }
+            let mut valores = HashMap::new();
+            if let Some(r) = &reg {
+                for c in &precisa_ler {
+                    if let Some(v) = r.get(c).and_then(valor_numerico) {
+                        valores.insert(c.clone(), v);
+                    }
+                }
+            }
+            for (c, min, max) in &faixas {
+                let Some(v) = valores.get(c) else { continue 'registro };
+                if min.is_some_and(|m| *v < m) || max.is_some_and(|m| *v > m) {
+                    continue 'registro;
+                }
+            }
+            achados.push((i, id, nome, valores));
+        }
+        if let Some(c) = &ordem {
+            let chave = |a: &Achado| -> f64 {
+                match c.as_str() {
+                    "id" => a.1.map_or(f64::MIN, f64::from),
+                    _ => a.3.get(c).copied().unwrap_or(f64::MIN),
+                }
+            };
+            achados.sort_by(|a, b| {
+                let o = if c == "nome" { a.2.to_lowercase().cmp(&b.2.to_lowercase()) } else { chave(a).total_cmp(&chave(b)) };
+                let o = if decrescente { o.reverse() } else { o };
+                o.then(a.0.cmp(&b.0))
+            });
+        }
+        // Nomes das colunas `id_*`: o id está no mesmo espaço da tabela (`WEAPON_MAJOR_TYPE`, `WEAPON_SUB_TYPE` etc. são
+        // do ESSENCE, como `WEAPON_ESSENCE` — `espaco_de_id`).
+        let espaco = espaco_de_id(tabela);
+        let de_id: Vec<&String> = colunas.iter().filter(|c| c.starts_with("id_")).collect();
+        let ids = if (de_id.is_empty() || espaco.is_none()) && tabela != "RECIPE_ESSENCE" { HashMap::new() } else { mapa_de_ids(&e) };
+        let nome_de = |v: f64| -> Option<String> {
+            let &(ti, ri) = ids.get(&(espaco.clone()?, v as i32))?;
+            (ti != CONVERSAS).then(|| nome_do_registro(&e.tabelas[ti], ri))
+        };
+        let mut opcoes = Map::new();
+        for c in &de_id {
+            let mut contagem: std::collections::BTreeMap<i64, usize> = Default::default();
+            for i in 0..t.registros.len() {
+                if let Some(v) = t.ler(i)?.get(c.as_str()).and_then(valor_numerico) {
+                    *contagem.entry(v as i64).or_default() += 1;
+                }
+            }
+            let l: Vec<Value> =
+                contagem.into_iter().map(|(v, n)| json!({ "valor": v, "nome": nome_de(v as f64), "registros": n })).collect();
+            opcoes.insert((*c).clone(), Value::Array(l));
         }
         let total = achados.len();
         let por_pagina = por_pagina.clamp(1, 200);
-        let pagina_lista: Vec<Value> = achados.into_iter().skip(pagina * por_pagina).take(por_pagina).collect();
-        Ok(json!({ "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista }))
+        let pagina_lista: Vec<Value> = achados
+            .into_iter()
+            .skip(pagina * por_pagina)
+            .take(por_pagina)
+            .map(|(i, id, nome, valores)| {
+                let mut r = json!({ "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) });
+                if let Some(p) = produto_da_receita(&e, &ids, t, i) {
+                    r["produto"] = p;
+                }
+                if !colunas.is_empty() {
+                    r["campos"] = Value::Object(colunas.iter().map(|c| (c.clone(), json!(valores.get(c)))).collect());
+                }
+                if !de_id.is_empty() {
+                    r["nomes"] = Value::Object(
+                        de_id.iter().filter_map(|c| Some(((*c).clone(), json!(nome_de(*valores.get(*c)?)?)))).collect(),
+                    );
+                }
+                r
+            })
+            .collect();
+        Ok(json!({
+            "total": total, "pagina": pagina, "por_pagina": por_pagina, "registros": pagina_lista,
+            "colunas": colunas, "ordem": ordem.map(|c| if decrescente { format!("-{c}") } else { c }), "opcoes": opcoes,
+        }))
+    }
+
+    /// B392: os serviços de NPC de uma tabela `NPC_*_SERVICE` para o modal de serviços do Estúdio. Cada um com quantos NPCs
+    /// o usam (os campos `id_*_service` do `NPC_ESSENCE` que valem o id dele; o menu do NPC é montado por eles,
+    /// `DlgNPC.cpp:339-441`), até 5 nomes desses NPCs e um resumo das listas (itens das abas, receitas, destinos,
+    /// missões). A busca acha pelo id, pelo nome do serviço ou pelo nome do que ele lista (item vendido, receita).
+    /// `uso`: "em_uso" ou "sem_uso".
+    #[allow(clippy::too_many_arguments)]
+    pub async fn servicos(
+        &self,
+        gov: &Governanca,
+        versao: &str,
+        rascunho: Option<i64>,
+        tabela: &str,
+        busca: &str,
+        uso: Option<&str>,
+        pagina: usize,
+        por_pagina: usize,
+    ) -> Result<Value> {
+        if !(tabela.starts_with("NPC_") && tabela.ends_with("_SERVICE")) {
+            bail!("{tabela} não é tabela de serviço de NPC");
+        }
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let t = e.tabela(tabela)?;
+        // Quem usa: id do serviço → (quantos NPCs, nomes).
+        let mut usuarios: HashMap<i32, (usize, Vec<String>)> = HashMap::new();
+        if let Ok(npcs) = e.tabela("NPC_ESSENCE") {
+            let campos: Vec<String> = npcs
+                .campos()
+                .into_iter()
+                .map(|(_, _, f)| f.name.clone())
+                .filter(|n| n.starts_with("id_") && n.ends_with("_service"))
+                .collect();
+            for i in 0..npcs.registros.len() {
+                let r = npcs.ler(i)?;
+                let mut vistos = HashSet::new();
+                for c in &campos {
+                    if let Some(FieldValue::Int(v)) = r.get(c) {
+                        if *v > 0 && vistos.insert(*v) {
+                            let u = usuarios.entry(*v).or_default();
+                            u.0 += 1;
+                            if u.1.len() < 5 {
+                                u.1.push(nome_do_registro(npcs, i));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let ids = mapa_de_ids(&e);
+        let nome_citado = |espaco: &str, v: i32| -> Option<String> {
+            let &(ti, ri) = ids.get(&(espaco.to_string(), v))?;
+            (ti != CONVERSAS).then(|| nome_do_registro(&e.tabelas[ti], ri))
+        };
+        // As listas do serviço: o campo com índice que cita outro espaço (item, receita…); o `id_dialog` não conta.
+        let eh_lista = |n: &str| n.chars().any(|c| c.is_ascii_digit());
+        let listas: Vec<(String, &'static str)> = t
+            .campos()
+            .into_iter()
+            .filter_map(|(_, _, f)| Some((f.name.clone(), espaco_citado(tabela, &f.name)?)))
+            .filter(|(n, _)| n != "id_dialog" && eh_lista(n))
+            .collect();
+        let busca = busca.trim().to_lowercase();
+        let mut achados = Vec::new();
+        for i in 0..t.registros.len() {
+            let id = t.id(i).unwrap_or(0);
+            let r = t.ler(i)?;
+            let nome = match r.get("Name") {
+                Some(FieldValue::Text(s)) => s.clone(),
+                _ => String::new(),
+            };
+            let (npcs, nomes_dos_npcs) = usuarios.get(&id).cloned().unwrap_or_default();
+            match uso {
+                Some("em_uso") if npcs == 0 => continue,
+                Some("sem_uso") if npcs > 0 => continue,
+                _ => {}
+            }
+            // Resumo: abas com título, destinos, a lista de missões ou habilidades (sem espaço no catálogo) e os itens
+            // citados pelas listas.
+            let mut abas = 0usize;
+            let mut destinos = 0usize;
+            let mut outros = 0usize;
+            for (n, v) in r.iter() {
+                let numero = valor_numerico(v).unwrap_or(0.0) as i64;
+                if n.ends_with("page_title") {
+                    if matches!(v, FieldValue::Text(s) if !s.trim().is_empty()) {
+                        abas += 1;
+                    }
+                } else if n.starts_with("targets_") && n.ends_with("_idTarget") {
+                    destinos += usize::from(numero != 0);
+                } else if (n.starts_with("id_tasks_") || n.starts_with("id_skills_") || (n.starts_with("tasks_") && n.ends_with("_id_task")))
+                    && eh_lista(n)
+                {
+                    outros += usize::from(numero > 0);
+                }
+            }
+            let mut itens = 0usize;
+            let mut casa_na_lista = false;
+            for (n, esp) in &listas {
+                let Some(v) = r.get(n).and_then(valor_numerico) else { continue };
+                let v = v as i32;
+                if v <= 0 {
+                    continue;
+                }
+                itens += 1;
+                if !busca.is_empty() && !casa_na_lista {
+                    casa_na_lista = nome_citado(esp, v).is_some_and(|x| x.to_lowercase().contains(&busca));
+                }
+            }
+            let no_nome = nome.to_lowercase().contains(&busca);
+            if !(busca.is_empty() || id.to_string() == busca || no_nome || casa_na_lista) {
+                continue;
+            }
+            achados.push(json!({
+                "indice": i, "id": id, "nome": nome, "npcs": npcs, "nomes_dos_npcs": nomes_dos_npcs,
+                "resumo": { "itens": itens, "abas": abas, "destinos": destinos, "lista": outros },
+                "achado_na_lista": casa_na_lista && !no_nome,
+            }));
+        }
+        let por_pagina = por_pagina.clamp(1, 200);
+        let total = achados.len();
+        Ok(json!({
+            "tabela": tabela, "total": total, "pagina": pagina, "por_pagina": por_pagina,
+            "registros": achados.into_iter().skip(pagina * por_pagina).take(por_pagina).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// B392: nome e dados de lista de várias missões pelo id (o que um serviço de missão de NPC lista) e, com `npc`, as
+    /// missões do `tasks.data` que dizem que esse NPC as entrega (`npc_que_entrega`) ou premia (`npc_que_premia`).
+    pub async fn missoes_resumo(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, ids: &[u32], npc: Option<u32>) -> Result<Value> {
+        let t = self.missoes_do_realm(gov, versao, rascunho).await?;
+        let linha = |id: u32| match t.tasks.get(&id) {
+            Some(m) => json!({ "id": id, "nome": m.name, "tipo": m.tipo, "nivel_min": m.min_level, "nivel_max": m.max_level,
+                "mae": m.parent, "filhas": m.sub_tasks.len(), "npc_entrega": m.npc_que_entrega, "npc_premio": m.npc_que_premia }),
+            None => json!({ "id": id, "nome": null, "ausente": true }),
+        };
+        let mut do_npc = Value::Null;
+        if let Some(n) = npc.filter(|&n| n > 0) {
+            let mut entrega: Vec<u32> = t.tasks.values().filter(|m| m.npc_que_entrega == n).map(|m| m.id).collect();
+            let mut premia: Vec<u32> = t.tasks.values().filter(|m| m.npc_que_premia == n).map(|m| m.id).collect();
+            entrega.sort_unstable();
+            premia.sort_unstable();
+            do_npc = json!({
+                "entrega": entrega.iter().take(300).map(|&i| linha(i)).collect::<Vec<_>>(),
+                "premia": premia.iter().take(300).map(|&i| linha(i)).collect::<Vec<_>>(),
+            });
+        }
+        Ok(json!({ "missoes": ids.iter().take(600).map(|&i| linha(i)).collect::<Vec<_>>(), "do_npc": do_npc }))
     }
 
     /// B283: os modelos de voo do elements e o modo de cada um (`ecm::encaixe_de_voo`): `FLYSWORD_ESSENCE.file_model`
@@ -320,7 +639,8 @@ impl Estudio {
                                 }),
                                 Some(&(ti, ri)) => {
                                     let alvo = &e.tabelas[ti];
-                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) })
+                                    json!({ "tabela": alvo.nome, "indice": ri, "id": v, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri),
+                                        "produto": produto_da_receita(&e, &ids, alvo, ri) })
                                 }
                                 None => json!({ "ausente": true, "id": v }),
                             };
@@ -338,7 +658,8 @@ impl Estudio {
         };
         Ok(json!({
             "tabela": tabela, "indice": indice, "id": t.id(indice), "espaco": espaco_de_id(tabela),
-            "nome": nome_do_registro(t, indice), "icone": icone_do_registro(t, indice), "campos": campos, "usado_por": usado_por,
+            "nome": nome_do_registro(t, indice), "icone": icone_do_registro(t, indice), "produto": produto_da_receita(&e, &ids, t, indice),
+            "campos": campos, "usado_por": usado_por,
         }))
     }
 
@@ -367,6 +688,8 @@ impl Estudio {
             }
             return Ok(json!(achados));
         }
+        // B393: a receita se acha também pelo nome do item que produz (é o nome que o jogo mostra).
+        let ids = if espaco == "RECIPE" { mapa_de_ids(&e) } else { HashMap::new() };
         'tabelas: for t in &e.tabelas {
             if espaco_de_id(&t.nome).as_deref() != Some(espaco) {
                 continue;
@@ -374,8 +697,14 @@ impl Estudio {
             for i in 0..t.registros.len() {
                 let id = t.id(i);
                 let nome = nome_do_registro(t, i);
-                if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) {
-                    achados.push(json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) }));
+                let produto = produto_da_receita(&e, &ids, t, i);
+                let do_produto = produto.as_ref().and_then(|p| p["nome"].as_str()).is_some_and(|n| n.to_lowercase().contains(&busca));
+                if busca.is_empty() || id.is_some_and(|x| x.to_string() == busca) || nome.to_lowercase().contains(&busca) || do_produto {
+                    let mut r = json!({ "tabela": t.nome, "indice": i, "id": id, "nome": nome, "icone": icone_do_registro(t, i) });
+                    if let Some(p) = produto {
+                        r["produto"] = p;
+                    }
+                    achados.push(r);
                     if achados.len() >= limite.clamp(1, 200) {
                         break 'tabelas;
                     }
@@ -538,6 +867,27 @@ pub fn espaco_citado(tabela: &str, campo: &str) -> Option<&'static str> {
 /// (`/api/icones/<m|f>/<hex>.png`, B188) procura no atlas: a célula é só o nome do arquivo, como o
 /// cliente faz (`SetCover`, `EC_GameUIMan.cpp:6204-6208`). O corte é no texto decodificado: um 2º
 /// byte GBK pode ser 0x5C (`\`).
+/// B393: a receita aparece no cliente com o ícone, o nome e a descrição do item que ela produz em `targets[0]`
+/// (`CECIvtrRecipe`: `m_pGenItem1 = CreateItem(targets[0].id_to_make)`, `GetIconFile`/`GetName` devolvem os dele —
+/// `EC_IvtrMaterial.cpp:165,200-218`; sem produto, "Unknown.dds"). Devolve `{id, nome, icone}` desse item.
+fn produto_da_receita(
+    e: &ElementsEditavel,
+    ids: &HashMap<(String, i32), (usize, usize)>,
+    t: &pw_data_loader::elements_editavel::TabelaEditavel,
+    i: usize,
+) -> Option<Value> {
+    if t.nome != "RECIPE_ESSENCE" {
+        return None;
+    }
+    let id = inteiro_do_campo(&t.ler(i).ok()?, "targets_1_id_to_make").filter(|&x| x > 0)?;
+    let &(ti, ri) = ids.get(&("ESSENCE".to_string(), i32::try_from(id).ok()?))?;
+    if ti == CONVERSAS {
+        return None;
+    }
+    let alvo = &e.tabelas[ti];
+    Some(json!({ "id": id, "nome": nome_do_registro(alvo, ri), "icone": icone_do_registro(alvo, ri) }))
+}
+
 fn icone_do_registro(t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize) -> Option<String> {
     match t.ler(i).ok()?.get("file_icon")? {
         FieldValue::Raw(b) if !b.is_empty() => {
@@ -1006,28 +1356,33 @@ fn caminho_de_mapa_valido(c: &str) -> bool {
 }
 
 impl Estudio {
+    /// Índice do cliente publicado (nome legível em minúsculas → SHA, tamanho e caminho GBK), em cache por versão e
+    /// manifesto — o manifesto do 1.5.5 tem 327 mil arquivos: percorrê-lo a cada leitura custava ~0,5 s (B385).
+    fn indice_do_cliente(&self, gov: &Governanca, versao: &str) -> Result<Arc<IndiceDoCliente>> {
+        let v = gov.versao_publicada(versao)?;
+        let atual = self.arquivos_do_cliente.lock().unwrap().get(versao).cloned();
+        if let Some((sha, i)) = atual {
+            if sha == v.manifesto_sha256 {
+                return Ok(i);
+            }
+        }
+        let (_, m) = gov.publicado(versao)?;
+        let mut i = HashMap::with_capacity(m.arquivos.len());
+        for a in &m.arquivos {
+            let gbk = hex::decode(&a.caminho_gbk)?;
+            let nome = nomes::legivel(&gbk).to_lowercase();
+            let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
+            i.entry(nome).or_insert((sha, a.tamanho, gbk));
+        }
+        let i = Arc::new(i);
+        self.arquivos_do_cliente.lock().unwrap().insert(versao.to_string(), (v.manifesto_sha256.clone(), i.clone()));
+        Ok(i)
+    }
+
     /// Um arquivo do cliente publicado, pelo caminho (sem diferenciar maiúsculas).
     async fn arquivo_do_cliente(&self, gov: &Governanca, versao: &str, caminho: &str) -> Result<Vec<u8>> {
-        let v = gov.publicado(versao)?.0;
-        let indice = {
-            let atual = self.arquivos_do_cliente.lock().unwrap().get(versao).cloned();
-            match atual {
-                Some((sha, i)) if sha == v.manifesto_sha256 => i,
-                _ => {
-                    let (_, m) = gov.publicado(versao)?;
-                    let mut i = HashMap::with_capacity(m.arquivos.len());
-                    for a in &m.arquivos {
-                        let nome = nomes::legivel(&hex::decode(&a.caminho_gbk)?).to_lowercase();
-                        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
-                        i.insert(nome, (sha, a.tamanho));
-                    }
-                    let i = Arc::new(i);
-                    self.arquivos_do_cliente.lock().unwrap().insert(versao.to_string(), (v.manifesto_sha256.clone(), i.clone()));
-                    i
-                }
-            }
-        };
-        let (sha, tamanho) = *indice.get(&caminho.to_lowercase()).with_context(|| format!("{caminho} não está no cliente {versao}"))?;
+        let indice = self.indice_do_cliente(gov, versao)?;
+        let (sha, tamanho, _) = indice.get(&caminho.to_lowercase()).cloned().with_context(|| format!("{caminho} não está no cliente {versao}"))?;
         let objetos = gov.objetos(versao);
         Ok(tokio::task::spawn_blocking(move || objetos.ler(&sha, tamanho as usize)).await??)
     }
@@ -2482,13 +2837,10 @@ impl Estudio {
         caminho: &str,
         rascunho: Option<i64>,
     ) -> Result<(Vec<u8>, Sha256Bytes, usize, Vec<u8>, Option<ItemDeRecurso>)> {
-        let (_, m) = gov.publicado(versao)?;
         let alvo = caminho.to_lowercase();
-        let publicado = m
-            .arquivos
-            .iter()
-            .find(|a| hex::decode(&a.caminho_gbk).map(|g| nomes::legivel(&g).to_lowercase() == alvo).unwrap_or(false));
-        let Some(a) = publicado else {
+        let indice = self.indice_do_cliente(gov, versao)?;
+        let publicado = indice.get(&alvo).cloned();
+        let Some((sha, tamanho, gbk)) = publicado else {
             // B321: arquivo que o rascunho acrescenta (ação `adicionar`, ex. o `habilidades.pwsk`): só existe nele.
             if let Some(r) = rascunho {
                 gov.rascunho_da_versao(versao, r).await?;
@@ -2502,9 +2854,7 @@ impl Estudio {
             }
             bail!("{caminho} não está no cliente {versao}");
         };
-        let gbk = hex::decode(&a.caminho_gbk)?;
-        let sha: Sha256Bytes = hex::decode(&a.sha256)?.try_into().map_err(|_| anyhow::anyhow!("sha256"))?;
-        let tamanho = a.tamanho as usize;
+        let tamanho = tamanho as usize;
         let objetos = gov.objetos(versao);
         if let Some(r) = rascunho {
             gov.rascunho_da_versao(versao, r).await?;
@@ -2814,13 +3164,39 @@ impl Estudio {
                 gs::TipoDoCampo::Gbk(n) => json!(gs::ler_texto(&o[d..d + n], t)),
             }
         };
+        // G-Shop: depois das 8 colunas do B254, o ícone do item (atlas), o selo e o VIP da 1ª opção (no 1.2.6 o
+        // `status` é da oferta e não há VIP), o brinde, quantas opções o GS vende (até a primeira sem preço) e a
+        // imagem própria da oferta (`icon`).
+        let v126 = g.formato == pw_data_loader::gshop::FormatoDoGshop::V126;
+        let icone_do_item = |id: u32| match ids.get(&("ESSENCE".to_string(), id as i32)) {
+            Some(&(ti, ri)) if ti != CONVERSAS => icone_do_registro(&e.tabelas[ti], ri),
+            _ => None,
+        };
+        let mut conferencias = Map::new();
         let ofertas: Vec<Value> = g
             .ofertas
             .iter()
             .enumerate()
             .map(|(i, o)| {
                 let id = u32::from_le_bytes(o[140..144].try_into().unwrap());
-                json!([i, pega(o, "main_type"), pega(o, "sub_type"), id, pega(o, "num"), pega(o, "szName"), pega(o, "buy_0_price"), nome_do_item(id)])
+                let c = conferir_com_o_elements(&g, o, &e, &ids);
+                if !c.vazia() {
+                    conferencias.insert(i.to_string(), json!(c));
+                }
+                let ativas = (0..4).take_while(|k| pega(o, &format!("buy_{k}_price")).as_u64() > Some(0)).count();
+                // A opção que o cartão do cliente mostra: a primeira com preço (`GetFirstBuyStatus`, `DlgQShop.cpp:914-929`).
+                let mostrada = (0..4).find(|k| pega(o, &format!("buy_{k}_price")).as_u64() > Some(0));
+                let k = mostrada.unwrap_or(0);
+                let (selo, vip, brinde) = if v126 {
+                    (pega(o, "status"), Value::Null, Value::Null)
+                } else {
+                    let vip = if g.formato == pw_data_loader::gshop::FormatoDoGshop::V155Vip { pega(o, &format!("buy_{k}_min_vip_level")) } else { Value::Null };
+                    (pega(o, &format!("buy_{k}_status")), vip, pega(o, "idGift"))
+                };
+                json!([
+                    i, pega(o, "main_type"), pega(o, "sub_type"), id, pega(o, "num"), pega(o, "szName"), pega(o, "buy_0_price"), nome_do_item(id),
+                    icone_do_item(id), selo, vip, brinde, ativas, pega(o, "icon"), mostrada.map_or(json!(0), |k| pega(o, &format!("buy_{k}_price")))
+                ])
             })
             .collect();
         let categorias: Vec<Value> = g
@@ -2830,8 +3206,8 @@ impl Estudio {
             .collect();
         Ok(json!({
             "arquivo": arquivo, "formato": format!("{:?}", g.formato), "carimbo": g.carimbo, "no_rascunho": item.is_some(),
-            "colunas": ["indice", "main_type", "sub_type", "id", "num", "szName", "buy_0_price", "item"],
-            "ofertas": ofertas, "categorias": categorias,
+            "colunas": ["indice", "main_type", "sub_type", "id", "num", "szName", "buy_0_price", "item", "icone", "selo", "vip", "brinde", "opcoes", "imagem", "preco_mostrado"],
+            "ofertas": ofertas, "categorias": categorias, "conferencias": conferencias,
             "campos": campos.iter().map(|(n, t, _)| json!([n, t])).collect::<Vec<_>>(),
         }))
     }
@@ -2868,12 +3244,22 @@ impl Estudio {
         .await
     }
 
+    /// Edita os campos da oferta. Recusa a mudança que cria um **erro novo** na conferência (`gs::conferir_oferta`,
+    /// as regras de carga do GS); erro que a oferta já tinha não impede editar o resto.
     pub async fn editar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        let ids = mapa_de_ids(&e);
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
             let mut o = g.ofertas.get(indice).cloned().with_context(|| format!("oferta {indice} não existe"))?;
             let antes = gs::ler_oferta(g, &o);
+            let conferencia_antes = conferir_com_o_elements(g, &o, &e, &ids);
             for (k, v) in &campos {
                 gs::definir_campo(g, &mut o, k, v)?;
+            }
+            let novos: Vec<String> =
+                conferir_com_o_elements(g, &o, &e, &ids).erros.into_iter().filter(|x| !conferencia_antes.erros.contains(x)).collect();
+            if !novos.is_empty() {
+                bail!("a oferta ficaria inválida: {}", novos.join("; "));
             }
             let depois = gs::ler_oferta(g, &o);
             let mudou: Map<String, Value> = depois.iter().filter(|(k, x)| antes.get(*k) != Some(*x)).map(|(k, x)| (k.clone(), json!([antes[k], x]))).collect();
@@ -2884,13 +3270,25 @@ impl Estudio {
         .await
     }
 
-    /// Oferta nova no fim da lista (não muda o índice de ninguém), cópia do `base`.
-    pub async fn clonar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, base: usize) -> Result<Value> {
+    /// Oferta nova no fim da lista (não muda o índice de ninguém), cópia do `base` com os `campos` trocados (o item, a
+    /// aba e a subaba da oferta nova); recusa se a cópia teria erro na conferência.
+    pub async fn clonar_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, base: usize, campos: Map<String, Value>) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        let ids = mapa_de_ids(&e);
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
-            let o = g.ofertas.get(base).cloned().with_context(|| format!("oferta {base} não existe"))?;
+            let mut o = g.ofertas.get(base).cloned().with_context(|| format!("oferta {base} não existe"))?;
+            for (k, v) in &campos {
+                gs::definir_campo(g, &mut o, k, v)?;
+            }
+            if !campos.is_empty() {
+                let c = conferir_com_o_elements(g, &o, &e, &ids);
+                if !c.erros.is_empty() {
+                    bail!("a oferta nova ficaria inválida: {}", c.erros.join("; "));
+                }
+            }
             g.ofertas.push(o);
             let indice = g.ofertas.len() - 1;
-            Ok((json!({ "indice": indice }), json!({ "acao": "nova", "tipo": "oferta", "indice": indice, "base": base })))
+            Ok((json!({ "indice": indice }), json!({ "acao": "nova", "tipo": "oferta", "indice": indice, "base": base, "campos": campos })))
         })
         .await
     }
@@ -2906,6 +3304,249 @@ impl Estudio {
             Ok((json!({ "removida": indice }), json!({ "acao": "removida", "tipo": "oferta", "indice": indice, "nome": nome })))
         })
         .await
+    }
+}
+
+// ------------------------------------------------------------------ Estúdio G-Shop: abas, imagens e conferência
+
+/// Pilha máxima do item como o `get_item_pile_limit` do GS (`cgame/gs/template/itemdataman.cpp:815`): o
+/// `pile_num_max` do registro; registro sem esse campo = 1 (os `return 1` do fim do `switch`); id que não está no espaço
+/// ESSENCE = `None` (o GS devolve 0 e recusa).
+fn pilha_do_item(e: &ElementsEditavel, ids: &HashMap<(String, i32), (usize, usize)>, id: u32) -> Option<u32> {
+    let &(ti, ri) = ids.get(&("ESSENCE".to_string(), id as i32))?;
+    if ti == CONVERSAS {
+        return None;
+    }
+    Some(match e.tabelas[ti].ler(ri).ok().and_then(|r| r.get("pile_num_max").and_then(FieldValue::as_i32)) {
+        Some(p) => p.max(0) as u32,
+        None => 1,
+    })
+}
+
+fn conferir_com_o_elements(g: &GshopEditavel, o: &[u8], e: &ElementsEditavel, ids: &HashMap<(String, i32), (usize, usize)>) -> gs::Conferencia {
+    gs::conferir_oferta(g, o, &|id| pilha_do_item(e, ids, id))
+}
+
+/// Um botão de aba principal do diálogo da loja: o texto que o arquivo de interface traz (o cliente o troca pelo
+/// `szName` do `gshop`, `DlgQShop.cpp:1287`) e as imagens de botão solto e apertado (`FrameUpImage`/`FrameDownImage`).
+#[derive(Debug, Clone)]
+struct BotaoDeAba {
+    texto: String,
+    normal: Option<String>,
+    selecionada: Option<String>,
+}
+
+/// O diálogo que mostra a loja no cliente: tema 0 = `interfaces\*.xml` (lista `ingame.dcf`), tema 1 =
+/// `interfaces\version01\*.xml` (`ingame-v1.dcf`, `EC_UIManager.cpp:136-145`); no 1.2.6 o `qshop.dtf`.
+#[derive(Debug, Clone)]
+struct DialogoDaLoja {
+    tema: u8,
+    arquivo: String,
+    principais: Vec<BotaoDeAba>,
+    /// Quantos `Btn_SubType0..N` o diálogo tem (fora o `Btn_SubType-1`, o "todos" da aba, `DlgQShop.cpp:806-822`).
+    subabas: usize,
+    /// Todos os botões usam a mesma imagem (o `qshop.dtf` do 1.2.6): trocá-la mudaria todos.
+    compartilhada: bool,
+}
+
+/// Os diálogos de cada loja: `gshop.data` → `Win_QShop` (`qshop`), `gshop1.data` → `Win_BackShop` (`backshop`,
+/// `DlgQShop.cpp:1087-1099`), `gshop2.data` → a loja VIP, mostrada dentro da `Win_QShop` na aba 5
+/// (`IsCashVipShopItem`/`GetCashVipItemIndex`, `DlgQShop.cpp:1705-1736`).
+fn dialogos_candidatos(arquivo: &str) -> [(u8, String); 3] {
+    let nome = if arquivo == "gshop1.data" { "backshop" } else { "qshop" };
+    [
+        (0, format!("interfaces\\{nome}.xml")),
+        (1, format!("interfaces\\version01\\{nome}.xml")),
+        (0, format!("interfaces\\{nome}.dtf")),
+    ]
+}
+
+/// Os atributos `nome="..."` de um trecho de XML.
+fn atributo(trecho: &str, marca: &str, nome: &str) -> Option<String> {
+    let i = trecho.find(marca)?;
+    let resto = &trecho[i..];
+    let fim_da_marca = resto.find('>').unwrap_or(resto.len());
+    let resto = &resto[..fim_da_marca];
+    let a = resto.find(&format!("{nome}=\""))? + nome.len() + 2;
+    Some(resto[a..a + resto[a..].find('"')?].to_string())
+}
+
+/// Lê o `qshop.xml`/`backshop.xml` (UTF-16LE, o formato do cliente 1.5.5 BR).
+fn ler_dialogo_xml(bytes: &[u8]) -> (Vec<BotaoDeAba>, usize) {
+    let corpo = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
+    let u: Vec<u16> = corpo.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let xml = String::from_utf16_lossy(&u);
+    let mut principais = Vec::new();
+    for i in 0..16 {
+        let Some(ini) = xml.find(&format!("Name=\"Btn_MainType{i}\"")) else { break };
+        let fim = xml[ini..].find("</STILLIMAGEBUTTON>").map_or(xml.len(), |f| ini + f);
+        let t = &xml[ini..fim];
+        principais.push(BotaoDeAba {
+            texto: atributo(t, "<Text ", "String").unwrap_or_default(),
+            normal: atributo(t, "<FrameUpImage", "FileName"),
+            selecionada: atributo(t, "<FrameDownImage", "FileName"),
+        });
+    }
+    let subabas = (0..16).take_while(|k| xml.contains(&format!("Name=\"Btn_SubType{k}\""))).count();
+    (principais, subabas)
+}
+
+/// Lê o `qshop.dtf` do 1.2.6 (GBK, uma linha por controle: `STILLIMAGEBUTTON "nome" "comando" "texto" x y w h … "imagem
+/// solta" "imagem apertada" …`).
+fn ler_dialogo_dtf(bytes: &[u8]) -> (Vec<BotaoDeAba>, usize) {
+    let texto = encoding_rs::GBK.decode(bytes).0.into_owned();
+    let mut principais = Vec::new();
+    let mut subabas = 0;
+    for linha in texto.lines() {
+        let aspas: Vec<&str> = linha.split('"').skip(1).step_by(2).collect();
+        let Some(nome) = aspas.first() else { continue };
+        if nome.strip_prefix("Btn_MainType").is_some_and(|n| n.parse::<u32>().is_ok()) {
+            principais.push(BotaoDeAba {
+                texto: aspas.get(2).unwrap_or(&"").to_string(),
+                normal: aspas.get(3).map(|s| s.to_string()),
+                selecionada: aspas.get(4).map(|s| s.to_string()),
+            });
+        } else if nome.strip_prefix("Btn_SubType").is_some_and(|n| n.parse::<u32>().is_ok()) {
+            subabas += 1;
+        }
+    }
+    (principais, subabas)
+}
+
+/// Caminho no cliente de uma imagem de interface (o motor de interface a procura em `surfaces\`).
+fn caminho_de_superficie(p: &str) -> String {
+    let p = p.replace('/', "\\");
+    if p.to_lowercase().starts_with("surfaces\\") { p } else { format!("surfaces\\{p}") }
+}
+
+/// Tamanho do quadro da imagem da oferta: `Img_Item` de 128×128 no `qshop.xml` e no `qshopbuy.xml` do 1.5.5 BR e no
+/// `qshop.dtf` do 1.2.6 (medido); as imagens das ofertas do cliente são DDS de 128×128.
+pub const LADO_DA_IMAGEM_DA_OFERTA: u32 = 128;
+
+impl Estudio {
+    async fn dialogos_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>) -> Result<Vec<DialogoDaLoja>> {
+        caminho_da_loja(arquivo)?;
+        let mut r = Vec::new();
+        for (tema, caminho) in dialogos_candidatos(arquivo) {
+            // O 1.5.5 BR ainda traz um `qshop.dtf` antigo, que o `ingame.dcf` não lista: o `.dtf` só vale sem `.xml`.
+            if caminho.ends_with(".dtf") && !r.is_empty() {
+                continue;
+            }
+            let Ok(b) = self.bytes_do_cliente(gov, versao, &caminho, rascunho).await else { continue };
+            let (principais, subabas) = if caminho.ends_with(".xml") { ler_dialogo_xml(&b) } else { ler_dialogo_dtf(&b) };
+            if principais.is_empty() {
+                continue;
+            }
+            let primeira = principais[0].normal.clone();
+            let compartilhada = principais.len() > 1 && principais.iter().all(|p| p.normal == primeira);
+            r.push(DialogoDaLoja { tema, arquivo: caminho, principais, subabas, compartilhada });
+        }
+        Ok(r)
+    }
+
+    /// As abas da loja como o cliente as desenha: quantos botões de aba e de subaba o diálogo tem, o texto e as
+    /// imagens de cada aba principal (com o tamanho, para a troca), por tema de interface.
+    pub async fn abas_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>) -> Result<Value> {
+        let mut temas = Vec::new();
+        for d in self.dialogos_da_loja(gov, versao, arquivo, rascunho).await? {
+            let mut abas = Vec::new();
+            for (i, b) in d.principais.iter().enumerate() {
+                let mut imagens = Map::new();
+                for (estado, p) in [("normal", &b.normal), ("selecionada", &b.selecionada)] {
+                    let Some(p) = p else { continue };
+                    let caminho = caminho_de_superficie(p);
+                    let medida = match self.bytes_do_cliente(gov, versao, &caminho, rascunho).await {
+                        Ok(bytes) => pw_data_loader::imagem::decodificar(&bytes).map(|i| json!({ "largura": i.largura, "altura": i.altura })),
+                        Err(_) => None,
+                    };
+                    imagens.insert(estado.into(), json!({ "caminho": caminho, "existe": medida.is_some(), "medida": medida }));
+                }
+                abas.push(json!({ "indice": i, "texto_do_dialogo": b.texto, "imagens": imagens }));
+            }
+            temas.push(json!({
+                "tema": d.tema, "dialogo": d.arquivo, "botoes_de_aba": d.principais.len(), "botoes_de_subaba": d.subabas,
+                "imagem_compartilhada": d.compartilhada, "abas": abas,
+            }));
+        }
+        Ok(json!({ "arquivo": arquivo, "temas": temas }))
+    }
+
+    /// Uma imagem de interface do cliente (TGA/DDS em `surfaces\`) em PNG, para o painel mostrar.
+    pub async fn imagem_do_cliente_em_png(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: Option<i64>) -> Result<Vec<u8>> {
+        let caminho = caminho_de_superficie(caminho);
+        let b = self.bytes_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let img = pw_data_loader::imagem::decodificar(&b).with_context(|| format!("{caminho}: formato de imagem não lido"))?;
+        crate::mapas::png(img.largura, img.altura, &img.rgba)
+    }
+
+    /// Troca a imagem de uma aba principal (`estado` = `normal` ou `selecionada`) por um PNG do mesmo tamanho, gravada
+    /// no formato do arquivo original (TGA de 32 bits ou DDS). Item `cliente`: só o cliente desenha a aba.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn trocar_imagem_da_aba(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, aba: usize, tema: u8, estado: &str, png: &[u8]) -> Result<Value> {
+        let dialogos = self.dialogos_da_loja(gov, versao, arquivo, Some(rascunho)).await?;
+        let d = dialogos.iter().find(|d| d.tema == tema).with_context(|| format!("o cliente não tem o diálogo da loja no tema {tema}"))?;
+        if d.compartilhada {
+            bail!(
+                "em {} as abas não têm imagem própria: todos os botões usam {} — trocar mudaria todos os botões do jogo que usam esse arquivo",
+                d.arquivo,
+                d.principais[0].normal.clone().unwrap_or_default()
+            );
+        }
+        let b = d.principais.get(aba).with_context(|| format!("o diálogo {} não tem a aba {aba}", d.arquivo))?;
+        let p = match estado {
+            "normal" => &b.normal,
+            "selecionada" => &b.selecionada,
+            _ => bail!("estado: normal ou selecionada"),
+        };
+        let caminho = caminho_de_superficie(p.as_deref().with_context(|| format!("a aba {aba} não tem imagem {estado}"))?);
+        let nova = pw_data_loader::imagem::png(png).context("a imagem enviada não é um PNG legível")?;
+        let (c2, estado2) = (caminho.clone(), estado.to_string());
+        self.alterar_item_do_cliente(gov, versao, &caminho, rascunho, move |atual| {
+            let velha = pw_data_loader::imagem::decodificar(atual).with_context(|| format!("{c2}: formato não lido"))?;
+            if (velha.largura, velha.altura) != (nova.largura, nova.altura) {
+                bail!("a imagem precisa ter {}×{} (a do botão), não {}×{}", velha.largura, velha.altura, nova.largura, nova.altura);
+            }
+            let bytes = if pw_data_loader::imagem::tga(atual).is_some() { pw_data_loader::imagem::tga_32(&nova) } else { pw_data_loader::imagem::dds_dxt(&nova) };
+            Ok((bytes, json!({ "caminho": c2 }), json!({ "acao": "imagem", "tipo": "aba", "aba": aba, "estado": estado2, "caminho": c2 })))
+        })
+        .await
+    }
+
+    /// Imagem própria da oferta (o `icon` do `GSHOP_ITEM`, que o cliente mostra em 128×128 quando a oferta é escolhida
+    /// e na janela de compra, `DlgQShop.cpp:989`, `DlgQShopBuy.cpp:137`; o cartão da vitrine usa o ícone do item,
+    /// `DlgQShopItem.cpp:380`): o PNG vira um DDS novo em `surfaces\百宝阁\` (a pasta das imagens da loja), com o nome
+    /// pelo conteúdo — a imagem antiga pode ser de outras ofertas, então não é sobrescrita.
+    pub async fn trocar_imagem_da_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, indice: usize, png: &[u8]) -> Result<Value> {
+        let nova = pw_data_loader::imagem::png(png).context("a imagem enviada não é um PNG legível")?;
+        if (nova.largura, nova.altura) != (LADO_DA_IMAGEM_DA_OFERTA, LADO_DA_IMAGEM_DA_OFERTA) {
+            bail!("a imagem da oferta precisa ter {0}×{0} (o quadro Img_Item da loja), não {1}×{2}", LADO_DA_IMAGEM_DA_OFERTA, nova.largura, nova.altura);
+        }
+        let dds = pw_data_loader::imagem::dds_dxt(&nova);
+        let sha = sha256(&dds);
+        let nome = format!("estudio_{}.dds", hex::encode(&sha[..6]));
+        let caminho = format!("surfaces\\百宝阁\\{nome}");
+        let ja_tem = self.bytes_do_cliente(gov, versao, &caminho, Some(rascunho)).await.ok().is_some_and(|b| sha256(&b) == sha);
+        if !ja_tem {
+            gov.gravar_arquivo(versao, rascunho, &caminho, dds, "cliente").await?;
+        }
+        let mut campos = Map::new();
+        campos.insert("icon".into(), json!(format!("Surfaces\\百宝阁\\{nome}")));
+        let r = self.editar_oferta(gov, versao, arquivo, rascunho, indice, campos).await?;
+        Ok(json!({ "caminho": caminho, "resultado": r }))
+    }
+
+    /// Confere uma oferta (a `indice`, ou uma nova copiada de `indice`) com os `campos` aplicados, sem gravar.
+    pub async fn conferir_oferta(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: Option<i64>, indice: usize, campos: Map<String, Value>) -> Result<Value> {
+        let caminho = caminho_da_loja(arquivo)?;
+        let (_, _, _, bytes, _) = self.item_do_cliente(gov, versao, &caminho, rascunho).await?;
+        let g = GshopEditavel::ler(&bytes)?;
+        let mut o = g.ofertas.get(indice).cloned().with_context(|| format!("oferta {indice} não existe"))?;
+        for (k, v) in &campos {
+            gs::definir_campo(&g, &mut o, k, v)?;
+        }
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let ids = mapa_de_ids(&e);
+        Ok(json!(conferir_com_o_elements(&g, &o, &e, &ids)))
     }
 }
 
@@ -3170,7 +3811,21 @@ impl Estudio {
     /// Categorias da loja (B257): `acao` = `renomear` (`categoria`, `sub?`, `nome`), `nova` (subcategoria no fim de
     /// `categoria`, com `nome`) ou `remover` (a última subcategoria de `categoria`, se nenhuma oferta a usa).
     pub async fn categoria_da_loja(&self, gov: &Governanca, versao: &str, arquivo: &str, rascunho: i64, pedido: Value) -> Result<Value> {
+        // G-Shop: a subaba nova precisa de botão no diálogo da loja (`Btn_SubType0..7` nos dois clientes; a que passa
+        // disso não aparece, e as ofertas dela só se veem no "todos" da aba, `DlgQShop.cpp:667-680, 822`).
+        let limite = self.dialogos_da_loja(gov, versao, arquivo, Some(rascunho)).await?.iter().map(|d| (d.subabas, d.arquivo.clone())).min();
         self.alterar_loja(gov, versao, arquivo, rascunho, move |g| {
+            if pedido["acao"].as_str() == Some("nova") {
+                let c = pedido["categoria"].as_u64().unwrap_or(0) as usize;
+                if let (Some((n, dialogo)), Some(cat)) = (&limite, g.categorias.get(c)) {
+                    if cat.subcategorias.len() >= *n {
+                        bail!(
+                            "a aba já tem {} subabas e o diálogo da loja ({dialogo}) só tem {n} botões de subaba: a nova não teria botão na tela (as ofertas dela só apareceriam no \"todos\" da aba)",
+                            cat.subcategorias.len()
+                        );
+                    }
+                }
+            }
             let c = pedido["categoria"].as_u64().context("categoria")? as usize;
             let texto = |k: &str| pedido[k].as_str().map(str::to_string).with_context(|| format!("{k}: texto"));
             let (resposta, mudanca) = match pedido["acao"].as_str() {
@@ -3499,6 +4154,29 @@ impl Estudio {
         .await
     }
 
+    /// B373: troca a animação-base de uma ação combinada do `.ecm` (`pw_data_loader::ecm::trocar_base`), conferindo que a
+    /// base existe no `.smd` do modelo (lido com o rascunho). Item `cliente`.
+    pub async fn trocar_base_da_acao(&self, gov: &Governanca, versao: &str, caminho: &str, rascunho: i64, acao: String, base: String) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+        // O `.smd` citado pelo `.ecm` é caminho do cliente, como na ficha (`admin.rs`, `bases_do_smd`).
+        let smd = ecm.smd.clone();
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if !c.lista_de_acoes.iter().any(|a| a.nome == base) {
+            bail!("a ação-base {base} não existe no {smd}");
+        }
+        self.alterar_item_do_cliente(gov, versao, caminho, rascunho, move |b| {
+            let antes = pw_data_loader::ecm::ler(b).and_then(|e| e.acoes.into_iter().find(|a| a.nome == acao)).map(|a| a.bases).unwrap_or_default();
+            let novo = pw_data_loader::ecm::trocar_base(b, &acao, &base).map_err(anyhow::Error::msg)?;
+            pw_data_loader::ecm::ler(&novo).context("o .ecm editado não relê")?;
+            let mudanca = json!({ "acao": "base_trocada", "tipo": "acao_combinada", "nome": acao, "antes": antes, "depois": [base] });
+            Ok((novo, json!({ "nome": acao }), mudanca))
+        })
+        .await
+    }
+
     /// B290 (S6): substitui a pele `destino` (`.ski` do cliente) pelo glTF `glb` (`pw_data_loader::importar::ski_do_glb`),
     /// com os ossos casados pelo nome no esqueleto do `.smd` `smd` (lido com o rascunho). Devolve o relatório.
     pub async fn importar_pele(&self, gov: &Governanca, versao: &str, rascunho: i64, smd: &str, destino: &str, glb: Vec<u8>) -> Result<Value> {
@@ -3516,7 +4194,9 @@ impl Estudio {
         pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
         let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, destino, imp.texturas_novas).await?;
         let resumo = json!({ "texturas_gravadas": texturas_gravadas,
-            "malhas": imp.ski.malhas_de_pele.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+            // Malhas com pele e rígidas (o item no chão e a mina costumam ser só rígidas), como a conferência conta.
+            "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+            "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>() + imp.ski.malhas_rigidas.iter().map(|m| m.vertices.len()).sum::<usize>(),
             "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon, "relatorio": imp.relatorio,
         });
         let mudanca = json!({ "acao": "importar", "tipo": "pele", "de": "glTF", "esqueleto": caminho_bon });
@@ -4106,7 +4786,11 @@ impl Estudio {
     /// resto, vazia: sem ações). O esqueleto vem de `importar::esqueleto_do_glb`, a pele de `ski_do_glb` (com as
     /// texturas em `Textures\`), as ações de `acoes_do_glb` (`<ação>.stck`, quadros 0 a n−1). Tudo é montado e conferido
     /// antes de gravar; recusa pasta fora de `models\`, nome fora do GBK e arquivo que já existe no cliente.
-    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>, molde: Option<&str>) -> Result<Value> {
+    /// B383: `ganchos` = os ganchos que o esqueleto do GLB tem de ter (um deles basta): arma `CC_weapon` ou `CC_qiu`
+    /// (`EC_Player.cpp:9972-9993`), asa `CC_chibang`, voo e rodas `CC_feijian` (`:1940-1966`) — sem ele o cliente não
+    /// pendura o modelo no personagem. `validar` só confere e devolve o relatório, sem gravar.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn modelo_novo(&self, gov: &Governanca, versao: &str, rascunho: i64, pasta: &str, titulo: &str, glb: Vec<u8>, molde: Option<&str>, ganchos: Option<&str>, validar: bool) -> Result<Value> {
         let pasta = pasta.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
         let titulo = titulo.trim();
         if !pasta.to_lowercase().starts_with("models\\") || pasta.split('\\').any(|p| p.is_empty() || p == "." || p == "..") {
@@ -4126,10 +4810,22 @@ impl Estudio {
             }
         }
         let (bon, mut relatorio) = pw_data_loader::importar::esqueleto_do_glb(&glb).map_err(anyhow::Error::msg)?;
+        let tem: Vec<String> = bon.ganchos.iter().map(|g| g.nome.clone()).collect();
+        if let Some(exigidos) = ganchos.map(|g| g.split(',').map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>()).filter(|g| !g.is_empty()) {
+            if !exigidos.iter().any(|g| tem.iter().any(|t| t.eq_ignore_ascii_case(g))) {
+                bail!("o esqueleto do GLB não tem o gancho {} — sem ele o cliente não pendura o modelo no personagem. No Blender, crie um Empty com esse nome filho do osso onde o personagem segura a peça (ganchos do GLB: {})",
+                    exigidos.join(" ou "), if tem.is_empty() { "nenhum".to_string() } else { tem.join(", ") });
+            }
+        }
         let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         relatorio.extend(imp.relatorio.iter().cloned());
         let (acoes, rel_acoes) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
         relatorio.extend(rel_acoes);
+        if validar {
+            return Ok(json!({ "validacao": true, "resultado": { "ossos": bon.ossos.len(), "ganchos": tem,
+                "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(),
+                "acoes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>(), "relatorio": relatorio } }));
+        }
         let pasta_trilhas = if acoes.is_empty() { String::new() } else { format!("tcks_{titulo}") };
         let mut entradas = Vec::new();
         let mut stcks = Vec::new();
@@ -4155,7 +4851,7 @@ impl Estudio {
         // B299: o .ecm (o que a tabela cita para NPC e monstro; o jogo põe a pele <.ecm>.ski, B282 — a <título>.ski ao
         // lado) a partir de um .ecm do cliente como molde (`ecm::ecm_novo`): uma ação combinada por ação, de mesmo nome.
         let nomes_acoes: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
-        let (molde_usado, b_ecm) = self.molde_de_ecm(gov, versao, molde, &c_smd, &nomes_acoes).await?;
+        let (molde_usado, b_ecm) = self.molde_de_ecm(gov, versao, Some(rascunho), molde, &c_smd, &nomes_acoes).await?;
         pw_data_loader::ecm::ler(&b_ecm).context("o .ecm gerado não relê")?;
         let texturas = self.gravar_texturas(gov, versao, rascunho, &c_ski, imp.texturas_novas).await?;
         let trava = self.trava(rascunho);
@@ -4175,10 +4871,11 @@ impl Estudio {
     /// B299: o `.ecm` novo a partir de um molde do cliente. Com `preferido`, esse `.ecm`; senão, entre os `.ecm` da versão de
     /// `.ecm` mais comum desta versão de jogo, o 1º (em ordem de caminho) que serve (`ecm::ecm_novo`: sem peles
     /// adicionais nem modelo filho, com uma ação combinada simples) — reproduzível. Devolve o molde usado e os bytes.
-    async fn molde_de_ecm(&self, gov: &Governanca, versao: &str, preferido: Option<&str>, smd: &str, acoes: &[String]) -> Result<(String, Vec<u8>)> {
+    async fn molde_de_ecm(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, preferido: Option<&str>, smd: &str, acoes: &[String]) -> Result<(String, Vec<u8>)> {
         if let Some(p) = preferido.filter(|p| !p.trim().is_empty()) {
-            let (nome, b) = gov.conteudo(versao, p)?;
-            return Ok((nome, pw_data_loader::ecm::ecm_novo(&b, smd, acoes).map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?));
+            // B380: o molde preferido (o .ecm atual do monstro) pode existir só no rascunho (um modelo importado antes).
+            let b = self.bytes_do_cliente(gov, versao, p, rascunho).await.map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?;
+            return Ok((p.to_string(), pw_data_loader::ecm::ecm_novo(&b, smd, acoes).map_err(|x| anyhow::anyhow!("molde {p}: {x}"))?));
         }
         let i = self.indice_de_ecm(gov, versao).await?;
         let mut contagem: HashMap<u32, usize> = HashMap::new();
@@ -4225,24 +4922,39 @@ impl Estudio {
                     bail!("nome de ação inválido: \"{}\"", a.nome);
                 }
                 nomes::gbk_de_unicode(&a.nome).with_context(|| format!("a ação \"{}\" tem caracteres que não existem em GBK", a.nome))?;
+                // B381: a ação que voltou igual (ida e volta pelo Blender sem mexer nela) não é acrescentada — no v5 a
+                // ação nova vai para o fim da trilha e o `.bon` cresceria a cada importação.
+                if pw_data_loader::importar::acao_v5_igual(&bon, &modelo, a) {
+                    feitas.push(json!({ "nome": a.nome, "quadros": a.quadro_final as i32 + 1, "acao": "igual à do cliente (não gravada)" }));
+                    continue;
+                }
                 let existia = modelo.acoes.iter().any(|x| x.nome == a.nome);
                 let (qi, qf) = pw_data_loader::importar::anexar_acao_v5(&mut bon, &mut modelo, a).map_err(anyhow::Error::msg)?;
                 feitas.push(json!({ "nome": a.nome, "quadros": qf - qi + 1, "intervalo": [qi, qf], "trilhas": bon.trilhas.len(), "fps": bon.fps,
                     "acao": if existia { "substituída (as chaves antigas ficam na trilha sem uso)" } else { "adicionada" } }));
             }
+            if feitas.iter().all(|x| x["acao"].as_str().is_some_and(|a| a.starts_with("igual"))) {
+                let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len(), "esqueleto": caminho_bon });
+                return Ok(json!({ "resultado": resumo, "igual_ao_publicado": true }));
+            }
             let novo_bon = bon.escrever();
             pw_data_loader::bon::Bon::ler(&novo_bon).map_err(|x| anyhow::anyhow!("o .bon editado não relê: {x}"))?;
             let novo_smd = modelo.escrever();
             pw_data_loader::smd::Smd::ler(&novo_smd).context("o .smd editado não relê")?;
-            let nomes_feitos: Vec<String> = acoes.iter().map(|a| a.nome.clone()).collect();
+            let nomes_feitos: Vec<String> = feitas.iter().filter(|x| !x["acao"].as_str().is_some_and(|a| a.starts_with("igual"))).filter_map(|x| x["nome"].as_str().map(str::to_string)).collect();
             let m_bon = json!({ "acao": "importar", "tipo": "trilhas", "de": "glTF", "nomes": nomes_feitos });
             self.alterar_item_do_cliente(gov, versao, &caminho_bon, rascunho, move |_| Ok((novo_bon, json!({}), m_bon))).await?;
             let resumo = json!({ "acoes": feitas, "relatorio": relatorio, "acoes_do_modelo": modelo.acoes.len(), "esqueleto": caminho_bon });
-            let m_smd = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
+            let m_smd = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": nomes_feitos });
             return self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo_smd, resumo, m_smd))).await;
         }
         let titulo = smd.rsplit('\\').next().unwrap_or(smd).rsplit_once('.').map_or(smd, |x| x.0).to_string();
         let pasta = modelo.pasta_das_trilhas.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| format!("tcks_{titulo}"));
+        // B380: no `.smd` v8 a pasta das trilhas é a gravada nele (`A3DSkinModelMan.cpp:214-224`; antes do v8,
+        // `tcks_<título>`). Vazia, a `.stck` em `tcks_<título>` não seria achada: grava-se a pasta.
+        if modelo.versao >= 8 && modelo.pasta_das_trilhas.as_deref().is_none_or(str::is_empty) {
+            modelo.pasta_das_trilhas = Some(pasta.clone());
+        }
         let mut feitas = Vec::new();
         for a in &acoes {
             if a.nome.is_empty() || a.nome.contains(['\\', '/']) {
@@ -4284,6 +4996,250 @@ impl Estudio {
         }
         let mudanca = json!({ "acao": "importar", "tipo": "acoes", "de": "glTF", "nomes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>() });
         self.alterar_item_do_cliente(gov, versao, smd, rascunho, move |_| Ok((novo, resumo, mudanca))).await
+    }
+
+    /// B380: importa um GLB no modelo de um monstro/NPC (o `.ecm` `caminho`, lido com o rascunho), conferindo antes que o
+    /// esqueleto do GLB é o do modelo (`importar::conferir_esqueleto`, pelo nome de cada osso e da mãe):
+    /// - `modelo`: só malha e texturas — o glTF vira a pele `<.ecm>.ski`, a que o jogo põe no NPC/monstro
+    ///   (`CECNPC::LoadNPCModel`, `EC_NPC.cpp:186-222`, B282), com os ossos casados pelo nome no `.bon`; esqueleto e
+    ///   animações ficam. Se o `<.ecm>.ski` ainda não existe, é acrescentado.
+    /// - `animacoes`: só as animações, como ações do `.smd` (`importar_acoes`; o nome volta ao do cliente por
+    ///   `importar::nome_original`).
+    /// O "tudo" (modelo + texturas + esqueleto + animações) é o `modelo_novo`, com `remover_modelo_sem_uso` depois.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn importar_glb_no_modelo(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str, modo: &str, como: Option<&str>, validar: bool, glb: Vec<u8>) -> Result<Value> {
+        if !caminho.to_lowercase().ends_with(".ecm") {
+            bail!("o modelo é um .ecm");
+        }
+        let equipamento = como == Some("equipamento");
+        // Item no chão e mina (`CECMatter::LoadMatterModel`, `EC_Matter.cpp:71-107`): as peles do .smd e, sem nenhuma, a
+        // `<.smd>.ski` (`:96-103`) — nunca a `<.ecm>.ski` do NPC.
+        let matter = como == Some("matter");
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+        let smd = ecm.smd.trim().replace('/', "\\");
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        if c.esqueleto.is_empty() {
+            bail!("{smd} não cita esqueleto: importe com \"tudo\"");
+        }
+        let caminho_bon = ao_lado(&smd, &c.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, Some(rascunho)).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        pw_data_loader::importar::conferir_esqueleto(&glb, &bon).map_err(|x| anyhow::anyhow!("{x}. Para trocar o esqueleto, importe com \"tudo\"."))?;
+        // B383: só conferir — o que a importação faria, sem gravar.
+        if validar {
+            return Ok(match modo {
+                "animacoes" => {
+                    let (acoes, relatorio) = pw_data_loader::importar::acoes_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                    json!({ "validacao": true, "resultado": { "acoes": acoes.iter().map(|a| a.nome.clone()).collect::<Vec<_>>(), "relatorio": relatorio, "esqueleto": caminho_bon } })
+                }
+                "modelo" => {
+                    let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                    json!({ "validacao": true, "resultado": { "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+                        "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>() + imp.ski.malhas_rigidas.iter().map(|m| m.vertices.len()).sum::<usize>(),
+                        "ossos": imp.ski.ossos.len(), "texturas": imp.ski.texturas, "esqueleto": caminho_bon,
+                        "ganchos": bon.ganchos.iter().map(|g| g.nome.clone()).collect::<Vec<_>>(), "relatorio": imp.relatorio } })
+                }
+                _ => bail!("modo de importação: modelo ou animacoes (o \"tudo\" é modelos/novo)"),
+            });
+        }
+        match modo {
+            "animacoes" => self.importar_acoes(gov, versao, rascunho, &smd, glb).await,
+            // B383: equipamento (arma, asa, voo): o cliente carrega o .ecm com as peles do próprio .smd
+            // (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`), não a `<.ecm>.ski` do NPC — o GLB vai para a
+            // 1ª pele do .smd, e as outras saem da lista (o GLB exportado trouxe as malhas de todas).
+            "modelo" if equipamento || (matter && !c.peles.is_empty()) => {
+                let ecm_lido = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho, Some(rascunho)).await?).context("o .ecm não lê")?;
+                if equipamento && !ecm_lido.peles_adicionais.is_empty() {
+                    bail!("o .ecm tem {} pele(s) adicional(is) além das do .smd: importe com \"tudo\"", ecm_lido.peles_adicionais.len());
+                }
+                let bytes_smd = self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await?;
+                let mut modelo = pw_data_loader::smd::Smd::ler(&bytes_smd).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+                let primeira = modelo.peles.first().cloned().with_context(|| format!("{smd} não cita pele: importe com \"tudo\""))?;
+                let destino = ao_lado(&smd, &primeira);
+                let mut r = self.importar_pele(gov, versao, rascunho, &smd, &destino, glb).await?;
+                if modelo.peles.len() > 1 {
+                    let tiradas: Vec<String> = modelo.peles.drain(1..).collect();
+                    let novo = modelo.escrever();
+                    pw_data_loader::smd::Smd::ler(&novo).context("o .smd editado não relê")?;
+                    {
+                        let trava = self.trava(rascunho);
+                        let _guarda = trava.lock().await;
+                        gov.gravar_arquivo(versao, rascunho, &smd, novo, "cliente").await?;
+                    }
+                    r["peles_tiradas_do_smd"] = json!(tiradas);
+                }
+                r["pele"] = json!(destino);
+                Ok(r)
+            }
+            "modelo" => {
+                // NPC: a `<.ecm>.ski`; item no chão/mina sem pele no .smd: a `<.smd>.ski` (`EC_Matter.cpp:96-103`).
+                let base = if matter { smd.as_str() } else { caminho };
+                let destino = format!("{}.ski", base.rsplit_once('.').map_or(base, |x| x.0));
+                if self.bytes_do_cliente(gov, versao, &destino, Some(rascunho)).await.is_ok() {
+                    return self.importar_pele(gov, versao, rascunho, &smd, &destino, glb).await;
+                }
+                let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon).map_err(anyhow::Error::msg)?;
+                let bytes = imp.ski.escrever();
+                pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
+                let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &destino, imp.texturas_novas).await?;
+                {
+                    let trava = self.trava(rascunho);
+                    let _guarda = trava.lock().await;
+                    gov.gravar_arquivo(versao, rascunho, &destino, bytes, "cliente").await?;
+                }
+                Ok(json!({ "resultado": { "pele": destino, "acao": "adicionada", "texturas_gravadas": texturas_gravadas,
+                    "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(), "ossos": imp.ski.ossos.len(), "esqueleto": caminho_bon, "relatorio": imp.relatorio } }))
+            }
+            _ => bail!("modo de importação: modelo ou animacoes (o \"tudo\" é modelos/novo)"),
+        }
+    }
+
+    /// B380: depois de trocar o modelo inteiro, marca para remoção no rascunho os arquivos do modelo antigo (`.ecm`
+    /// `caminho`) que nada mais usa. Primeiro o `.ecm`: se algum registro do elements (com o rascunho) ainda o cita, se
+    /// algum `.ecm` o tem como filho (`ChildPath:`) ou um objeto dinâmico o usa, nada sai. Depois, cada arquivo do modelo
+    /// só sai se nenhum outro o usa: a pele `<.ecm>.ski`; o `.smd` (nenhum outro `.ecm` nem registro o cita) e, com ele,
+    /// o `.bon`, as peles e as `.stck` que nenhum outro `.smd` cita; e as texturas de cada pele que sai — a de
+    /// `Tex_<título>\` é só dela, a de `Textures\` só sai se nenhuma outra `.ski` da mesma pasta a cita (o cliente acha a
+    /// textura só na pasta da própria pele, `A3DSkin::Load`, B273). Arquivo publicado vira item `remover`; arquivo que só
+    /// existe no rascunho sai do rascunho.
+    pub async fn remover_modelo_sem_uso(&self, gov: &Governanca, versao: &str, rascunho: i64, caminho: &str) -> Result<Value> {
+        let norma = |c: &str| c.trim().replace('/', "\\").trim_start_matches('\\').to_lowercase();
+        let alvo = norma(caminho);
+        if !alvo.ends_with(".ecm") {
+            bail!("só .ecm");
+        }
+        let (e, _) = self.atual(gov, versao, Some(rascunho)).await?;
+        // O caminho como o elements o guarda (GBK, campo de texto fixo terminado em zero), sem diferenciar maiúsculas
+        // ASCII. Um falso "ainda usado" só deixa arquivo a mais — nunca tira um usado.
+        let citado = |c: &str| -> Option<Value> {
+            let alvo = nomes::gbk_de_unicode(c)?.to_ascii_lowercase();
+            for t in &e.tabelas {
+                for (i, r) in t.registros.iter().enumerate() {
+                    let baixo = r.to_ascii_lowercase();
+                    let achou = baixo.windows(alvo.len()).enumerate().any(|(k, w)| {
+                        w == alvo.as_slice() && (k == 0 || baixo[k - 1] == 0) && baixo.get(k + alvo.len()).is_none_or(|x| *x == 0)
+                    });
+                    if achou {
+                        return Some(json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i) }));
+                    }
+                }
+            }
+            None
+        };
+        if let Some(u) = citado(caminho.trim()) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo ainda é usado por outro registro do elements", "usado_por": u }));
+        }
+        let indice = self.indice_de_ecm(gov, versao).await?;
+        if indice.filhos.contains(&alvo) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo é filho de outro .ecm (ChildPath)" }));
+        }
+        if self.modelos_dos_objetos(gov, versao).await.values().any(|m| norma(m) == alvo) {
+            return Ok(json!({ "removidos": [], "motivo": "o modelo é usado por um objeto dinâmico (DynamicObjects.data)" }));
+        }
+        let mut sair: Vec<String> = vec![caminho.trim().to_string()];
+        let mut mantidos: Vec<Value> = Vec::new();
+        let mut peles: Vec<String> = Vec::new();
+        let irma = format!("{}.ski", caminho.trim().rsplit_once('.').map_or(caminho.trim(), |x| x.0));
+        let irmas_de_outros: HashSet<String> = indice.ecms.iter().filter(|x| norma(&x.0) != alvo).map(|x| format!("{}.ski", norma(&x.0).trim_end_matches(".ecm"))).collect();
+        if self.bytes_do_cliente(gov, versao, &irma, Some(rascunho)).await.is_ok() {
+            peles.push(irma.clone());
+        }
+        let ecm = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, caminho.trim(), Some(rascunho)).await?).context("o .ecm não lê")?;
+        let smd = ecm.smd.trim().replace('/', "\\");
+        let outro_ecm_usa_smd = indice.ecms.iter().any(|x| norma(&x.0) != alvo && x.2 == norma(&smd));
+        // O .smd sai? Então os arquivos dele (os do rascunho, que pode tê-lo mudado) só ficam se outro .smd os usa.
+        let smd_sai = if smd.is_empty() {
+            None
+        } else if outro_ecm_usa_smd {
+            mantidos.push(json!({ "caminho": smd, "motivo": "outro .ecm usa o mesmo .smd" }));
+            None
+        } else if let Some(u) = citado(&smd) {
+            mantidos.push(json!({ "caminho": smd, "motivo": "citado no elements", "usado_por": u }));
+            None
+        } else {
+            self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await.ok().and_then(|b| pw_data_loader::smd::cabeca(&b).ok())
+        };
+        let deps_do_smd = smd_sai.as_ref().map(|c| dependencias_do_smd(&smd, c)).unwrap_or_default();
+        // O que outros modelos usam: as dependências dos outros .smd (o mantido conta como outro, com as do rascunho).
+        let mut usados: HashSet<String> = indice.dependencias.iter().filter(|(s, _)| **s != norma(&smd)).flat_map(|x| x.1.iter().cloned()).collect();
+        usados.extend(irmas_de_outros);
+        if smd_sai.is_none() && !smd.is_empty() {
+            if let Ok(c) = self.bytes_do_cliente(gov, versao, &smd, Some(rascunho)).await.map_err(anyhow::Error::from).and_then(|b| pw_data_loader::smd::cabeca(&b).map_err(|x| anyhow::anyhow!("{x}"))) {
+                usados.extend(dependencias_do_smd(&smd, &c).iter().map(|x| norma(x)));
+            }
+        }
+        if smd_sai.is_some() {
+            sair.push(smd.clone());
+        }
+        for dep in deps_do_smd.into_iter().chain(peles.drain(..).collect::<Vec<_>>()) {
+            if sair.iter().any(|x| norma(x) == norma(&dep)) {
+                continue;
+            }
+            if usados.contains(&norma(&dep)) {
+                mantidos.push(json!({ "caminho": dep, "motivo": "outro modelo usa" }));
+            } else if self.bytes_do_cliente(gov, versao, &dep, Some(rascunho)).await.is_ok() {
+                sair.push(dep);
+            }
+        }
+        peles = sair.iter().filter(|x| x.to_lowercase().ends_with(".ski")).cloned().collect();
+        // As texturas das peles que saem.
+        let saindo: HashSet<String> = sair.iter().map(|x| norma(x)).collect();
+        for pele in &peles {
+            let Ok(s) = self.bytes_do_cliente(gov, versao, pele, Some(rascunho)).await.and_then(|b| pw_data_loader::ski::Ski::ler(&b).map_err(|x| anyhow::anyhow!("{x}"))) else { continue };
+            let (pasta, arquivo) = pele.rsplit_once('\\').unwrap_or(("", pele.as_str()));
+            let titulo = arquivo.rsplit_once('.').map_or(arquivo, |x| x.0);
+            let mut vizinhas: Option<Vec<Vec<String>>> = None;
+            for t in &s.texturas {
+                let proprias = format!("{pasta}\\Tex_{titulo}\\{t}");
+                let comum = format!("{pasta}\\Textures\\{t}");
+                if self.bytes_do_cliente(gov, versao, &comum, Some(rascunho)).await.is_ok() {
+                    // `Textures\` é da pasta inteira: só sai se nenhuma outra .ski dela (que não sai junto) cita a textura.
+                    let v = match &vizinhas {
+                        Some(v) => v,
+                        None => {
+                            // As .ski da pasta: as publicadas e as que o rascunho acrescenta (um modelo novo ao lado
+                            // usa as mesmas `Textures\`), lidas com o rascunho.
+                            let da_pasta = |c: &String| c.to_lowercase().ends_with(".ski") && c.rsplit_once('\\').is_some_and(|(p, _)| p.eq_ignore_ascii_case(pasta)) && !saindo.contains(&norma(c));
+                            let mut lista: Vec<String> = gov.buscar(versao, &format!("{pasta}\\"), usize::MAX)?.iter()
+                                .filter_map(|x| x["caminho"].as_str().map(str::to_string))
+                                .filter(da_pasta)
+                                .collect();
+                            for i in gov.repo.itens(rascunho).await? {
+                                let c = nomes::legivel(&i.caminho);
+                                if i.sha256_depois.is_some() && da_pasta(&c) && !lista.iter().any(|x| norma(x) == norma(&c)) {
+                                    lista.push(c);
+                                }
+                            }
+                            let mut lidas = Vec::new();
+                            for c in &lista {
+                                if let Ok(s) = self.bytes_do_cliente(gov, versao, c, Some(rascunho)).await.and_then(|b| pw_data_loader::ski::Ski::ler(&b).map_err(|x| anyhow::anyhow!("{x}"))) {
+                                    lidas.push(s.texturas);
+                                }
+                            }
+                            vizinhas.insert(lidas)
+                        }
+                    };
+                    if v.iter().any(|ts| ts.iter().any(|x| x.eq_ignore_ascii_case(t))) {
+                        mantidos.push(json!({ "caminho": comum, "motivo": "outra pele da pasta usa" }));
+                    } else if !saindo.contains(&norma(&comum)) {
+                        sair.push(comum);
+                    }
+                } else if self.bytes_do_cliente(gov, versao, &proprias, Some(rascunho)).await.is_ok() && !sair.iter().any(|x| norma(x) == norma(&proprias)) {
+                    sair.push(proprias);
+                }
+            }
+        }
+        let trava = self.trava(rascunho);
+        let _guarda = trava.lock().await;
+        let mut removidos = Vec::new();
+        for c in &sair {
+            if gov.conteudo(versao, c).is_ok() {
+                gov.remover_arquivo(versao, rascunho, c).await?;
+                removidos.push(json!({ "caminho": c, "acao": "remover" }));
+            } else if gov.tirar(versao, rascunho, c).await? {
+                removidos.push(json!({ "caminho": c, "acao": "tirado do rascunho" }));
+            }
+        }
+        Ok(json!({ "removidos": removidos, "mantidos": mantidos }))
     }
 
     /// B292 (S6): grava no rascunho as texturas que o glTF trouxe, em `<pasta da pele>\Textures\<nome>` — o primeiro
@@ -4387,11 +5343,13 @@ impl Estudio {
             if !smds.contains(&smd) {
                 smds.push(smd.clone());
             }
+            indice.filhos.extend(m.filhos.iter().map(|f| f.trim().replace('/', "\\").trim_start_matches('\\').to_lowercase()));
             indice.ecms.push((c.clone(), m.versao, smd, m.acoes.into_iter().map(|a| (a.nome, a.bases)).collect()));
         }
         for (c, lido) in smds.iter().zip(gov.conteudos(versao, &smds)?) {
             let Some(cab) = lido.and_then(|(_, b)| pw_data_loader::smd::cabeca(&b).ok()) else { continue };
             let esqueleto = (!cab.esqueleto.is_empty()).then(|| ao_lado(c, &cab.esqueleto).to_lowercase());
+            indice.dependencias.insert(c.clone(), dependencias_do_smd(c, &cab).into_iter().map(|x| x.to_lowercase()).collect());
             indice.smds.insert(c.clone(), (esqueleto, cab.lista_de_acoes.into_iter().map(|a| a.nome).collect()));
         }
         let indice = Arc::new(indice);
@@ -4621,4 +5579,536 @@ impl Estudio {
             _ => bail!("{tabela} não tem tela própria (loja, forja e teleporte têm)"),
         }
     }
+}
+
+/// B369: campos de uma tabela cujo nome passa no filtro `casa`, como `(deslocamento, nome)`.
+fn campos_que(t: &pw_data_loader::elements_editavel::TabelaEditavel, casa: impl Fn(&str) -> bool) -> Vec<(usize, String)> {
+    t.campos().into_iter().filter(|(_, _, f)| casa(&f.name)).map(|(o, _, f)| (o, f.name.clone())).collect()
+}
+
+fn i32_em(r: &[u8], o: usize) -> i32 {
+    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
+}
+
+fn f32_em(r: &[u8], o: usize) -> f32 {
+    f32::from_le_bytes(r[o..o + 4].try_into().unwrap())
+}
+
+/// O número da página de `pages_<P>_…` (o layout numera de 1, B365).
+fn pagina_do_campo(nome: &str) -> Option<u32> {
+    nome.strip_prefix("pages_")?.split('_').next()?.parse().ok()
+}
+
+impl Estudio {
+    /// B369 — de onde um item vem (só leitura, para o Estúdio). Tudo do rascunho, se houver:
+    /// - `dropado_de`: `MONSTER_ESSENCE.drop_matters_N_id` = item, com o `drop_matters_N_probability` da linha;
+    /// - `dropado_de_global`: as tabelas do `extra_drops.sev` (o drop global do GS, `worldmanager.cpp:884`) que têm o
+    ///   item, com cada monstro delas, a chance de o item cair por morte (`TabelaDeDropGlobal::chance_por_morte`) e o
+    ///   tipo (`soma` ao drop do monstro ou `substitui`); `dropado_de_global_erro` quando o arquivo existe e o GS o recusaria;
+    /// - `recompensa_de`: missões do `tasks.data` cujo prêmio (sucesso ou falha, e as escalas por tempo/itens do v129)
+    ///   tem o item num grupo (`AWARD_ITEMS_CAND`);
+    /// - `vendido_por`: `NPC_SELL_SERVICE.pages_P_goods_G_id` = item → os `NPC_ESSENCE` com `id_sell_service` = a loja;
+    ///   `loja_gold`: as ofertas do `gshop*.data` com o `id` do item;
+    /// - `forjado_por`: `RECIPE_ESSENCE.targets_N_id_to_make` = item → `NPC_MAKE_SERVICE.pages_P_id_goods_G` = a receita
+    ///   → os `NPC_ESSENCE` com `id_make_service` = a forja.
+    ///
+    /// Cada lista vai até 300.
+    pub async fn origens_do_item(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i32) -> Result<Value> {
+        const LIMITE: usize = 300;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let reg = |t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize| {
+            json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i), "icone": icone_do_registro(t, i) })
+        };
+        // Os NPCs cujo `campo` aponta para `alvo`.
+        let npcs_com = |campo: &str, alvo: i32| -> Vec<Value> {
+            let Ok(t) = e.tabela("NPC_ESSENCE") else { return vec![] };
+            let cs = campos_que(t, |n| n == campo);
+            t.registros.iter().enumerate().filter(|(_, b)| cs.iter().any(|(o, _)| i32_em(b, *o) == alvo)).map(|(i, _)| reg(t, i)).collect()
+        };
+        let deslocamento = |t: &pw_data_loader::elements_editavel::TabelaEditavel, nome: &str| {
+            t.campos().into_iter().find(|(_, _, f)| f.name == nome).map(|(o, _, _)| o)
+        };
+
+        // Drops de monstro.
+        let mut dropado_de = Vec::new();
+        if let Ok(t) = e.tabela("MONSTER_ESSENCE") {
+            let pares: Vec<(usize, Option<usize>)> = campos_que(t, |n| n.starts_with("drop_matters_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(t, &format!("{}_probability", n.trim_end_matches("_id")))))
+                .collect();
+            for (i, b) in t.registros.iter().enumerate() {
+                if dropado_de.len() >= LIMITE {
+                    break;
+                }
+                // Um monstro pode ter o item em mais de uma linha: soma as chances das linhas.
+                let linhas: Vec<f32> = pares.iter().filter(|(o, _)| i32_em(b, *o) == id).map(|(_, p)| p.map_or(0.0, |p| f32_em(b, p))).collect();
+                if !linhas.is_empty() {
+                    let mut v = reg(t, i);
+                    v["chance"] = json!(linhas.iter().sum::<f32>());
+                    v["linhas"] = json!(linhas.len());
+                    dropado_de.push(v);
+                }
+            }
+        }
+
+        // Drop global (`extra_drops.sev`): o do rascunho, se ele tiver; sem o arquivo no realm, nada.
+        let mut dropado_de_global = Vec::new();
+        let mut dropado_de_global_erro = Value::Null;
+        if let Ok((_, do_realm, do_rascunho)) = self.item_do_realm(gov, versao, "servidor\\extra_drops.sev".to_string(), rascunho).await {
+            let bytes = do_rascunho.map(|(_, b)| b).unwrap_or(do_realm);
+            match pw_data_loader::drop_global::DropGlobal::ler(&bytes) {
+                Ok(dg) => {
+                    if let Ok(t) = e.tabela("MONSTER_ESSENCE") {
+                        let indice_do_id: HashMap<i32, usize> = (0..t.registros.len()).filter_map(|i| t.id(i).map(|id| (id, i))).collect();
+                        for tg in dg.tabelas.iter().filter(|tg| tg.itens.iter().any(|(i, _)| *i as i32 == id)) {
+                            let chance = tg.chance_por_morte(id as u32);
+                            let tipo = if tg.tipo == pw_data_loader::drop_global::TipoDeDropGlobal::Soma { "soma" } else { "substitui" };
+                            for m in &tg.monstros {
+                                if dropado_de_global.len() >= LIMITE {
+                                    break;
+                                }
+                                let mut v = match indice_do_id.get(&(*m as i32)) {
+                                    Some(i) => reg(t, *i),
+                                    None => json!({ "tabela": t.nome, "indice": Value::Null, "id": m, "nome": Value::Null, "icone": Value::Null }),
+                                };
+                                v["chance"] = json!(chance);
+                                v["tabela_global"] = json!(tg.indice);
+                                v["nome_da_tabela"] = json!(tg.nome);
+                                v["tipo"] = json!(tipo);
+                                dropado_de_global.push(v);
+                            }
+                        }
+                    }
+                }
+                Err(err) => dropado_de_global_erro = json!(err.to_string()),
+            }
+        }
+
+        // Lojas de NPC.
+        let mut vendido_por = Vec::new();
+        if let Ok(t) = e.tabela("NPC_SELL_SERVICE") {
+            let cs = campos_que(t, |n| n.starts_with("pages_") && n.contains("_goods_") && n.ends_with("_id"));
+            let titulos = campos_que(t, |n| n.starts_with("pages_") && n.ends_with("_page_title"));
+            for (i, b) in t.registros.iter().enumerate() {
+                if vendido_por.len() >= LIMITE {
+                    break;
+                }
+                let paginas: std::collections::BTreeSet<u32> = cs.iter().filter(|(o, _)| i32_em(b, *o) == id).filter_map(|(_, n)| pagina_do_campo(n)).collect();
+                if paginas.is_empty() {
+                    continue;
+                }
+                let r = t.ler(i)?;
+                let mut v = reg(t, i);
+                v["paginas"] = json!(paginas.iter().map(|p| json!({ "pagina": p,
+                    "titulo": titulos.iter().find(|(_, n)| pagina_do_campo(n) == Some(*p)).map(|(_, n)| texto_do_campo(&r, n)).unwrap_or_default() })).collect::<Vec<_>>());
+                v["npcs"] = json!(t.id(i).map(|sid| npcs_com("id_sell_service", sid)).unwrap_or_default());
+                vendido_por.push(v);
+            }
+        }
+
+        // Loja Gold: as lojas do cliente que existirem nesta versão.
+        let mut loja_gold = Vec::new();
+        for arquivo in ["gshop.data", "gshop1.data", "gshop2.data"] {
+            let Ok((_, _, _, bytes, _)) = self.item_do_cliente(gov, versao, &format!("data\\{arquivo}"), rascunho).await else { continue };
+            let Ok(g) = GshopEditavel::ler(&bytes) else { continue };
+            for (i, o) in g.ofertas.iter().enumerate() {
+                if o.len() >= 144 && i32::from_le_bytes(o[140..144].try_into().unwrap()) == id {
+                    let c = gs::ler_oferta(&g, o);
+                    loja_gold.push(json!({ "arquivo": arquivo, "indice": i, "nome": c.get("szName"), "quantidade": c.get("num"), "preco": c.get("buy_0_price") }));
+                }
+            }
+        }
+
+        // Forja: receitas que fazem o item → forjas que têm a receita → NPCs.
+        let mut forjado_por = Vec::new();
+        if let Ok(rt) = e.tabela("RECIPE_ESSENCE") {
+            let alvos = campos_que(rt, |n| n.starts_with("targets_") && n.ends_with("_id_to_make"));
+            let forjas = e.tabela("NPC_MAKE_SERVICE").ok().map(|f| {
+                (f, campos_que(f, |n| n.starts_with("pages_") && n.contains("_id_goods_")), campos_que(f, |n| n.starts_with("pages_") && n.ends_with("_page_title")))
+            });
+            for (i, b) in rt.registros.iter().enumerate() {
+                if forjado_por.len() >= LIMITE {
+                    break;
+                }
+                let Some((_, campo)) = alvos.iter().find(|(o, _)| i32_em(b, *o) == id) else { continue };
+                let chance = deslocamento(rt, &campo.replace("_id_to_make", "_probability")).map(|p| f32_em(b, p));
+                let mut v = reg(rt, i);
+                v["chance"] = json!(chance);
+                let mut lista = Vec::new();
+                if let (Some((f, cs, titulos)), Some(rid)) = (&forjas, rt.id(i)) {
+                    for (fi, fb) in f.registros.iter().enumerate() {
+                        let paginas: std::collections::BTreeSet<u32> = cs.iter().filter(|(o, _)| i32_em(fb, *o) == rid).filter_map(|(_, n)| pagina_do_campo(n)).collect();
+                        if paginas.is_empty() {
+                            continue;
+                        }
+                        let r = f.ler(fi)?;
+                        let mut fv = reg(f, fi);
+                        fv["paginas"] = json!(paginas.iter().map(|p| json!({ "pagina": p,
+                            "titulo": titulos.iter().find(|(_, n)| pagina_do_campo(n) == Some(*p)).map(|(_, n)| texto_do_campo(&r, n)).unwrap_or_default() })).collect::<Vec<_>>());
+                        fv["npcs"] = json!(f.id(fi).map(|sid| npcs_com("id_make_service", sid)).unwrap_or_default());
+                        lista.push(fv);
+                    }
+                }
+                v["forjas"] = json!(lista);
+                forjado_por.push(v);
+            }
+        }
+
+        // Missões.
+        let mut recompensa_de = Vec::new();
+        if let Ok(t) = self.missoes_do_realm(gov, versao, rascunho).await {
+            let alvo = id as u32;
+            let no_premio = |p: &pw_data_loader::tasks::TaskReward| -> Option<(u32, bool)> {
+                p.grupos_de_itens.iter().find_map(|g| g.itens.iter().find(|x| x.id == alvo).map(|x| (x.quantidade, g.sorteia_um)))
+            };
+            let mut ids: Vec<&u32> = t.tasks.keys().collect();
+            ids.sort_unstable();
+            for mid in ids {
+                if recompensa_de.len() >= LIMITE {
+                    break;
+                }
+                let m = &t.tasks[mid];
+                let mut onde: Vec<(&str, (u32, bool))> = Vec::new();
+                if let Some(x) = no_premio(&m.rewards) {
+                    onde.push(("sucesso", x));
+                }
+                if let Some(x) = no_premio(&m.premio_de_falha) {
+                    onde.push(("falha", x));
+                }
+                for (nome, esc) in [
+                    ("sucesso, por tempo", &m.escala_de_tempo_sucesso),
+                    ("falha, por tempo", &m.escala_de_tempo_falha),
+                    ("sucesso, por itens", &m.escala_de_itens_sucesso),
+                    ("falha, por itens", &m.escala_de_itens_falha),
+                ] {
+                    if let Some(x) = esc.premios.iter().find_map(|p| no_premio(p)) {
+                        onde.push((nome, x));
+                    }
+                }
+                for (quando, (quantidade, sorteio)) in onde {
+                    recompensa_de.push(json!({ "id": m.id, "nome": m.name, "quando": quando, "quantidade": quantidade, "sorteio": sorteio }));
+                }
+            }
+        }
+
+        Ok(json!({ "id": id, "dropado_de": dropado_de, "dropado_de_global": dropado_de_global, "dropado_de_global_erro": dropado_de_global_erro, "recompensa_de": recompensa_de, "vendido_por": vendido_por,
+            "loja_gold": loja_gold, "forjado_por": forjado_por }))
+    }
+
+    /// Para onde o item vai (o contrário de [`origens_do_item`]): as receitas que o gastam como material
+    /// (`RECIPE_ESSENCE.materials_N_id/num`, consumidos no `ProduceItem`, `player.cpp:16404`), as minas que o dão
+    /// (`MINE_ESSENCE.materials_N`, com a chance e a validade; a mina que o GS recusa vem com o motivo,
+    /// `pw_data_loader::minas::montar`, `npcgenerator.cpp:1280-1365`) e as habilidades que o exigem para aprender (o
+    /// `item_exigido` do catálogo do realm, `GetRequiredItem`; consumido no aprendizado, `skill.cpp:79-84`).
+    pub async fn usos_do_item(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, id: i32) -> Result<Value> {
+        const LIMITE: usize = 300;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let ids = mapa_de_ids(&e);
+        let reg = |t: &pw_data_loader::elements_editavel::TabelaEditavel, i: usize| {
+            json!({ "tabela": t.nome, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i), "icone": icone_do_registro(t, i) })
+        };
+        let item = |alvo: i32| -> Value {
+            match ids.get(&("ESSENCE".to_string(), alvo)) {
+                Some(&(ti, ri)) if ti != CONVERSAS => reg(&e.tabelas[ti], ri),
+                _ => json!({ "id": alvo, "nome": null }),
+            }
+        };
+        let deslocamento = |t: &pw_data_loader::elements_editavel::TabelaEditavel, nome: &str| {
+            t.campos().into_iter().find(|(_, _, f)| f.name == nome).map(|(o, _, _)| o)
+        };
+
+        let mut ingrediente_de = Vec::new();
+        if let Ok(rt) = e.tabela("RECIPE_ESSENCE") {
+            let mats: Vec<(usize, Option<usize>)> = campos_que(rt, |n| n.starts_with("materials_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(rt, &n.replace("_id", "_num"))))
+                .collect();
+            let alvos = campos_que(rt, |n| n.starts_with("targets_") && n.ends_with("_id_to_make"));
+            for (i, b) in rt.registros.iter().enumerate() {
+                if ingrediente_de.len() >= LIMITE {
+                    break;
+                }
+                let qtd: Vec<i32> = mats.iter().filter(|(o, _)| i32_em(b, *o) == id).map(|(_, q)| q.map_or(0, |q| i32_em(b, q))).collect();
+                if qtd.is_empty() {
+                    continue;
+                }
+                let mut v = reg(rt, i);
+                v["quantidade"] = json!(qtd.iter().sum::<i32>());
+                v["faz"] = json!(alvos.iter().map(|(o, _)| i32_em(b, *o)).filter(|&x| x > 0).map(item).collect::<Vec<_>>());
+                ingrediente_de.push(v);
+            }
+        }
+
+        let mut minas = Vec::new();
+        if let Ok(mt) = e.tabela("MINE_ESSENCE") {
+            let mats: Vec<(usize, Option<usize>, Option<usize>)> = campos_que(mt, |n| n.starts_with("materials_") && n.ends_with("_id"))
+                .into_iter()
+                .map(|(o, n)| (o, deslocamento(mt, &n.replace("_id", "_probability")), deslocamento(mt, &n.replace("_id", "_life"))))
+                .collect();
+            for (i, b) in mt.registros.iter().enumerate() {
+                if minas.len() >= LIMITE {
+                    break;
+                }
+                let linhas: Vec<(f32, i32)> = mats
+                    .iter()
+                    .filter(|(o, p, _)| i32_em(b, *o) == id && p.map_or(0.0, |p| f32_em(b, p)) > 0.0)
+                    .map(|(_, p, l)| (p.map_or(0.0, |p| f32_em(b, p)), l.map_or(0, |l| i32_em(b, l))))
+                    .collect();
+                if linhas.is_empty() {
+                    continue;
+                }
+                let mut v = reg(mt, i);
+                v["chance"] = json!(linhas.iter().map(|x| x.0).sum::<f32>());
+                v["vida"] = json!(linhas[0].1);
+                match pw_data_loader::minas::montar(&mt.ler(i)?) {
+                    Ok(_) => v["valida"] = json!(true),
+                    Err(m) => {
+                        v["valida"] = json!(false);
+                        v["motivo"] = json!(m);
+                    }
+                }
+                minas.push(v);
+            }
+        }
+
+        let mut habilidades = Vec::new();
+        if let Ok((hs, _)) = self.habilidades_do_servidor(gov, versao, rascunho).await {
+            let t = self.skillstr(gov, versao, rascunho).await.ok();
+            for (k, h) in &hs {
+                let Ok(hid) = k.parse::<i64>() else { continue };
+                let Some(lista) = h.get("item_exigido").and_then(Value::as_array) else { continue };
+                let niveis: Vec<usize> = lista.iter().enumerate().filter(|(_, x)| x.as_i64() == Some(id as i64)).map(|(n, _)| n + 1).collect();
+                if !niveis.is_empty() {
+                    habilidades.push((hid, json!({ "id": hid, "nome": t.as_ref().and_then(|t| t.texto(hid * 10)).unwrap_or_default(), "niveis": niveis })));
+                }
+            }
+            habilidades.sort_by_key(|x| x.0);
+        }
+        Ok(json!({ "id": id, "ingrediente_de": ingrediente_de, "minas": minas,
+            "habilidades": habilidades.into_iter().map(|x| x.1).collect::<Vec<_>>() }))
+    }
+
+    /// A mina como o GS a monta (`pw_data_loader::minas::montar`, `npcgenerator.cpp:1280-1365`), com os nomes do que
+    /// ela cita (materiais, ferramenta, monstros ao colher). Recusada: `valida: false` e o motivo.
+    pub async fn mina_do_gs(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, indice: usize) -> Result<Value> {
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let t = e.tabela("MINE_ESSENCE")?;
+        let r = t.ler(indice)?;
+        let ids = mapa_de_ids(&e);
+        let item = |alvo: i64| -> Value {
+            match ids.get(&("ESSENCE".to_string(), alvo as i32)) {
+                Some(&(ti, ri)) if ti != CONVERSAS && alvo > 0 => {
+                    let x = &e.tabelas[ti];
+                    json!({ "tabela": x.nome, "indice": ri, "id": alvo, "nome": nome_do_registro(x, ri), "icone": icone_do_registro(x, ri) })
+                }
+                _ => json!({ "id": alvo, "nome": null }),
+            }
+        };
+        Ok(match pw_data_loader::minas::montar(&r) {
+            Err(motivo) => json!({ "valida": false, "motivo": motivo }),
+            Ok(m) => json!({ "valida": true, "mina": {
+                "quantidade": m.quantidade, "quantidade_bonus": m.quantidade_bonus, "chance_bonus": m.chance_bonus,
+                "tempo_minimo": m.tempo_minimo, "tempo_maximo": m.tempo_maximo, "nivel": m.nivel, "exp": m.exp, "sp": m.sp,
+                "materiais": m.materiais.iter().map(|x| json!({ "item": item(x.item as i64), "chance": x.probabilidade, "vida": x.vida })).collect::<Vec<_>>(),
+                "ferramenta": (m.ferramenta > 0).then(|| item(m.ferramenta as i64)),
+                "missao_de_entrada": m.missao_de_entrada, "missao_de_saida": m.missao_de_saida, "ininterrupta": m.ininterrupta,
+                "permanente": m.permanente, "gasta_ferramenta": m.gasta_ferramenta, "distancia": m.distancia, "coletores": m.coletores,
+                "chance_de_sucesso": m.chance_de_sucesso, "tipo": m.tipo,
+                "monstros_ao_colher": m.monstros_ao_colher.iter().map(|(tid, n, raio, vida)| json!({ "monstro": item(*tid as i64), "quantidade": n, "raio": raio, "vida": vida })).collect::<Vec<_>>(),
+            } }),
+        })
+    }
+
+    /// Os efeitos de refino do `EQUIPMENT_ADDON` do rascunho (os de tratador `refine_*` no GS,
+    /// `pw_data_loader::addons::tratador_do_id`), cada um com o que soma, o valor de +1 a +12
+    /// (`refino::valor_do_refino`, `refine_factor` de `equip_item.cpp:208-223`) e quantas armas,
+    /// armaduras e acessórios do rascunho o usam no `levelup_addon` (o GS não restringe a família:
+    /// `get_item_refine_addon`, `itemdataman.cpp:205-228`, devolve o campo da peça como está).
+    pub async fn refinos(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>) -> Result<Value> {
+        use pw_data_loader::refino::{efeito_de_refino, valor_do_refino, FATOR_DE_REFINO};
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        // Uso por família: id do efeito → [arma, armadura, acessório].
+        let mut uso: HashMap<i32, [u32; 3]> = HashMap::new();
+        for (k, tabela) in ["WEAPON_ESSENCE", "ARMOR_ESSENCE", "DECORATION_ESSENCE"].into_iter().enumerate() {
+            let Ok(t) = e.tabela(tabela) else { continue };
+            let Some((o, _)) = campos_que(t, |n| n == "levelup_addon").into_iter().next() else { continue };
+            for b in &t.registros {
+                let id = i32_em(b, o);
+                if id > 0 {
+                    uso.entry(id).or_default()[k] += 1;
+                }
+            }
+        }
+        let t = e.tabela("EQUIPMENT_ADDON")?;
+        let param = campos_que(t, |n| n == "param1").into_iter().next().map(|(o, _)| o);
+        let mut efeitos = Vec::new();
+        for (i, b) in t.registros.iter().enumerate() {
+            let Some(id) = t.id(i) else { continue };
+            let Some(tratador) = pw_data_loader::addons::tratador_do_id(id as u32) else { continue };
+            let Some(m) = efeito_de_refino(tratador) else { continue };
+            let p = param.map_or(0, |o| i32_em(b, o));
+            let u = uso.get(&id).copied().unwrap_or_default();
+            efeitos.push(json!({
+                "id": id, "indice": i, "nome": nome_do_registro(t, i), "tratador": tratador, "param": p,
+                "soma": m.soma, "evidencia": m.evidencia,
+                "niveis": (1..=12).map(|n| valor_do_refino(p, n)).collect::<Vec<_>>(),
+                "usado_por": { "arma": u[0], "armadura": u[1], "acessorio": u[2] },
+            }));
+        }
+        Ok(json!({ "fator": FATOR_DE_REFINO[1..].to_vec(), "efeitos": efeitos }))
+    }
+    /// B383: o que há da pele de armadura/moda `realname` para um gênero — os grupos de pele do binário
+    /// ([`GRUPOS_DE_PELE`]), os três `.ski` de cada um (publicado ou rascunho), os corpos de cada grupo e quantos
+    /// registros de armadura e moda usam o mesmo `realname` (trocar a pele muda todos).
+    pub async fn pele_do_equipamento(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, realname: &str, genero: u8) -> Result<Value> {
+        let realname = nome_de_pele(realname)?;
+        let (e, _) = self.atual(gov, versao, rascunho).await?;
+        let mut grupos = Vec::new();
+        for g in grupos_do_genero(genero) {
+            let mut arquivos = Vec::new();
+            for c in caminhos_da_pele(&realname, genero, g) {
+                let existe = self.bytes_do_cliente(gov, versao, &c, rascunho).await.is_ok();
+                arquivos.push(json!({ "caminho": c, "existe": existe }));
+            }
+            let corpos: Vec<Value> = corpos_do_grupo(genero, g).into_iter().map(|(k, nome, ecm)| json!({ "classe": k, "nome": nome, "ecm": ecm })).collect();
+            grupos.push(json!({ "grupo": g, "arquivos": arquivos, "corpos": corpos }));
+        }
+        let mut usado_por = Vec::new();
+        for tabela in ["ARMOR_ESSENCE", "FASHION_ESSENCE"] {
+            let Ok(t) = e.tabela(tabela) else { continue };
+            for i in 0..t.registros.len() {
+                let Ok(r) = t.ler(i) else { continue };
+                if texto_do_campo(&r, "realname") == realname {
+                    usado_por.push(json!({ "tabela": tabela, "indice": i, "id": t.id(i), "nome": nome_do_registro(t, i) }));
+                }
+            }
+        }
+        Ok(json!({ "realname": realname, "genero": genero, "grupos": grupos, "usado_por": usado_por }))
+    }
+
+    /// B383: importa um GLB como a pele de armadura/moda `realname` do grupo `grupo` (gênero `genero`): os três `.ski`
+    /// que o cliente carrega (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: `一级`, `二级`, `三级`; falta um → a peça não
+    /// aparece) recebem a mesma malha. Os ossos casam pelo nome com o esqueleto do corpo de referência (`classe`, ou o
+    /// 1º do grupo) e têm de existir no de todas as classes do grupo (a mesma pele serve a todas — `BindSkeleton`
+    /// recusa a pele com osso que falta, `A3DSkin.cpp:851-856`). `validar` só confere e devolve o relatório.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn importar_pele_do_equipamento(
+        &self, gov: &Governanca, versao: &str, rascunho: i64, realname: &str, genero: u8, grupo: &str, classe: Option<usize>, validar: bool, glb: Vec<u8>,
+    ) -> Result<Value> {
+        let realname = nome_de_pele(realname)?;
+        if !grupos_do_genero(genero).contains(&grupo) {
+            bail!("grupo de pele \"{grupo}\" não existe para o gênero {genero} (grupos: {})", grupos_do_genero(genero).join(", "));
+        }
+        let corpos = corpos_do_grupo(genero, grupo);
+        let referencia = match classe {
+            Some(k) => corpos.iter().find(|c| c.0 == k).with_context(|| format!("a classe {k} não usa o grupo {grupo}"))?,
+            None => corpos.first().context("grupo sem corpo")?,
+        };
+        let (bon_ref, _) = self.esqueleto_do_corpo(gov, versao, Some(rascunho), &referencia.2).await?;
+        let imp = pw_data_loader::importar::ski_do_glb(&glb, &bon_ref).map_err(anyhow::Error::msg)?;
+        let mut relatorio = imp.relatorio.clone();
+        // A pele vale para todas as classes do grupo: cada osso dela tem de existir no esqueleto de cada corpo.
+        let mut faltas = Vec::new();
+        for (k, nome, ecm) in &corpos {
+            match self.esqueleto_do_corpo(gov, versao, Some(rascunho), ecm).await {
+                Ok((b, _)) => {
+                    let falta: Vec<&String> = imp.ski.ossos.iter().filter(|o| !b.ossos.iter().any(|x| &x.nome == *o)).collect();
+                    if !falta.is_empty() {
+                        faltas.push(format!("{nome} (classe {k}): {}", falta.iter().map(|x| x.as_str()).collect::<Vec<_>>().join(", ")));
+                    }
+                }
+                Err(x) => relatorio.push(format!("corpo de {nome} não lido ({x}) — não conferido")),
+            }
+        }
+        if !faltas.is_empty() {
+            bail!("ossos da pele que faltam no esqueleto de outra classe do grupo {grupo} (o cliente recusaria a pele nela): {}", faltas.join("; "));
+        }
+        let destinos = caminhos_da_pele(&realname, genero, grupo);
+        let bytes = imp.ski.escrever();
+        pw_data_loader::ski::Ski::ler(&bytes).context("o .ski importado não relê")?;
+        let resumo = json!({ "arquivos": destinos, "malhas": imp.ski.malhas_de_pele.len() + imp.ski.malhas_rigidas.len(),
+            "vertices": imp.ski.malhas_de_pele.iter().map(|m| m.vertices.len()).sum::<usize>(), "ossos": imp.ski.ossos.len(),
+            "texturas": imp.ski.texturas, "esqueleto": referencia.2, "corpos_conferidos": corpos.len(), "relatorio": relatorio });
+        if validar {
+            return Ok(json!({ "validacao": true, "resultado": resumo }));
+        }
+        let texturas_gravadas = self.gravar_texturas(gov, versao, rascunho, &destinos[0], imp.texturas_novas).await?;
+        {
+            let trava = self.trava(rascunho);
+            let _guarda = trava.lock().await;
+            for d in &destinos {
+                gov.gravar_arquivo(versao, rascunho, d, bytes.clone(), "cliente").await?;
+            }
+        }
+        let mut r = resumo;
+        r["texturas_gravadas"] = json!(texturas_gravadas);
+        r["niveis"] = json!("a mesma malha nos três níveis de detalhe (一级, 二级, 三级)");
+        Ok(json!({ "resultado": r }))
+    }
+
+    /// O esqueleto do corpo do jogador (`<corpo>.ecm` → `.smd` → `.bon`), com o rascunho.
+    pub async fn esqueleto_do_corpo(&self, gov: &Governanca, versao: &str, rascunho: Option<i64>, ecm: &str) -> Result<(pw_data_loader::bon::Bon, String)> {
+        let m = pw_data_loader::ecm::ler(&self.bytes_do_cliente(gov, versao, ecm, rascunho).await?).with_context(|| format!("{ecm}: .ecm ilegível"))?;
+        let smd = m.smd.trim().replace('/', "\\");
+        let c = pw_data_loader::smd::cabeca(&self.bytes_do_cliente(gov, versao, &smd, rascunho).await?).map_err(|x| anyhow::anyhow!("{smd}: {x}"))?;
+        let caminho_bon = ao_lado(&smd, &c.esqueleto);
+        let bon = pw_data_loader::bon::Bon::ler(&self.bytes_do_cliente(gov, versao, &caminho_bon, rascunho).await?).map_err(|x| anyhow::anyhow!("{caminho_bon}: {x}"))?;
+        Ok((bon, caminho_bon))
+    }
+}
+
+/// B383: o grupo de pele de armadura e moda por `classe × 2 + gênero` — a tabela que o `ChangeArmor` do cliente usa
+/// (`elementclient.exe` 1.5.5 BR: função 0x4e1ff0, ponteiros em 0xdd83f0, chamada em 0x4e28f7 com o `realname` em
+/// +0x4c e o `equip_location` 1–8 em +0x16c): `Models\Players\装备\{男|女}\<realname>\<grupo><realname>`. O fonte
+/// (`EC_Player.cpp:282-313`) tem "Evolved\" no lugar de "Models\" — vale o binário. A outra tabela do binário, por classe
+/// (0xdd8450, função 0x4e2020), só serve à pele padrão (sem equipamento). Vazio = combinação que não existe (Feiticeira
+/// só feminina, Bárbaro só masculino). O 1.2.6 tem as mesmas strings (`elementclient.exe` 1.2.6, 0x4b104c-0x4b10b8).
+pub const GRUPOS_DE_PELE: [&str; 24] = [
+    "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "", "妖精", "妖兽", "", "男通用", "女通用",
+    "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用", "男通用", "女通用",
+];
+
+/// B383: o corpo de cada `classe × 2 + gênero` (`elementclient.exe` 1.5.5 BR, 0x9cdc04-0x9ce4b8:
+/// `Models\Players\形象\<nome>\躯干\<nome>.ecm`; `EC_Player.cpp:210-237`).
+pub const CORPOS: [&str; 24] = [
+    "武侠男", "武侠女", "法师男", "法师女", "巫师男", "巫师女", "", "妖精", "妖兽男", "", "刺客男", "刺客女",
+    "羽芒男", "羽芒女", "羽灵男", "羽灵女", "剑灵男", "剑灵女", "魅灵男", "魅灵女", "夜影男", "夜影女", "月仙男", "月仙女",
+];
+
+/// Os grupos de pele que existem para um gênero (0 masculino, 1 feminino), na ordem da tabela.
+pub fn grupos_do_genero(genero: u8) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    for (i, g) in GRUPOS_DE_PELE.iter().enumerate() {
+        if i % 2 == genero as usize && !g.is_empty() && !v.contains(g) {
+            v.push(g);
+        }
+    }
+    v
+}
+
+/// As classes (índice, nome do corpo, `.ecm`) que usam o grupo `grupo` no gênero `genero`.
+pub fn corpos_do_grupo(genero: u8, grupo: &str) -> Vec<(usize, &'static str, String)> {
+    (0..12)
+        .filter(|k| GRUPOS_DE_PELE[k * 2 + genero as usize] == grupo && !CORPOS[k * 2 + genero as usize].is_empty())
+        .map(|k| {
+            let n = CORPOS[k * 2 + genero as usize];
+            (k, n, format!("Models\\Players\\形象\\{n}\\躯干\\{n}.ecm"))
+        })
+        .collect()
+}
+
+/// Os três `.ski` de uma peça (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: sufixos 一级/二级/三级 fora do corpo e da cabeça).
+pub fn caminhos_da_pele(realname: &str, genero: u8, grupo: &str) -> [String; 3] {
+    let g = if genero == 0 { "男" } else { "女" };
+    ["一级", "二级", "三级"].map(|n| format!("Models\\Players\\装备\\{g}\\{realname}\\{grupo}{realname}{n}.ski"))
+}
+
+/// O `realname` vira pasta e nome de arquivo: sem barra, sem ponto inicial, em GBK.
+fn nome_de_pele(realname: &str) -> Result<String> {
+    let r = realname.trim();
+    if r.is_empty() || r.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) || r.starts_with('.') {
+        bail!("realname inválido para nome de pasta: \"{realname}\"");
+    }
+    nomes::gbk_de_unicode(r).context("o realname tem caracteres que não existem em GBK")?;
+    Ok(r.to_string())
 }

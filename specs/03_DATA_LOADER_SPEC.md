@@ -41,7 +41,7 @@ que produz o layout do `elements.data`. O resto — `npcgen`, `aipolicy`, `gshop
 
 **Estado da carga (B102):** `realm_126` carrega **sem falha** (132 arquivos). Não são lidos,
 em nenhum realm, por falta do sistema: `domain.data`,
-`extra_drops.sev`, `task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
+`task_npc.data`, `global_api.lua`, `ExtDataID.dat`, `precinct.clt`,
 `rare_item.conf` (os `.clt` e o `task_npc.data` são do **cliente**: o Estúdio os lê e grava — `clt.rs`, `task_npc.rs`,
 B246/B251, spec 07 §6b). Na raiz do `realm_126`, `npcgen.data`/`precinct.sev` são cópias idênticas das
 de `world/` (as lidas); o `region.sev` da raiz (6.856 B) difere do de `world/` (8.860 B), e vale o
@@ -61,7 +61,7 @@ com 0 bytes no `home155`; vieram do `pwserver_155v156`).
 | layouts | `specs/elements_layouts/v7.json` (gerado por `generate_v7.py` a partir do `gs` 1.2.6), `v156.json`, `v159.json` (ADMVAL); embutidos com `include_str!` |
 | tabelas por versão | o v7 não tem nenhuma tabela `GOBLIN_*` (o 1.2.6 não tem Daimon); o v156/v159 tem `GOBLIN_ESSENCE` — `GameDataManager::versao_tem_daimon` (B218, `tests/carga_dos_realms.rs::so_o_155_tem_daimon`) |
 | estado | **v7: 119 entradas, 23.447 registros, 16.664.770 bytes**, fecha no último byte no Rust e Python; v156: 231/231 tabelas no `realm_155`; v159: 234/234 quando ainda estava no projeto (B55). Arquivo com byte extra é recusado (`NaoTerminaNoFim`) |
-| v7 | **Ordem, nomes e `sizeof` das 118 tabelas fixas: do `gs` 1.2.6** (`files1.2.6/pwserver/gamed/gs`, ELF com símbolos, que exige `0x30000007` em `elementdataman::load_data`, VA 0x81b1e3d): a sequência de `elementdataman::array<T>::load` e o imediato de tamanho de cada uma (B100). Fechar no último byte **não basta**: os tamanhos "medidos" do B94 para as tabelas 98–112 também fechavam, com contagens erradas. Cliente 1.2.6, `elementclient.exe` VA `0x60ff5d-0x60ffb0`: confirma cabeçalho de 4 B e a primeira tabela de `0x54` B. Campos partem do v156 pelo nome e são cortados no tamanho do v7 — **onde o v156 inseriu campo no meio isso desloca tudo**, e cada caso precisa de evidência: `NPC_TASK_OUT_SERVICE` = ID + Name + `id_tasks[32]` (sem os 7 `storage_*`; `gs` `npc_stubs_manager::LoadTemplate` VA 0x80ef014); `NPC_SKILL_SERVICE` = `id_skills[128]` + `id_dialog` (VA 0x80ef202); `NPC_TASK_IN_SERVICE` = `id_tasks[32]` (VA 0x80eef40); `NPC_ESSENCE`: os 16 ids de serviço que o `gs` lê batem (+760 task_out … +836 equipundestroy); `NPC_TRANSMIT_SERVICE`: `num_targets` +68, destinos de 12 B (conferido); `WEAPON`/`ARMOR`/`DECORATION_ESSENCE` sem `fixed_props`/`probability_hidden`/ocultos (armadura 139: defesa 552, preço 4.800/9.600); `MINE_ESSENCE`: materiais de 8 B e `npcgen_1` em +388; voo: sem `file_model2`; `PET_ESSENCE`: sem `damage_d`; `MONSTER_ESSENCE`: sem `attack_degree`/`defend_degree`, drop em +1220 (B94). Conferidos no consumidor do `gs` 1.2.6 (B122): `CHARRACTER_CLASS_CONFIG` — os 23 campos de 0x44 a 0x9c na ordem do `playertemplate.cpp` 1.5.5 (`player_template::__LoadDataFromDataMan`, VA 0x80e67d2; o 1.2.6 não tem `spirit_adjust`/`poker_adjust`); `PARAM_ADJUST_CONFIG` — `level_diff_adjust[16]` de 24 B em +0x44, `team_adjust` em +0x1c4 e `team_profession_adjust` em +0x21c, de 8 B; `PLAYER_SECONDLEVEL_CONFIG` — `exp_lost[256]` em `+0x44 + 4·i`; `STONE_ESSENCE` — `price` +0x150, addons +0x160/+0x164, `pile_num_max` +0x1a8 (`generate_stone`). **Corrigidos (B122):** `TASKDICE_ESSENCE` = `task_lists[8]` (0x144..0x184), `use_on_pick`, `pile_num_max` +0x188, `has_guid` +0x18c e `proc_type` +0x190 (`generate_taskdice`, VA 0x81f08a0; o corte do v156 punha 10 listas e as duas últimas eram esses campos — a Carta da Sorte podia sortear missão de id `pile_num_max`); `MINE_ESSENCE` = `npcgen[3]` + `aggros[1]` `{monster_faction, radius, num}` + `permenent` nos 64 B de +0x184 (o fonte 1.5.5 tem `npcgen[4]`; lido como `npcgen_4`, os 3 registros não nulos davam monstro inexistente e `num` 200.0 em float) — **47 minas permanentes** do 1.2.6 sumiam ao serem colhidas, porque `permenent` estava no `_opaco`. O `generate_v7.py` agora também carrega o `PET_ESSENCE` do B111, que só estava no JSON. **B145:** `RECIPE_ESSENCE` v7 **sem `bind_type`** e sem o rabo de melhoria do v156 (`recipe_manager::LoadTemplate` do `gs` 1.2.6, VA 0x80f0a12: `recipe_level` +0x4c, `id_skill` +0x50, `skill_level` +0x54, alvos a partir de +0x58, `fail_probability` +0x78, `num_to_make` +0x7c, `price` +0x80, `duration` +0x84, `exp` +0x88, `skillpoint` +0x8c, materiais +0x90..+0x190) e `NPC_MAKE_SERVICE` v7 **sem `produce_type`** (1224 = 72 + 8 × 144; lido como v156, o campo saía 0x00730045, texto do título da página). **Sem opacos desde o B143**, pelos valores do `realm_126`: `CUSTOMIZEDATA_ESSENCE` não tem `file_icon` (os 8 B finais são `character_combo_id` 1/2/8/64/128/192 e `gender_id` 0/1); `PLAYER_ACTION_INFO_CONFIG` tem 11 sufixos de arma e `hide_weapon` (0/1); `FACEPILL_ESSENCE` tem 16 `pllfiles` e `price`/`shop_price`/`pile_num_max`/`has_guid`/`proc_type` (500/2000/10/0/0), a ordem do `exptypes.h:2129-2159` |
+| v7 | **Ordem, nomes e `sizeof` das 118 tabelas fixas: do `gs` 1.2.6** (`files1.2.6/pwserver/gamed/gs`, ELF com símbolos, que exige `0x30000007` em `elementdataman::load_data`, VA 0x81b1e3d): a sequência de `elementdataman::array<T>::load` e o imediato de tamanho de cada uma (B100). Fechar no último byte **não basta**: os tamanhos "medidos" do B94 para as tabelas 98–112 também fechavam, com contagens erradas. Cliente 1.2.6, `elementclient.exe` VA `0x60ff5d-0x60ffb0`: confirma cabeçalho de 4 B e a primeira tabela de `0x54` B. Campos partem do v156 pelo nome e são cortados no tamanho do v7 — **onde o v156 inseriu campo no meio isso desloca tudo**, e cada caso precisa de evidência: `NPC_TASK_OUT_SERVICE` = ID + Name + `id_tasks[32]` (sem os 7 `storage_*`; `gs` `npc_stubs_manager::LoadTemplate` VA 0x80ef014); `NPC_SKILL_SERVICE` = `id_skills[128]` + `id_dialog` (VA 0x80ef202); `NPC_TASK_IN_SERVICE` = `id_tasks[32]` (VA 0x80eef40); `NPC_ESSENCE`: os 16 ids de serviço que o `gs` lê batem (+760 task_out … +836 equipundestroy); `NPC_TRANSMIT_SERVICE`: `num_targets` +68, destinos de 12 B (conferido); `WEAPON`/`ARMOR`/`DECORATION_ESSENCE` sem `fixed_props`/`probability_hidden`/ocultos (armadura 139: defesa 552, preço 4.800/9.600); `MINE_ESSENCE`: materiais de 8 B e `npcgen_1` em +388; voo: sem `file_model2`; `PET_ESSENCE`: sem `damage_d`; `MONSTER_ESSENCE`: sem `attack_degree`/`defend_degree`, drop em +1220 (B94). Conferidos no consumidor do `gs` 1.2.6 (B122): `CHARRACTER_CLASS_CONFIG` — os 23 campos de 0x44 a 0x9c na ordem do `playertemplate.cpp` 1.5.5 (`player_template::__LoadDataFromDataMan`, VA 0x80e67d2; o 1.2.6 não tem `spirit_adjust`/`poker_adjust`); `PARAM_ADJUST_CONFIG` — `level_diff_adjust[16]` de 24 B em +0x44, `team_adjust` em +0x1c4 e `team_profession_adjust` em +0x21c, de 8 B; `PLAYER_SECONDLEVEL_CONFIG` — `exp_lost[256]` em `+0x44 + 4·i`; `STONE_ESSENCE` — `price` +0x150, addons +0x160/+0x164, `pile_num_max` +0x1a8 (`generate_stone`). **Corrigidos (B122):** `TASKDICE_ESSENCE` = `task_lists[8]` (0x144..0x184), `use_on_pick`, `pile_num_max` +0x188, `has_guid` +0x18c e `proc_type` +0x190 (`generate_taskdice`, VA 0x81f08a0; o corte do v156 punha 10 listas e as duas últimas eram esses campos — a Carta da Sorte podia sortear missão de id `pile_num_max`); `MINE_ESSENCE` = `npcgen[3]` + `aggros[1]` `{monster_faction, radius, num}` + `permenent` nos 64 B de +0x184 (o fonte 1.5.5 tem `npcgen[4]`; lido como `npcgen_4`, os 3 registros não nulos davam monstro inexistente e `num` 200.0 em float) — **47 minas permanentes** do 1.2.6 sumiam ao serem colhidas, porque `permenent` estava no `_opaco`. O `generate_v7.py` agora também carrega o `PET_ESSENCE` do B111, que só estava no JSON. **B145:** `RECIPE_ESSENCE` v7 **sem `bind_type`** e sem o rabo de melhoria do v156 (`recipe_manager::LoadTemplate` do `gs` 1.2.6, VA 0x80f0a12: `recipe_level` +0x4c, `id_skill` +0x50, `skill_level` +0x54, alvos a partir de +0x58, `fail_probability` +0x78, `num_to_make` +0x7c, `price` +0x80, `duration` +0x84, `exp` +0x88, `skillpoint` +0x8c, materiais +0x90..+0x190) e `NPC_MAKE_SERVICE` v7 **sem `produce_type`** (1224 = 72 + 8 × 144; lido como v156, o campo saía 0x00730045, texto do título da página). **B393:** `NPC_SELL_SERVICE` v7 é a loja antiga — `ID`, `Name`, 8 × {`page_title[8]`, `goods_K_id` × 32} e `id_dialog` (1224 = 4 + 64 + 8 × 144 + 4), **sem** `require_contrib`/`require_force`/`require_force_reputation` e sem custos por item (a struct de contribuição do `ExpTypes.h` 1.5.3 não existe no 1.2.6). Medido no registro 0 (id 2241): título 1 em +68 ("Espadas"), ids 36, 37, 39, 40, 41, 151… em seguida, título 2 em +212 ("Lanças"); lido como v156, os ids caíam nos requisitos e o título nos custos, e o Estúdio mostrava os itens em vagas alternadas. O GS não lê essa lista; quem lia errado era o Estúdio (grade, "Vendido por", resumo dos serviços). O gerador também passou a reproduzir o `combined_services` do B163 em `NPC_ESSENCE+0x348`. **Sem opacos desde o B143**, pelos valores do `realm_126`: `CUSTOMIZEDATA_ESSENCE` não tem `file_icon` (os 8 B finais são `character_combo_id` 1/2/8/64/128/192 e `gender_id` 0/1); `PLAYER_ACTION_INFO_CONFIG` tem 11 sufixos de arma e `hide_weapon` (0/1); `FACEPILL_ESSENCE` tem 16 `pllfiles` e `price`/`shop_price`/`pile_num_max`/`has_guid`/`proc_type` (500/2000/10/0/0), a ordem do `exptypes.h:2129-2159` |
 | fallback | Só versão fora do catálogo vai ao leitor tipado antigo `elements.rs`; o v7 passou ao genérico. Não há mais tabela `V7_OPACA_*`: as 118 têm nome pelo `gs` 1.2.6 |
 | escrita (B237) | `elements_editavel.rs` (`ElementsEditavel`): mesmo percurso do leitor guardando **bytes** — cabeçalho, os dois blocos de etiqueta do v156 e o `TALK_PROC` crus, cada registro com o `record_size` do layout. Gravar sem editar devolve o arquivo **idêntico** (testado com o `elements.data` do `realm_126`, 16.664.770 B, e do `realm_155`, 55.442.775 B). O `TALK_PROC` também é editável (B240, `conversas.rs`): conversa `{id_talk, text[64], janelas}`, janela `{id, id_parent (-1 raiz), talk_text_len + texto, opções}`, opção `{id, text[64], param}` de 136 B, como o `talk_proc::save`/`load` (`ExpTypes.h:3872`); os textos ficam em unidades UTF-16 cruas e o `talk_text_len` **conta o NUL final** (todas as janelas não vazias dos dois realms terminam em NUL) — regravado idêntico; texto editado muda o tamanho e os dois leitores continuam fechando. Editar troca só os bytes do campo (`int32`/`float`; `wstring` UTF-16LE e `string` GBK completados com zeros; texto que não cabe é recusado); a soma dos campos é o `record_size` nas 119 tabelas do v7 e nas 231 do v156, então não há byte fora de campo. Clonar/remover registro; id novo = maior id do **espaço** + 1 e id repetido no espaço é recusado (o cliente sobrescreve em silêncio, `add_id_index`). Espaços: `specs/elements_layouts/espacos_de_id.json`, das 214 chamadas `add_id_index` de `elementdataman.cpp` (1.5.5): `ESSENCE` 135, `CONFIG` 55, `FACE` 11, `RECIPE` 10, `ADDON` 2, `TALK` 1. **Sem espaço conhecido:** 17 tabelas do v156 (as 15 `HOME_*`, `RED_PACKET_PAPER_ESSENCE`, `WISH_TRIBUTE_ESSENCE` — não estão no fonte 1.5.5 e o fonte 1.7.2 não está mais em disco): editar vale, criar registro é recusado |
 | sem catálogo | v181 (cliente build 2591): `.cfg` já copiado, falta `generate_v181.py` |
@@ -431,7 +431,7 @@ Estão na pasta do realm e não são pendência nossa, com uma exceção:
 | `task_npc.data` | **do cliente** (`LoadNPCInfoFromPack("data\task_npc.data")`, `Task/EC_TaskInterface.cpp:166`) |
 | `DynamicObjects.data` | **do cliente** (`m_pDynObjPath->Load("configs\DynamicObjects.data")`, `EC_Game.cpp:612`) |
 | `domain.data`, `domain2.data`, `domain2_cross.data` | não aparecem no fonte do `gs` nem no do cliente; provavelmente do `gdeliveryd` (domínios e cruzamento entre servidores) — fora do alvo atual |
-| `extra_drops.sev` | não aparece em nenhum dos dois fontes que temos; origem desconhecida |
+| `extra_drops.sev` | **é do `gs`**: `[Template] DropData` do `gs.conf:59` → `load_extra_drop_tables` (`worldmanager.cpp:884`, `template/extra_drop_table.cpp:7-40`): `u32` versão (=1), `i32` nº de tabelas; por tabela `i32` n + n×`u32` ids de monstro, 256×(`i32` id, `f32` chance), `char[128]` nome (GBK), `i32` tipo (1 substitui, 2 soma — `EDT_TYPE`), 8×`f32` chance do nº de itens. `drop_template::LoadDropList` (`global_drop.cpp:8-61`) descarta a tabela cujas chances não somam 1; `npc.cpp:2591` sorteia ao morrer. Conferido em 2026-11-01: `realm_126` fecha no último byte (39.352 B, 15 tabelas, 1.526 monstros); `realm_155` 2.228 B, 1 tabela. **`testado` (B390)**: `drop_global.rs` (`DropGlobal::ler`, recusa o que faz o GS não subir — versão ≠ 1, tipo fora de 1/2, monstro em duas tabelas — e ignora como o `LoadDropList` as vazias e as que não somam 1) → `GameDataManager::drop_global`; usado pelo drop do `pw-gs` (spec 05) e pelo "Dropado de" do Estúdio (spec 07) |
 | `globalcontroller.conf` | **é do `gs`** (`worldmanager.cpp:1106`) e traz `cash_money_exchange_rate` (1.000.000 no `realm_155`). `falta`, mas só importa quando a **Loja Gold** existir |
 | `airmap/`, `movemap/`, `map.bht`, `.dhmap`/`.rmap` | navegação e colisão do `path_finding`; o mundo hoje não faz pathfinding de criatura por malha |
 
@@ -481,7 +481,7 @@ categorias), com o layout que fecha o arquivo no último byte:
 | :--- | ---: | :--- | :--- |
 | 1.5.5 `VIP` | 1436 | 36 B `{price,end,time,start,type,day,status,flag,min_vip}`; brinde, donos, limite | `realm_155` (1726 / 205 / 6 ofertas) |
 | 1.5.x sem `VIP` | 1412 | 32 B; brinde, donos | — |
-| 1.2.6 | 1288 | 12 B `{price, data absoluta, time}` (`load_malldata`, `gs` 1.2.6 VA 0x81e877c) | `realm_126` (668) |
+| 1.2.6 | 1288 | 12 B `{price, data absoluta, time}` (`load_malldata`, `gs` 1.2.6 VA 0x81e877c) | `realm_126` (670 desde a publicação de 01/11 pelo G-Shop do Estúdio; eram 668) |
 
 O índice na lista é o `goods_index` do `MALL_SHOPPING`: por isso a loja sai do `gshop.data`
 do cliente (idêntico ao do cliente BR e ao do pacote 1.2.6), não do `gshopsev.data` — o do
@@ -493,6 +493,18 @@ teste): só o carimbo, loja vazia. Prova: `pw-data-loader/tests/gshop_do_realm.r
 (`campos_do_formato`: `local_id`, `main_type`, `sub_type`, `icon` `char[128]` GBK, `id`, `num`, `buy_k_*`, `desc`
 `wchar[512]`, `szName` `wchar[32]`, brinde, `owner_npcs_0..7`, `buy_times_limit(_mode)`; no 1.2.6 `status`@196). Texto só
 é reescrito (e o resto do campo zerado) quando muda.
+
+**Conferência (B385):** `gshop_editavel::conferir_oferta(g, oferta, pilha)` porta as regras com que o GS 1.5.5 recusa a
+loja ao carregar — `load_malldata` (`cgame/gs/template/globaldataman.cpp:135-200`: `type` fora de -1..2 em qualquer
+opção) e `InitMall` (`cgame/gs/playermall.cpp:155-380`: id e quantidade, quantidade ≤ pilha do item
+(`get_item_pile_limit`, `itemdataman.cpp:815`), validade < 2³¹, `CheckParam` do período (datas com início < fim,
+semanal com bit 0–6 = domingo–sábado, mensal com bit k = dia k+1), grupo/selo ≥ 0, validade só com pilha 1 e sem
+período, opções do mesmo grupo sem sobreposição, brinde com pilha e validade). Aba e subaba têm de existir. Oferta sem
+nenhum preço = **aviso** (desativada: o cliente a esconde, `CalcBuyType`/`GetFirstBuyStatus`, `EC_Shop.cpp:172-197`,
+`DlgQShop.cpp:914-929`; 751 das 1.726 do BR); preço só depois de um buraco = aviso (o GS para na 1ª opção sem preço,
+`playermall.cpp:198`). No 1.2.6 as regras de item/pilha valem como aviso (o `InitMall` do `gs` 1.2.6 não foi conferido).
+As 4 lojas reais passam sem erro de opção (`testes_da_conferencia`). **`imagem::tga_32`**: TGA tipo 2, 32 bits, origem
+embaixo, descritor 0x08 e o rodapé `TRUEVISION-XFILE.` — os 37 TGA das abas da loja do cliente BR voltam byte a byte.
 
 ### 3.9 `collision.clt` (`collision.rs`)
 
@@ -753,10 +765,15 @@ formatos do modelo (`.ski`, `.bon`, `.stck`, `.smd`) têm escritor conferido no 
 
 **Importar glTF → `.ski` (B289, S6):** `importar::ski_do_glb(glb, esqueleto)` desfaz `glb::do_modelo`:
 - **eixos:** `z` negado em posição e normal, e a ordem de cada triângulo invertida;
-- **pele:** cada primitiva com `JOINTS_0`/`WEIGHTS_0` vira uma malha de pele, com pesos normalizados (3 gravados e o
-  4º implícito). `JOINTS_1` é relatado e ignorado;
+- **pele:** cada primitiva com `JOINTS_0`/`WEIGHTS_0` vira uma malha de pele (3 pesos gravados e o 4º implícito).
+  B383: os pesos saem como o motor lê (`A3DSkinMesh.cpp:1036-1066`) — não nulos na frente (o motor para no 1º zero),
+  no máximo 4 (as maiores de `JOINTS_0` + `JOINTS_1`), soma 1; sem peso → a vaga do esqueleto; tudo no relatório
+  (`importar::RelatorioDePesos`). A ordem entre não nulos fica a do glTF (a ida e volta dos modelos do cliente segue
+  exata);
 - **ossos:** casados pelo nome no `.bon` e gravados como `.ski` v9 (nomes). O nó "esqueleto" é a vaga que
-  `BindSkeleton` reserva (índice = número de nomes);
+  `BindSkeleton` reserva (índice = número de nomes). B383: osso que o `.bon` não tem passa os pesos ao ancestral mais
+  próximo (no glTF) que existe — sem ancestral, recusa; pose de repouso do glTF (IBM) diferente da do `.bon` → os vértices
+  são repostos na do `.bon` (`v' = Σ wᵢ · inversa(matBoneInit)ᵢ · IBMᵢ · v`, `importar::destino_das_juntas`);
 - **material:** com `extras.angelica` (agora gravado pelo exportador) os valores voltam exatos. Sem ele valem os
   padrões medidos (`ski::testes::medir_padroes`): em 83% dos 28.421 materiais do 1.5.5, ambiente = difusa, emissiva e
   especular (0,0,0,1) e brilho 10. O `fMinWeight` é 0 em todos os 24.165 `.ski`, e o motor só o lê e regrava;
@@ -845,6 +862,22 @@ e cada ação do `.smd` é um intervalo de quadros dela. Medido em 1.163 ações
 Testado em 30 modelos reais (10 com `.smd` v5, 20 com v6; 1.144 trilhas de junta): os dois arquivos releem, o
 `cabeca` vê a ação no intervalo, e cada junta ganha as chaves e o segmento esperados.
 
+**Várias ações e nome do cliente (B380):** `glb::do_modelo_com_acoes(peles, esqueleto, acoes, nome)` põe uma animação
+glTF por ação; `AnimacaoDoModelo::nome_original` vai em `extras.angelica.nome`. `importar::nome_original(anim)` devolve o
+nome da ação no `.smd`: `extras.angelica.nome`, senão o que vem depois do último `" · "` (`SEPARADOR_DO_NOME`), senão o
+nome inteiro — `acoes_do_glb` usa. `importar::conferir_esqueleto(glb, bon)`: os ossos do glTF (`esqueleto_do_glb`) e os
+do `.bon` têm os mesmos nomes e cada um a mesma mãe; `Err` lista os que faltam, sobram ou mudaram de mãe (teste:
+`acoes_ida_e_volta`, 40 modelos reais — o GLB exportado confere, com um osso renomeado não). `ecm::Ecm::filhos`: os
+`ChildPath:` (`EC_Model.cpp:152/4777`).
+
+**Ação v5 igual (B381):** `importar::acao_v5_igual(bon, smd, acao)` / `diferenca_da_acao_v5` — a referência é a ação
+existente passada pelo mesmo caminho do Estúdio (trilhas embutidas no intervalo dela → `do_modelo_com_acoes` →
+`acoes_do_glb`), comparada chave a chave com a importada; igual dentro de `TOLERANCIA_DE_ACAO_IGUAL` (posição relativa
+1e-3, quatérnio 5e-3 — medido na ida e volta real pelo Blender: 3,0e-4 e 3,2e-3). Intervalo diferente por junta, outro
+número de quadros ou junta sem trilha = diferente. Comparar direto com a trilha erra entre chaves (chaves fora da grade:
+até 1e-2). Exportador: `glb::tempo_na_grade` grava o tempo que cai na grade de quadros exatamente nela (o `f32` subido
+um passo se ficou abaixo, nas precisões de 32 e 64 bits) — sem isso o Blender pode truncar o último quadro.
+
 **Esqueleto do glTF (B297, S6):** `importar::esqueleto_do_glb(glb)` monta um `.bon` v6 a partir das juntas da 1ª `skin`
 (sem a vaga "esqueleto").
 
@@ -895,7 +928,9 @@ achar, em `<pasta>\Tex_<título>\<nome>` (`A3DSkin::Load`). Medido numa amostra 
 referências): 4.785 em `Textures`, 139 em `Tex_`, 61 ausentes no próprio cliente; extensões dds 4.978, psd 5, tga 2;
 formatos DXT1 1.732, DXT3 2.201, DXT5 746, RGBA 32 bits 244, TGA 1 — e **as 4.924 achadas decodificam**.
 `imagem::decodificar` faz DDS (DXT1 com o índice 3 transparente quando `c0 <= c1`, DXT3, DXT5, sem compressão por
-máscaras; só o 1º mip) e TGA tipo 2 (24/32 bits, origem pelo bit 5). `glb::do_ski_com_texturas` embute cada textura
+máscaras; só o 1º mip) e TGA tipo 2 e tipo 10 (RLE, B393) (24/32 bits, origem pelo bit 5). O tipo 10 existe no
+cliente 1.2.6: `models/npcs/bocchi/textures/face.tga` (1024×1024, 24 bits) — antes ficava sem imagem no GLB (rosto branco
+do Bocchinelson); RLE truncado não decodifica. `glb::do_ski_com_texturas` embute cada textura
 como PNG e cria um material glTF por par (material, textura) usado; textura com algum alfa < 255 → `alphaMode` MASK
 (corte 0,5 — escolha de exibição, não regra do jogo). Atenção, na instalação BR desempacotada os nomes estão no disco
 como os bytes GBK lidos em Windows-1252 (artefato da extração; no `pw-recursos` o caminho é GBK e não há problema).

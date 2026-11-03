@@ -276,6 +276,19 @@ pub mod acoes {
         cliente::jogar(&pasta).map_err(erro)
     }
 
+    /// B391: a URL do painel web (conta, criar conta, administração) que o servidor de atualização
+    /// anuncia, com `{host}` trocado pelo host do servidor configurado aqui — o mesmo que vai para a
+    /// `serverlist.txt`. Fala com o servidor: roda fora da thread da janela.
+    pub fn endereco_do_painel() -> Result<String, String> {
+        let c = ler_config();
+        let modelo = servidor(&c.servidor)
+            .painel()
+            .map_err(erro)?
+            .ok_or("Este servidor não informa o endereço do painel (PW_PAINEL_URL no pw-recursos).")?;
+        let host = local::host_da_url(&c.servidor).ok_or("endereço do servidor de atualização sem host")?;
+        pw_atualizador::painel::montar_url(&modelo, &host).map_err(erro)
+    }
+
     /// Mostra a pasta da versão no Explorer.
     pub fn abrir_no_explorer(versao: &str) -> Result<(), String> {
         let pasta = pasta_da_versao(versao)?;

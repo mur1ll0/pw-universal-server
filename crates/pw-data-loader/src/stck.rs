@@ -19,6 +19,7 @@ pub enum StckError {
 
 const IDENTIDADE: u32 = (b'S' as u32) << 24 | (b'T' as u32) << 16 | (b'C' as u32) << 8 | b'K' as u32;
 
+#[derive(Debug, Clone)]
 pub struct Stck {
     pub quadro_inicial: i32,
     pub quadro_final: i32,

@@ -121,14 +121,16 @@ async def comandar(realm_id, administrador_id, consulta, operacao_id=None):
         if resposta["estado"] in ("salvo", "pendente", "aplicado", "substituido"):
             tipo = dados.get("tipo")
             conta = dados.get("conta_id")
+            # B387: o cadastro público grava pela mesma criação e responde `criar_conta`.
+            pedido = "criar_conta" if consulta["tipo"] == "cadastrar_conta" else consulta["tipo"]
             if (tipo not in ("trocar_senha", "criar_conta", "definir_gm", "ajustar_gold", "definir_ban")
                     or dados.get("alcance") != "global"
                     or type(conta) is not int or not 1 <= conta <= 2_147_483_647
-                    or (consulta["tipo"] != "resultado" and tipo != consulta["tipo"])
-                    or (consulta["tipo"] in ("trocar_senha", "definir_gm", "ajustar_gold", "definir_ban")
+                    or (pedido != "resultado" and tipo != pedido)
+                    or (pedido in ("trocar_senha", "definir_gm", "ajustar_gold", "definir_ban")
                         and conta != consulta["conta_id"])
                     or (tipo == "criar_conta" and (not isinstance(dados.get("usuario"), str)
-                        or (consulta["tipo"] == "criar_conta"
+                        or (pedido == "criar_conta"
                             and dados["usuario"] != consulta["usuario"].lower())))):
                 raise CanalIndisponivel("Resultado administrativo de outro alvo.")
             if resposta["estado"] in ("pendente", "aplicado", "substituido") and (

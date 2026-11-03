@@ -81,6 +81,58 @@ async fn criacao_valida_nome_no_daemon_e_deduplica_variacao_de_caixa() {
     c.encerrar().await;
 }
 
+/// B387: cadastro público (autor 0) cria conta comum, idempotente; conta comum só troca a própria senha.
+#[tokio::test]
+async fn cadastro_publico_cria_conta_comum_e_ela_so_troca_a_propria_senha() {
+    let c = Cenario::montar().await;
+    let nome = format!("cad_{}", c.conta);
+    let consulta = json!({"tipo":"cadastrar_conta", "usuario":nome.to_uppercase(), "senha":"Nova!"});
+    let id = format!("cadastro-{}", c.conta);
+    // Só o painel (autor 0) cadastra; um GM usa a `criar_conta`.
+    assert_eq!(c.pedir_com_id(&c.realm, "cad-gm", c.conta, consulta.clone()).await["dados"]["codigo"],
+        "administrador_recusado");
+    assert_eq!(c.pedir_com_id(&c.realm, "cad-ruim", 0,
+        json!({"tipo":"cadastrar_conta", "usuario":"a b", "senha":"Nova!"})).await["dados"]["codigo"], "alvo_invalido");
+    let criada = c.pedir_com_id(&c.realm, &id, 0, consulta.clone()).await;
+    assert_eq!(criada["estado"], "salvo");
+    assert_eq!(criada["dados"]["usuario"], nome);
+    let nova = criada["dados"]["conta_id"].as_i64().unwrap() as i32;
+    assert_eq!(c.pedir_com_id(&c.realm, &id, 0, consulta).await, criada);
+    assert_eq!(c.pedir_com_id(&c.realm, &id, 0,
+        json!({"tipo":"cadastrar_conta", "usuario":"outro_nome", "senha":"Nova!"})).await["dados"]["codigo"],
+        "operacao_em_conflito");
+    let (gm, hash): (i32, String) = sqlx::query_as("SELECT gm_privileges,password_hash FROM accounts WHERE id=$1")
+        .bind(nova).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(gm, 0);
+    assert_eq!(hash, pw_crypto::hash_legacy_pw_md5(&nome, "Nova!"));
+    // A conta comum troca a própria senha…
+    let propria = c.pedir_com_id(&c.realm, &format!("propria-{nova}"), nova,
+        json!({"tipo":"trocar_senha", "conta_id":nova, "senha":"Outra!"})).await;
+    assert_eq!(propria["estado"], "salvo");
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM accounts WHERE id=$1")
+        .bind(nova).fetch_one(c.pool.get_ref()).await.unwrap();
+    assert_eq!(hash, pw_crypto::hash_legacy_pw_md5(&nome, "Outra!"));
+    // O resumo dos mundos é público ao jogador…
+    assert!(c.pedir_com_id(&c.realm, &format!("mundos-{nova}"), nova, json!({"tipo":"mundos"}))
+        .await["dados"].get("codigo").is_none());
+    // …e nada mais: nem a senha de outra conta, nem personagem de outra conta, nem escrita de GM.
+    for consulta in [json!({"tipo":"trocar_senha", "conta_id":c.conta, "senha":"Invasao!"}),
+                     json!({"tipo":"personagem", "personagem_id":c.personagem}),
+                     json!({"tipo":"inventario", "personagem_id":c.personagem}),
+                     json!({"tipo":"detalhe_item", "personagem_id":c.personagem, "recipiente":"bolsa", "slot":0}),
+                     json!({"tipo":"definir_taxas", "exp":1.0, "sp":1.0, "drop":1.0, "moedas":1.0}),
+                     json!({"tipo":"criar_conta", "usuario":"x_x", "senha":"Nova!"})] {
+        assert_eq!(c.pedir_com_id(&c.realm, &format!("nega-{nova}-{}", consulta["tipo"].as_str().unwrap()), nova, consulta)
+            .await["dados"]["codigo"], "administrador_recusado");
+    }
+    // Banida, nem a própria.
+    sqlx::query("UPDATE accounts SET is_banned=true WHERE id=$1").bind(nova).execute(c.pool.get_ref()).await.unwrap();
+    assert_eq!(c.pedir_com_id(&c.realm, &format!("banida-{nova}"), nova,
+        json!({"tipo":"trocar_senha", "conta_id":nova, "senha":"Mais!"})).await["dados"]["codigo"], "administrador_recusado");
+    sqlx::query("DELETE FROM accounts WHERE id=$1").bind(nova).execute(c.pool.get_ref()).await.unwrap();
+    c.encerrar().await;
+}
+
 /// A vez de cada teste no banco (B194). `entrada_em_andamento_nao_parece_offline` trava a tabela
 /// `characters` inteira; com o arquivo em paralelo isso estoura o prazo das consultas dos outros
 /// testes ("unexpected end of file" em testes variados). O exclusivo só entra com **nenhum**
@@ -174,6 +226,15 @@ impl Cenario {
         dados.pilhas.insert(3001, 100);
         dados.pilhas.insert(3002, 10);
         dados.itens_de_missao.insert(3002);
+        // B388: o teto de chi que o painel dá com o cultivo vem das missões de cultivo — uma
+        // mãe que dá o teto 99 e a filha que dá o cultivo 1 (como a 32394/32416 do 1.5.5), e
+        // uma que dá cultivo 3 e teto 199 de uma vez (como a 922).
+        for (tid, pai, cultivo, teto) in [(9001u32, None, 0u32, 99u32), (9002, Some(9001), 1, 0), (9003, None, 3, 199)] {
+            let mut m = pw_data_loader::tasks::TaskTemplate { id: tid, parent: pai, ..Default::default() };
+            m.rewards.novo_cultivo = cultivo;
+            m.rewards.teto_de_chi = teto;
+            dados.tasks.tasks.insert(tid, m);
+        }
         // B191: 3003 é uma arma (máscara `0x1`, só o slot 0 do corpo); o resto não entra no corpo.
         dados.nomes_de_itens.insert(3003, "Espada de teste".into());
         dados.pilhas.insert(3003, 1);
@@ -536,8 +597,10 @@ async fn canal_confere_realm_e_revogacao_de_gm() {
         .execute(c.pool.get_ref())
         .await
         .unwrap();
+    // B387: sem GM, a conta ainda lê o próprio personagem (painel do jogador), mas nada de GM.
+    assert!(c.consultar().await["dados"].get("codigo").is_none());
     assert_eq!(
-        c.consultar().await["dados"]["codigo"],
+        c.pedir(&c.realm, json!({"tipo":"templates"})).await["dados"]["codigo"],
         "administrador_recusado"
     );
     sqlx::query("UPDATE accounts SET gm_privileges=1,is_banned=true WHERE id=$1")
@@ -639,6 +702,33 @@ async fn reiniciar_desconecta_todos_salvando_e_encerra() {
         assert!(tokio::time::Instant::now() < limite, "não encerrou");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    c.encerrar().await;
+}
+
+/// B378: "avisar" manda a mensagem do sistema (canal 9, `srcroleid` 0 — a fala `$S`) a quem está online; texto
+/// vazio ou longo é recusado.
+#[tokio::test]
+async fn avisar_manda_mensagem_do_sistema_a_quem_esta_online() {
+    let c = Cenario::montar().await;
+    let mut bus = c.entrar().await;
+    c.esperar_presenca("online").await;
+    let r = c.pedir(&c.realm, json!({"tipo":"avisar","texto":"O servidor reinicia em 5 minutos."})).await;
+    assert_eq!((r["estado"].as_str(), r["dados"]["tipo"].as_str(), r["dados"]["enviados"].as_u64()), (Some("aplicado"), Some("avisar"), Some(1)), "{r}");
+    let esperado: Vec<u8> = "O servidor reinicia em 5 minutos.".encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let chegou = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match bus.receber().await.unwrap() {
+                Some(BusMessage::ChatSingleCast { channel, srcroleid, dstroleid, msg, .. }) => break (channel, srcroleid, dstroleid, msg),
+                Some(_) => continue,
+                None => panic!("o bus fechou"),
+            }
+        }
+    })
+    .await
+    .expect("o aviso não chegou");
+    assert_eq!(chegou, (9, 0, c.personagem, esperado));
+    assert_eq!(c.pedir(&c.realm, json!({"tipo":"avisar","texto":"  "})).await["dados"]["codigo"], "texto_invalido");
+    assert_eq!(c.pedir(&c.realm, json!({"tipo":"avisar","texto":"x".repeat(201)})).await["dados"]["codigo"], "texto_invalido");
     c.encerrar().await;
 }
 
@@ -1161,6 +1251,8 @@ async fn editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155() {
         assert_eq!(r["estado"], "aplicado", "{r}");
         esperar_do_mundo(&mut bus, |m| matches!(m, BusMessage::GameToClient { data, .. } if data[..2] == 160u16.to_le_bytes())).await;
         assert_eq!(jogador(&*c.mundo.read().await).2, 5);
+        // Com o cultivo veio o teto de chi das missões até o cultivo 5 (B388).
+        assert_eq!(c.mundo.read().await.players[&(c.personagem as i64)].max_ap, 199, "teto de chi do cultivo 5");
         let r = c.pedir_com_id(&c.realm, &id("cul-deus"), c.conta, editar(json!({"cultivo": 22}))).await;
         if versao == GameVersion::V1_2_6 {
             assert_eq!(r["dados"]["codigo"], "cultivo_invalido", "{r}");
@@ -1192,6 +1284,14 @@ async fn editar_pontos_nivel_e_cultivo_online_e_offline_126_e_155() {
         assert_eq!(r["dados"]["codigo"], "nivel_invalido");
         let r = c.pedir_com_id(&c.realm, &id("cul-off"), c.conta, editar(json!({"cultivo": 8}))).await;
         assert_eq!((r["estado"].as_str(), r["dados"]["cultivo"].as_i64()), (Some("salvo"), Some(8)), "{r}");
+        let chi: (i32, i32) = sqlx::query_as("SELECT cultivation, max_ap FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(chi, (8, 199), "offline grava o teto de chi do cultivo 8");
+        let r = c.pedir_com_id(&c.realm, &id("cul-off-1"), c.conta, editar(json!({"cultivo": 1}))).await;
+        assert_eq!(r["estado"], "salvo", "{r}");
+        let chi: (i32,) = sqlx::query_as("SELECT max_ap FROM characters WHERE id=$1")
+            .bind(c.personagem).fetch_one(c.pool.get_ref()).await.unwrap();
+        assert_eq!(chi.0, 99, "o teto 99 vem da missão-mãe da que dá o cultivo 1");
         sqlx::query("DELETE FROM comandos_administrativos WHERE operacao_id LIKE 'e5b-%-' || $1").bind(c.personagem.to_string()).execute(c.pool.get_ref()).await.unwrap();
         c.encerrar().await;
     }

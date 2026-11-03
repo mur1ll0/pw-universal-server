@@ -271,7 +271,7 @@ function detalharPonto(ev) {
 
 /* ---------------- Edição do npcgen (S4 parte 2, B243) ----------------
    As áreas do npcgen do realm (`npcgendata.h:57-102`): área de criatura (AREA) com geradores (NPCGEN) e
-   área de recurso (RESAREA) com recursos (RES). A edição vai para o rascunho escolhido no topo do Estúdio
+   área de recurso (RESAREA) com recursos (RES). A edição vai para o rascunho escolhido no topo dos Editores
    como item só do servidor (`servidor\<mapa>\npcgen.data`); publicar grava no realm, que precisa
    reiniciar para ler. `vExts`/`fExtX`/`fExtZ` são o tamanho da caixa, metade para cada lado do centro. */
 
@@ -385,7 +385,7 @@ async function abrirArea(tipo, indice) {
     const dados = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/npcgen/${tipo}/${indice}${estudio.rascunho ? `?rascunho=${estudio.rascunho}` : ""}`));
     mapa.area = { tipo, indice, dados };
     desenharEditorDeArea();
-  } catch (erro) { fecharArea(); alerta("erro", "Estúdio", erro.message); }
+  } catch (erro) { fecharArea(); alerta("erro", "Editores", erro.message); }
   desenharMapa();
 }
 
@@ -452,7 +452,7 @@ function desenharEditorDeArea() {
   const forte = criar("strong", "", `${NOMES_DO_TIPO[tipo]} #${indice}${nomeCurtoDoRegistro ? `: ${nomeCurtoDoRegistro}` : ""}`);
   if (dados.nome) forte.title = dados.nome;
   titulo.append(forte,
-    criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
+    criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo dos Editores"));
   ed.appendChild(titulo);
 
   const area = criar("fieldset");
@@ -517,7 +517,7 @@ function desenharEditorDeArea() {
     if (editavel) {
       const tirar = criar("button", "botao botao-secundario botao-pequeno texto-perigo", `Tirar ${nomeDoFilho.toLowerCase()}`);
       tirar.type = "button";
-      tirar.addEventListener("click", () => { if (filhos.children.length > 1) f.remove(); else alerta("aviso", "Estúdio", "A área precisa de ao menos um; para tirá-la, remova a área.", { toast: true }); });
+      tirar.addEventListener("click", () => { if (filhos.children.length > 1) f.remove(); else alerta("aviso", "Editores", "A área precisa de ao menos um; para tirá-la, remova a área.", { toast: true }); });
       acoes.appendChild(tirar);
     }
     f.appendChild(acoes);
@@ -587,27 +587,27 @@ function posicionarPeloClique(ev) {
   if (iy && !iy.disabled) {
     api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/altura?x=${x}&z=${z}`))
       .then((r) => {
-        if (r.y == null) { alerta("aviso", "Estúdio", "Sem terreno do realm neste ponto: confira o Y à mão.", { toast: true }); return; }
+        if (r.y == null) { alerta("aviso", "Editores", "Sem terreno do realm neste ponto: confira o Y à mão.", { toast: true }); return; }
         iy.value = r.y;
       })
-      .catch((erro) => alerta("aviso", "Estúdio", `Altura do chão: ${erro.message}`, { toast: true }));
+      .catch((erro) => alerta("aviso", "Editores", `Altura do chão: ${erro.message}`, { toast: true }));
   }
   mapa.posicionando = false;
   const b = [...ed.querySelectorAll("button")].find((x) => x.textContent === "Clique no mapa…");
   if (b) b.textContent = "Posicionar pelo clique";
-  alerta("ok", "Estúdio", `Posição (${x}, ${z}). Salve para gravar no rascunho.`, { toast: true });
+  alerta("ok", "Editores", `Posição (${x}, ${z}). Salve para gravar no rascunho.`, { toast: true });
 }
 
 async function acaoNaArea(acao, mensagem, reabrir) {
   const tipo = mapa.area.tipo;
   try {
     const r = await acao();
-    alerta("ok", "Estúdio", mensagem(r) + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
+    alerta("ok", "Editores", mensagem(r) + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
     await carregarNpcgen();
     const alvo = reabrir(r);
     if (alvo === null || alvo === undefined) { fecharArea(); desenharMapa(); } else await abrirArea(tipo, alvo);
     if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-  } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+  } catch (erro) { alerta("erro", "Editores", erro.message); }
 }
 
 /* ---------------- Distritos e portais (S4 parte 3, B244) ----------------
@@ -630,13 +630,13 @@ async function carregarCamadas() {
     // B365: a camada Regiões usa a mesma resposta dos portais (region.sev + region.clt).
     if (!elemento(id).checked && !(id === "mapa-portais" && elemento("mapa-regioes")?.checked)) return null;
     try { return await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${nome}${q}`)); }
-    catch (erro) { alerta("aviso", "Estúdio", `${nome}: ${erro.message}`, { toast: true }); return null; }
+    catch (erro) { alerta("aviso", "Editores", `${nome}: ${erro.message}`, { toast: true }); return null; }
   };
   const [d, p, t, rs] = await Promise.all([carregar("mapa-distritos", "distritos"), carregar("mapa-portais", "portais"),
     carregar("mapa-teleportes", "teleportes"), carregar("mapa-rastreador", "rastreador")]);
   if (mapa.atual !== m) return;
   mapa.rastreador = rs;
-  if (rs && !rs.usado_pelo_cliente) alerta("aviso", "Estúdio", "O cliente só consulta o rastreador no mapa principal (mapa 1): neste mapa ele não é usado.", { toast: true });
+  if (rs && !rs.usado_pelo_cliente) alerta("aviso", "Editores", "O cliente só consulta o rastreador no mapa principal (mapa 1): neste mapa ele não é usado.", { toast: true });
   mapa.distritos = d;
   mapa.portais = p;
   mapa.teleportes = t;
@@ -1037,7 +1037,7 @@ function abrirDaCamada(camada, indice) {
     if (item.destino !== m.id) ed.appendChild(criar("div", "texto-suave", `A chegada fica em ${nomeDoMapa(item.destino)}: abra aquele mapa para posicionar pelo clique.`));
   }
   if (!editavel) {
-    titulo.appendChild(criar("span", "texto-suave", " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
+    titulo.appendChild(criar("span", "texto-suave", " · só leitura: escolha ou crie um rascunho no topo dos Editores"));
     desenharMapa();
     return;
   }
@@ -1049,23 +1049,23 @@ function abrirDaCamada(camada, indice) {
   salvar.type = "button";
   salvar.addEventListener("click", async () => {
     const campos = corpo();
-    if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    if (!Object.keys(campos).length) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
     try {
       const rota = porId
         ? `/api/realms/${encodeURIComponent(estudio.realm)}/estudio/${camada}/${indice}?rascunho=${estudio.rascunho}`
         : rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}/${indice}?rascunho=${estudio.rascunho}`);
       const r = await api(rota, { method: "PUT", body: JSON.stringify({ campos }) });
-      alerta("ok", "Estúdio", "Salvo no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
+      alerta("ok", "Editores", "Salvo no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao realm: o item saiu do rascunho." : ""), { toast: true });
       await carregarCamadas();
       abrirDaCamada(camada, indice);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   botoes.append(pos, salvar);
   const extra = (texto, classe, acao) => { const b = criar("button", `botao botao-pequeno ${classe}`, texto); b.type = "button"; b.addEventListener("click", acao); botoes.appendChild(b); return b; };
   const rotaDaCamada = (resto = "") => rotaDoMapa(`/${encodeURIComponent(m.caminho)}/${camada}${resto}?rascunho=${estudio.rascunho}`);
   const depois = async (msg, reabrir) => {
-    alerta("ok", "Estúdio", msg, { toast: true });
+    alerta("ok", "Editores", msg, { toast: true });
     mapa.poligonoNovo = null;
     await carregarCamadas();
     if (reabrir == null) { fecharArea(); desenharMapa(); } else abrirDaCamada(camada, reabrir);
@@ -1080,12 +1080,12 @@ function abrirDaCamada(camada, indice) {
       try {
         const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ base: indice, campos: { nome, vertices: pontos, ponto } }) });
         await depois(`Distrito novo #${r.resultado.indice} (id ${r.resultado.id}) no rascunho.`, r.resultado.indice);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     }));
     extra("Remover distrito", "botao-secundario texto-perigo", async () => {
       if (!confirm(`Remover o distrito #${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente? Os seguintes sobem um número.`)) return;
       try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Distrito removido no rascunho.", null); }
-      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      catch (erro) { alerta("erro", "Editores", erro.message); }
     });
   }
   if (camada === "teleportes" && mapa.teleportes.alinhado_com_o_cliente) {
@@ -1097,14 +1097,14 @@ function abrirDaCamada(camada, indice) {
         const r = await api(rotaDoMapa(`/${encodeURIComponent(m.caminho)}/teleportes?rascunho=${estudio.rascunho}`),
           { method: "POST", body: JSON.stringify({ base: indice, campos: { nome, pos } }) });
         await depois(`Destino novo ${r.resultado.id} no rascunho. Para alguém levar até ele, ponha o id ${r.resultado.id} numa transportadora (ficha NPC_TRANSMIT_SERVICE).`, r.resultado.id);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     extra("Remover destino", "botao-secundario texto-perigo", async () => {
       if (!confirm(`Remover o destino ${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente?`)) return;
       try {
         await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/teleportes/${indice}?rascunho=${estudio.rascunho}`, { method: "DELETE" });
         await depois("Destino removido no rascunho.", null);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     });
   }
   if (camada === "regioes") pos.hidden = true;
@@ -1117,28 +1117,28 @@ function abrirDaCamada(camada, indice) {
       try {
         const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ campos: { nome, tipo: santuario ? 1 : 0, vertices: pontos } }) });
         await depois(`Região nova #${r.resultado.indice} no rascunho.`, r.resultado.indice);
-      } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      } catch (erro) { alerta("erro", "Editores", erro.message); }
     }));
     extra("Remover região", "botao-secundario texto-perigo", async () => {
       if (!confirm(`Remover a região #${indice}${item.nome ? ` (${item.nome})` : ""} do servidor e do cliente?`)) return;
       try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Região removida no rascunho.", null); }
-      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      catch (erro) { alerta("erro", "Editores", erro.message); }
     });
   }
   if (camada === "portais" && mapa.portais.alinhado_com_o_cliente) {
     extra("Posicionar a caixa pelo clique", "botao-secundario", () => {
       mapa.seletorDoClique = { x: 'input[data-pos="cx"]', z: 'input[data-pos="cz"]', y: 'input[data-pos="cy"]' };
       mapa.posicionando = true;
-      alerta("ok", "Estúdio", "Clique no mapa onde fica a caixa do portal.", { toast: true });
+      alerta("ok", "Editores", "Clique no mapa onde fica a caixa do portal.", { toast: true });
     });
     extra("Novo portal (copiar este)", "botao-secundario", async () => {
       try { const r = await api(rotaDaCamada(), { method: "POST", body: JSON.stringify({ base: indice }) }); await depois(`Portal novo #${r.resultado.indice} (no mesmo lugar; mova-o).`, r.resultado.indice); }
-      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      catch (erro) { alerta("erro", "Editores", erro.message); }
     });
     extra("Remover portal", "botao-secundario texto-perigo", async () => {
       if (!confirm(`Remover o portal #${indice} do servidor e do cliente? Os seguintes sobem um número nos dois.`)) return;
       try { await api(rotaDaCamada(`/${indice}`), { method: "DELETE" }); await depois("Portal removido no rascunho.", null); }
-      catch (erro) { alerta("erro", "Estúdio", erro.message); }
+      catch (erro) { alerta("erro", "Editores", erro.message); }
     });
   }
   ed.appendChild(botoes);
@@ -1157,7 +1157,7 @@ function comecarDesenho(aoConcluir) {
   for (const b of [concluir, desfazer, cancelar]) b.type = "button";
   concluir.addEventListener("click", () => {
     const d = mapa.desenho;
-    if (!d || d.pontos.length < 3) { alerta("aviso", "Estúdio", "O polígono precisa de ao menos 3 pontos.", { toast: true }); return; }
+    if (!d || d.pontos.length < 3) { alerta("aviso", "Editores", "O polígono precisa de ao menos 3 pontos.", { toast: true }); return; }
     mapa.desenho = null;
     barra.remove();
     d.aoConcluir(d.pontos);
@@ -1206,12 +1206,12 @@ async function linhaDoRastreador(fieldset, idNpc, campoDaArea) {
     try {
       await api(`/api/realms/${encodeURIComponent(estudio.realm)}/estudio/rastreador/${idNpc}?rascunho=${estudio.rascunho}`,
         { method: "PUT", body: JSON.stringify({ campos: { pos: [v("vPos_x"), v("vPos_y"), v("vPos_z")] } }) });
-      alerta("ok", "Estúdio", "Rastreador atualizado no rascunho (arquivo do cliente).", { toast: true });
+      alerta("ok", "Editores", "Rastreador atualizado no rascunho (arquivo do cliente).", { toast: true });
       mapa.rastreador = null;
       linha.remove();
       linhaDoRastreador(fieldset, idNpc, campoDaArea);
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   linha.appendChild(b);
 }
@@ -1266,12 +1266,12 @@ function botaoDeAlinhar() {
     try {
       const r = await api(rotaDoMapa(`/${encodeURIComponent(mapa.atual.caminho)}/alinhar?rascunho=${estudio.rascunho}`), { method: "POST" });
       const feitos = r.alinhados.map((x) => `${x.arquivo}: ${x.antes[1]} → ${x.depois[1]} registros, carimbo ${x.antes[0]} → ${x.depois[0]}`);
-      alerta("ok", "Estúdio", feitos.length ? `Alinhado no rascunho — ${feitos.join("; ")}.` : "Já estava alinhado.", { toast: !feitos.length });
+      alerta("ok", "Editores", feitos.length ? `Alinhado no rascunho — ${feitos.join("; ")}.` : "Já estava alinhado.", { toast: !feitos.length });
       fecharArea();
       await carregarCamadas();
       desenharMapa();
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   return b;
 }

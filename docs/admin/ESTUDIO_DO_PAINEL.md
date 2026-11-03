@@ -185,10 +185,31 @@ ser o mesmo arquivo (spec 03 §3.8); há `gshop1`/`gshop2` (segunda loja, `globa
 - 1.2.6: os campos que o layout v55 não tem (selo, VIP, período semanal…) aparecem desligados com a explicação.
 - Publicar = mesma regra do resto (rascunho → canal de teste → versão); vai ao `config/` do realm **e** ao cliente.
 
+**Feito no B385 (Estúdio Svelte, `telas/GShop.svelte`) — o que a evidência mudou no desenho:**
+
+- **Arquivos:** `gshop.data` = Loja Gold (`Win_QShop`, gold); `gshop1.data` = segunda loja (`Win_BackShop`, paga em
+  dividendos, `globaldata_getgshopitems2`, `DlgQShop.cpp:1087-1121`); `gshop2.data` = loja VIP
+  (`globaldata_getgshopitems3`, `CECVipShop`, `EC_Shop.cpp:695`), mostrada no fim da Loja Gold na aba 5
+  (`DlgQShop.cpp:1705-1736`). O 1.2.6 só tem `gshop.data`.
+- **Abas:** 8 fixas (o carregador lê 8, `globaldataman.cpp:643`; 8 `Btn_MainType` nos diálogos); o texto do botão é o
+  `szName` do arquivo (`DlgQShop.cpp:1287`), não o do `.xml`; subabas pelo nome do arquivo (:669), até 8 botões
+  (`Btn_SubType0..7`) mais o "todos" (`Btn_SubType-1`). **Imagem de aba:** no 1.5.5 cada botão tem a sua
+  (`surfaces\version02\系统\商城\<nome>（普通|选中）.tga`, TGA 32 bits, 63–82×33, só o desenho, sem texto); no 1.2.6
+  todos usam `Button\按钮_文本1/2.dds` — sem troca por aba. **Criar aba e reordenar: não** (índices citados no
+  `configs\qshopitem.ini` [Category], aba 5 = VIP, imagem por número de botão) — a tela explica.
+- **Arrastar para reordenar ofertas: não** — a ordem é o `goods_index`; oferta nova vai ao fim, remover avisa e oferece
+  "desativar" (zerar preços: o cliente esconde, ninguém muda de índice).
+- **Vitrine:** a ordem do jogo agrupa pelo selo da 1ª opção com preço — relâmpago, recomendado, promoção, novo, resto
+  (`GShopCollector`, `DlgQShop.cpp:170-232`); o cartão usa o ícone do **item** (`DlgQShopItem.cpp:380`).
+- **Imagem da oferta:** existe — o `icon` (`char[128]`, `Surfaces\百宝阁\*.dds`, DXT3 128×128), mostrado grande ao
+  escolher a oferta e na compra (`DlgQShop.cpp:989`, `DlgQShopBuy.cpp:137`); trocar grava um DDS novo.
+- **Unidades:** preço em centavos (`GetCashText`, `EC_GameUIMan.cpp:7951`), validade em segundos, datas time_t em GMT
+  (`playermall.cpp:195`), limite 0–4 = sem/dia/semana/mês/ano (`template/globaldataman.cpp:79`).
+
 ## 5. Arquitetura e tecnologia
 
 ```text
-navegador: Estúdio (Svelte + TypeScript + Vite, three.js) ── em static/estudio/, mesma origem e CSP
+navegador: Estúdio (Svelte + TypeScript + Vite; WebGL próprio, sem three.js — B366) ── em static/estudio/, mesma origem e CSP
    │
 pw-admin-api (FastAPI) — sessão GM, CSRF; repassa /api/realms/{realm}/estudio/* (realm explícito)
    │
@@ -466,3 +487,430 @@ o editor **gera os arquivos do servidor a partir do que se edita** e publica os 
   e os parâmetros de `Pixel Size`/`Submap` já aparecem na spec 03 §3.6c).
 - Quanto custa reassar o mapa de luz e se dá para reaproveitar a rotina do pré-processador de mapas aleatórios.
 - Desempenho do terreno inteiro do `world` (88 blocos) no navegador.
+
+## 9. Estúdio em Svelte — fase 1: Equipáveis → Armas (B366, 2026-10-23)
+
+O editor em JS puro passou a se chamar **Editores** (mesmas rotas e comportamento). O **Estúdio** é o front novo
+em Svelte 5 + TypeScript + Vite (`web-admin/estudio/`), saída em `static/estudio/`, gerada no estágio Node do
+Dockerfile do painel; contrato no `specs/06_ADMIN_PANEL_AND_CPW_SPEC.md` ("Estúdio em Svelte"). Ele só chama as rotas
+que os Editores já usam: as alterações são idênticas, no rascunho escolhido no topo.
+
+### 9.1 Decisões do Murillo (2026-10-23)
+
+- Subcategorias de Equipáveis (compartimentos `EC_IvtrTypes.h:56-95`, máscaras `ExpTypes.h:312-324, 736-741`): Armas
+  (`WEAPON_ESSENCE`), Armaduras, Ornamentos, Moda, Voo, Asas, Munição, Livros, e só no 1.5.5 Cartas de General
+  (`POKER_ESSENCE`) e Equipamento de Daimon (`GOBLIN_EQUIP_ESSENCE`). Fora: alto-falante, poções automáticas, bolso,
+  certificado, ficha de força, astrolábio, aljava e o compartimento `RUNE` (tabela não identificada). Nesta fase só
+  Armas tem tela; as outras abrem a busca e apontam para os Editores.
+- **Novo** = clonar o registro de menor id da subcategoria, nome "Novo …", listas de efeitos limpas na tela (só
+  valem ao gravar).
+- **Ícone**: só escolher um que o atlas já tem. Enviar ícone novo fica para um bloco próprio: o cliente lê só o
+  atlas `Surfaces\IconSet\IconList_Ivtr{M,F}.dds` + `.txt` (`EC_GameUIMan.cpp:588-640`; célula pelo nome em
+  minúsculas, `SetCover` `:6204-6208`); o atlas tem 69 × 128 células de 32 px (8.832; 8.749 nomes), a textura DXT1
+  4096² comporta até 128 linhas. Enviar = gravar uma célula (64 blocos DXT1) nos dois atlas e o nome no `.txt`.
+- **Item ligado → Criar**: abre `#/itens/novo?retorno=…` em outra aba (clona um item base, nome e preço), e o id volta
+  pelo `BroadcastChannel("pw-estudio")`. O resto do item se edita nos Editores.
+- Embaixo, no lugar de "Drops" (arma não tem drop): **Efeitos add-on** (`addons`, sorteados ao nascer,
+  `generate_item_temp.h:234-246`), **Efeitos aleatórios** (`rands`, reforja, `itemdataman.cpp:1059-1072`) e **Efeitos
+  únicos** (`uniques` + `probability_unique`). Os ocultos (`hiddens`, só v156) ficam nos Editores.
+
+### 9.2 Campos da Arma (aprovados)
+
+| box | campos (v156; os que faltam no v7 somem sozinhos) |
+| :--- | :--- |
+| Principal | `Name`, `file_icon` (modal), `id_major_type`/`id_sub_type` (modal; criar = clonar `WEAPON_MAJOR_TYPE`/`WEAPON_SUB_TYPE`), descrição do `item_ext_desc.txt` |
+| Requisitos | `character_combo_id` (caixas por classe), `require_level/strength/agility/energy/tili`, `require_reputation` (só v156), `require_projectile` |
+| Combate | `level`, dano físico e mágico (mín., faixa do máx.), `attack_range`, `short_range_mode` (0 longe, 1 perto, 2 assassino) |
+| Comércio | `price`, `shop_price`, `repairfee`, `pile_num_max`, `proc_type` (caixas: `ITEM_PROC_TYPE_*`, `cgame/gs/item.h:309-326`) |
+| Durabilidade e fabricação | `durability_min/max`, `durability_drop_min/max`, `decompose_price/time`, `element_id`+`element_num` (cartão), `id_drop_after_damaged`+`num_drop_after_damaged` (só v156), `levelup_addon`+`material_need` (efeito do refino: id do espaço `ADDON`, `get_item_refine_addon` `itemdataman.cpp:205`), furos no drop/ao fabricar e quantos efeitos (chances) |
+| Visual 3D | `file_model_right`, `file_model_left`, `file_matter` (GLB dos Editores) |
+| Listas | `addons_N`, `rands_N`, `uniques_N` |
+
+Ficam nos Editores: `fixed_props`, `has_guid`, `hiddens_N`, `probability_hidden`.
+
+### 9.3 Chances que somam 100% (regra do servidor)
+
+Cada chance é `float` 0–1. Ao carregar, o GS tira as linhas de id 0 e compacta (`eliminate_zero_item`,
+`cgame/gs/template/elementdataman.cpp:270-296`) e divide cada peso pela soma (`NormalizeRandom`, `:298-320`; soma
+≤ 0,00001 → `[1, 0, …]`); o mesmo para furos (3), quantidade de efeitos (6 no v156) e as listas (`:626-645`). O
+sorteio subtrai até achar (`RandSelect`, `itemdataman.h:33-46`). A tela grava pesos que somam 1 (cada um com
+`Math.fround`, a sobra na última linha com peso) e a lista compactada, zeros no fim (`web-admin/estudio/src/lib/
+chances.ts`, 18 testes em `chances.test.ts`). Mexer num controle reparte o resto entre os outros na proporção que
+tinham.
+
+### 9.4 Faltas registradas
+
+- Brilho do refino no 3D: GFX que o cliente escolhe pela cor e nível (`EC_Player.cpp:9299-9316`); sem renderizador
+  de GFX, o botão fica desligado.
+- O GLB de arma (ex.: `工锤.ecm`, Marreta) sai com 1 malha de 65 vértices e aparece em pedaços — o conversor
+  (`pw-data-loader/src/glb.rs`, o mesmo dos Editores) não monta o modelo de arma inteiro; a conferir num bloco próprio.
+- ~~Os nomes do `EQUIPMENT_ADDON` são internos (`A_MD00`)~~ — B367: cartões e seletor mostram o texto do cliente com
+  o valor, pela rota da edição de personagem (`/api/realms/{r}/efeitos?item=&ids=`, B209): quem calcula o valor é o
+  GS do realm, então vale o `elements` **publicado** (efeito criado só no rascunho aparece pelo nome interno). ~~O
+  refino (`levelup_addon`, ex.: 1712) não tem texto no `item_ext_prop.txt`: o cartão mostra os parâmetros (7, 0).~~
+  B383: o refino é explicado pelo servidor (§9.10).
+
+### 9.5 Ajustes do B367 (pedido do Murillo, 2026-10-23)
+
+- "Abrir nos Editores" abre, em outra aba, `/#editores?realm=…&tabela=…&indice=…&rascunho=…` (spec 06).
+- `require_projectile` aparece pelo nome do `PROJECTILE_TYPE` ("Flechas para Arco de Nível 1-3"; 0 = não exige,
+  `ExpTypes.h:185`: "从弹药类型中选取") e escolhe-se num modal com os tipos da versão.
+- Efeitos: texto do cliente com o valor (ver §9.4).
+
+### 9.6 Busca de efeitos da arma (B368)
+
+Antes, o seletor buscava pelo nome interno do `EQUIPMENT_ADDON` e pelo catálogo de texto do cliente com parâmetros 0
+(`/api/efeitos`); efeito de habilidade (tipo 55, ex.: **Mordaz**, id 1286) só tem texto com o valor do id, então
+nunca aparecia, e efeitos de armadura/ornamento apareciam. Agora as listas da arma usam a regra da edição de
+personagem: o GS diz, por id, se serve na família da peça (`validar_efeito`, `crates/pw-gs/src/bus_server/
+item_editado.rs:47`; família por `TabelaDeAddons::ligar_familias`, `crates/pw-data-loader/src/addons.rs:306-338`) e
+se entra na busca. O Estúdio pede **todos** os ids ≤ 8191 (13 bits no item) do `EQUIPMENT_ADDON` do rascunho, com a
+peça de referência = 1º registro da tabela (publicado), e filtra na tela. 1.5.5: 2.977 efeitos → 1.299 de arma
+(1.213 de outra família, 389 fora da busca, 76 sem tratador no GS). Carrega uma vez por realm/rascunho/tabela
+(~1–6 s). Vale o `elements` publicado: efeito novo só do rascunho entra depois de publicar. O seletor do refino
+continua no espaço `ADDON` inteiro (o refino é "fora da busca").
+
+### 9.8 Todos os Equipáveis (B370)
+
+Uma tela só (`telas/EdicaoEquipavel.svelte`) para as 11 subcategorias; as boxes são uma lista única
+(`lib/catalogo.ts::BOXES_DO_EQUIPAVEL`, entradas por nome ou por expressão sobre o layout) e o que a tabela ou a versão
+não tem não aparece. Campos novos, com a evidência:
+
+| campo | como aparece | evidência |
+| :--- | :--- | :--- |
+| `equip_location` (armadura, moda) | lista "Cobre": 0 nenhuma … 8 corpo+baixo+pulso, 9 capacete, 10 mão | **não é máscara**: índice do `enumSkinShow*` (`EC_Player.h:94-104`; `EC_Player.cpp:4633-4640`; moda 9/10 em `EC_IvtrFashion.cpp:191-216`); nos dados: armadura 1, perneira 3, sapato 4, vestido 8 |
+| `gender` (moda) | 0 masculino, 1 feminino | `ExpTypes.h:776` |
+| `fly_mode` (voo) | 0 espada voadora, 1 asas, 2 rodas de fogo | `ExpTypes.h:1594` |
+| `type` (munição) | nome do `PROJECTILE_TYPE`, modal | `ExpTypes.h:1951` |
+| `magic_defences_N_low/high`, `magic_N`, `magic_defence_N` | "Defesa de Metal/Madeira/Água/Fogo/Terra" | 金木水火土, `ExpTypes.h:368` |
+| `id_addons_N` (livro), `id_addonN` (munição), `addon_N` (carta) | box "Efeitos" (só ids, sem chance), mesmo seletor da família | layout |
+| voo, munição, carta, Daimon | rótulos do comentário de cada campo | `ExpTypes.h` (linha no `ROTULOS_EXTRA`) |
+
+### 9.9 Monstros (B371)
+
+Tela `telas/EdicaoMonstro.svelte`, significados em `lib/monstro.ts` (cada um com a evidência do servidor):
+
+| campo | como aparece | evidência |
+| :--- | :--- | :--- |
+| `aggressive_mode` | "Quando ataca?" Passivo / Agressivo | `ExpTypes.h` (0 被动, 1 主动) |
+| `id_strategy` | "Como luta?": corpo a corpo, distância, mágico, corpo+mágico, fixo, bicho, estaca, fixo mágico | `aipolicy.h:918-926` (`STRATEGY_*`, via `primary_strategy`, `npcgenerator.cpp:2600`); 2/3 sem habilidade → aviso (`:288`) |
+| `patroll_mode` | "Quando está ocioso?" fica / anda à toa | o GS só olha ≠ 0 (`npcgenerator.cpp:244`; `aipolicy.cpp:240`) |
+| `sight_range`, `aggro_range`, `aggro_time`, `max_move_range` | "O que enxerga e até onde persegue", com as regras (tempo ≤ 0 → 1; perseguição < 20 → 20, 0 sem limite) | `npcgenerator.cpp:230, 314-317` |
+| `aggro_strategy_N` | "Em quem foca": até 4 políticas com peso | sorteio ao nascer (`npcgenerator.cpp:2562`); `AGGRO_POLICY_*` (`ainpc.h:17-24`); 0–4 iguais no GS 1.5.5 (`ainpc.cpp:209-225`) |
+| `skills_N`, `skill_hp75/50/25_N` | listas com nome e tipo (ataque, bênção, maldição; outro tipo é ignorado pelo GS) e, nas faixas, peso | `npcgenerator.cpp:250-275`; normalização em `elementdataman.cpp` (MONSTER_ESSENCE) |
+| `immune_type`, `after_death`, `combined_switch` | caixas | `ExpTypes.h`; `MONSTER_COMBINED_SWITCH` (`cgame/gs/template/exptypes.h:2962-2968`) |
+| `drop_matters_N` | pesos; com `drop_times > 1` a posição conta (17–32 só na 1ª rodada) e não se compacta | `elementdataman.cpp` (MONSTER_ESSENCE: "不能进行去零操作") |
+| `common_strategy` | id do roteiro do aipolicy (0 nenhum) | `npcgenerator.cpp:218-226` |
+| `id_skill`/`skill_level` | em Avançado, marcado como não usado | `npcgenerator.cpp:225` (comentado) |
+
+**Lado e ajuda entre monstros (B372)** — saíram do "Avançado" para o Comportamento:
+
+| campo | o que é | evidência |
+| :--- | :--- | :--- |
+| `faction` | **lado**: máscara, bit k = lado k do `ENEMY_FACTION_CONFIG` (quem é inimigo de quem). Nomes dos 32 lados no comentário do cliente (0 vazio, 1 humano, 2 bestial, 3 alado, 4 maré, 5 chefe mundial, 6/7 amigável/hostil do cenário, 8 espírito, 9 nome vermelho, 11–14 guerras, 15 duelo, 17 Imortal, 18 Demônio, 21–23 NPCs, 25 mascote, 26 invocação, 28/29 monstro Imortal/Demônio, **30 monstro comum**) | `ExpTypes.h` (`ENEMY_FACTION_CONFIG`); `cgame/gs/faction.h:8-22` |
+| `monster_faction` | **grupo** do monstro para a ajuda: grupos livres do designer, sem nome em arquivo nenhum | `ExpTypes.h` (怪物的详细派系划分) |
+| `monster_faction_ask_help` | **pede ajuda a**: grupos chamados quando ele ganha ódio (no máximo a cada 4 s, até a distância da visão × 1,0) | `ainpc.h:800-860`; `npc.cpp:2175-2190`; `config.h:67` |
+| `monster_faction_can_help` | **atende pedido de**: o vizinho entra se o grupo dele está no pedido, se o "atende" dele inclui o grupo do atacado e se tem ≤ 1 inimigo; soma 2 de ódio | `npc.cpp:669-680`; `ainpc.h:867-876` |
+| npcgen `filhos` | `bDefFaction/dwFaction`, `bDefFacHelper/dwFacHelper`, `bDefFacAccept/dwFacAccept` sobrescrevem por spawner; **o original grava o booleano `bDefFacAccept` no lugar da máscara** ao sobrescrever o "atende" (fica 0) | `npcgenerator.cpp:3821-3826, 2570-2571` |
+
+Invisibilidade (`invisible_lvl`, `uninvisible_lvl`) foi para "O que enxerga": o GS soma o nível do monstro quando não são 0
+(`npcgenerator.cpp:322-326`). As políticas de ódio ganharam a legenda "o que cada política faz": 0–4 criam a mesma
+política no GS 1.5.5 (`ainpc.cpp:209-225`); 5 (lacaio) troca o próprio ódio pelo alvo que o chefe repassa
+(`aiaggro.h:9-27`); 6/7 são de mascote e torre.
+
+**O que era "Avançado" (B373)** — cada campo na box do que afeta, com a explicação na tela (`lib/monstro.ts::EXPLICACOES`):
+
+| campo | box | o que faz | evidência |
+| :--- | :--- | :--- | :--- |
+| `common_strategy` | Inteligência (IA) | roteiro do aipolicy; id inexistente vira 0 | `npcgenerator.cpp:218-226` |
+| `highest_frequency` | IA | IA em todo ciclo mesmo parado (senão 1 a cada 30) | `npcgenerator.cpp:2458-2465`; `config.h:41` |
+| `no_auto_fight` | IA | a IA não começa luta sozinha | `aipolicy.cpp:125` |
+| `local_var_N` | IA | valor inicial das variáveis do roteiro | `npc.cpp:1996`; `npcgenerator.cpp:2520` |
+| `fixed_direction`, `stand_mode` | Movimento | direção do spawn sem girar; postura (só visual do cliente) | `npc.cpp:109` |
+| `no_accept_player_buff` | Vida e defesa | recusa ajuda (cura, bênção) de jogador | `npc.cpp:1021` |
+| `role_in_war` | Eventos, guerras e território | 1 derruba a construção-chave ao morrer, 0 conta como tropa | `instance/battleground_manager.cpp:437-446` |
+| `id_building` | idem | instalação de base de clã que cai com ele | `instance/instance_manager.cpp:1539-1543` |
+| `domain_related` | idem | o clã dono do território vira dono dele | `npcgenerator.cpp:2513-2517` |
+| `hp/defence/attack_adjust_common_value` | idem | variável global que soma −90%…+5000% ao nascer | `npcgenerator.cpp:1912-1922` (`AdjustPropByCommonValue`) |
+| `id_skill`, `skill_level` | Habilidades → Campos antigos | não usados pelo GS 1.5.5 | `npcgenerator.cpp:225` |
+| `id_pet_egg_captured` | Recompensa | seletor de ovo (`PET_EGG_ESSENCE`) | layout |
+
+**Modelo e animações (B373)** (`componentes/ModeloDoMonstro.svelte`): a lista das ações que o cliente pede ao monstro
+(`diagnostico_de_monstro`, B277), cada uma com a animação-base que toca e um seletor para trocá-la entre as animações do
+`.smd`, prévia de cada animação (GLB com `acao`), criar ação que falta (clone, `modelos/acao`), exportar o GLB da animação
+(Blender) e importar animações de GLB (`acoes_glb`, B295). Troca de base: `POST …/estudio/modelos/base {caminho, acao,
+base}` → `Estudio::trocar_base_da_acao` → `pw_data_loader::ecm::trocar_base` (só ação de uma base; a base tem de existir
+no `.smd`; teste em todos os `.ecm` do cliente, ida e volta byte a byte). O efeito do refino saiu do 3D do monstro;
+os efeitos do golpe (`file_gfx_short`, `file_gfx_short_hit`) ficam editáveis sem prévia (sem renderizador de GFX).
+
+**Modelo inteiro de um GLB (B374):** "Trocar o modelo inteiro por um GLB" na box do modelo cria no rascunho
+`<pasta>\<título>` .smd/.bon/.ski/texturas/animações/.ecm (`modelos/novo`, B298/B299; o .ecm atual é o molde e, se ele
+não servir — peles adicionais —, o servidor escolhe o molde) e grava o `file_model` do monstro com o .ecm novo. O GLB e a
+ficha do modelo passaram a ler o **rascunho** (`rascunho=` em `modelos/glb` e na ficha do .ecm: os arquivos de modelo do
+rascunho valem antes do publicado, `admin.rs::arquivos_de_modelo_do_rascunho`), então o modelo novo aparece na prévia
+com as animações antes de publicar.
+
+**Arrumação (B375):** a box do modelo virou cinco cards um embaixo do outro (Modelo 3D, O que ele faz em cada ação,
+Animações do esqueleto, Trocar o modelo inteiro, Arquivos e efeitos), sem rolagem interna; a dica do item abre só sobre o
+ícone e aparece logo acima dele.
+
+**Editar no Blender (B380):** no card Modelo 3D, **Exportar GLB (Blender)** baixa `<título do .ecm>.glb` com malha,
+texturas, esqueleto e **todas** as animações do `.smd` (`modelos/glb?todas=true`), cada uma com o nome legível e o do
+cliente (`"Parado · 站立"`; o original também em `extras.angelica.nome`). No Blender, use a extensão PW Estúdio
+(`tools/blender/pw_estudio`, 1.1.1): "Importar GLB do Estúdio" (guarda o nome do cliente em cada ação) e "Exportar GLB
+para o Estúdio" (verifica o GBK pelo nome do cliente). **Importar GLB**, no mesmo card, com três modos:
+- *Só o modelo* — malha e texturas viram a pele `<.ecm>.ski`; esqueleto e animações ficam (`modelos/importar_glb?modo=modelo`);
+- *Só as animações* — substitui as de mesmo nome e acrescenta as novas (`modo=animacoes`);
+- *Tudo* — pasta e título, `modelos/novo` com o .ecm atual de molde, o monstro passa a usar o .ecm novo e o antigo vai
+  para `modelos/sem_uso`, que marca para remoção no rascunho o que nada mais usa (outro monstro, NPC, mascote, filho de
+  outro `.ecm`, objeto dinâmico; .smd/.bon/peles/.stck/texturas compartilhados ficam).
+Os dois primeiros exigem o mesmo esqueleto (mesmos ossos, mesmas mães) e recusam com a lista do que difere. O card
+"Trocar o modelo inteiro" saiu (virou o modo *Tudo*). A prévia redesenha quando o `.ecm` muda ou o rascunho muda (antes
+só desenhava se nada estivesse desenhado) e pede o GLB com `cache: "no-store"`. **B381:** em modelo de `.bon` v5, "Só
+as animações" pula as ações que voltaram iguais (não precisa apagar no Blender as que não mudou); a extensão 1.1.1 fixa
+a faixa de quadros de cada ação ao importar (o Blender juntava a chave do fim com a anterior e o exportador truncava a
+faixa — a ação voltava com um quadro a menos).
+
+**Prévia e abrir item (B373):** ao passar o mouse num item que cai aparece a dica da tela de personagem, de um item
+gerado agora pelo GS como drop (`GET /api/realms/{r}/itens/{id}/exemplo` → consulta `item_de_exemplo` do GS, que não
+grava; `detalhe_do_item` passou a montar a dica de um registro, `detalhe_de_registro`). Cada cartão tem abrir em nova aba
+(tela do Estúdio quando a tabela tem, senão os Editores), trocar e tirar. **A prévia só funciona com o GS novo publicado
+nos mundos.**
+
+**Itens (B372):** os cartões de "Itens que caem" mostram o ícone; o seletor de item (espaço `ESSENCE`) tem filtro por
+categoria (a tabela do elements; as mais usadas com nome em português) — com categoria, busca pela listagem da tabela.
+
+**Seletor de item em tabela (B376)** (`componentes/SeletorDeEspaco.svelte`, usado no Trocar/Adicionar de "Itens que
+caem" e nos outros seletores do espaço `ESSENCE`): com uma categoria escolhida, a lista vira tabela — ícone, nome, id e
+as colunas que a tabela tem entre nível mín. (`require_level`, `require_player_level_min`, `req_goblin_level`), nível
+(`level`), grau (`rank`), categoria (`id_major_type`) e subcategoria (`id_sub_type`), mostradas pelo nome
+(`lib/catalogo.ts::COLUNAS_DO_SELETOR`; só nas tabelas das categorias do Estúdio e em `STONE_ESSENCE`). Clique no
+cabeçalho ordena (crescente → decrescente → sem ordem); a linha de filtros tem mín./máx. nas colunas numéricas e uma
+lista (com quantos registros) na categoria/subcategoria. Filtro e ordem são do pw-recursos, sobre a tabela inteira
+(spec 07 §6c); 100 por página. Passar o mouse no ícone mostra a dica do item logo acima dele (a mesma de "Itens que
+caem", `lib/dica.svelte.ts`); monstro, NPC, mina e tabelas de tipo não têm prévia. Sem categoria ("Todas") continua a
+busca no espaço inteiro, sem colunas.
+
+**Só item no seletor de item (B377):** no espaço `ESSENCE` o seletor mostra só as tabelas para as quais o GS gera item
+(`lib/catalogo.ts::TABELAS_DE_ITEM`, os `case` do `generate_item` em `cgame/gs/template/generate_item_temp.h:5-145`,
+1.5.5): `*_MAJOR_TYPE`/`*_SUB_TYPE`, serviços de NPC, monstro, NPC, mina, `SUITE`, `PET_ESSENCE` caem no `default`
+(:147-153, devolve -1 — como drop não sai nada) e não aparecem nem nas categorias nem na busca em "Todas" (pede 200 ao
+espaço e filtra até 60). Prévia pela mesma lista. Trocar um item de "Itens que caem" atualiza o nome e o id do cartão
+(o nome da ficha só vale enquanto o campo tem o item de quando abriu).
+
+**Onde nasce** (`componentes/BoxDeSpawn.svelte` + `ModalMapa.svelte`): os spawners vêm de "onde nasce" (B284); cada um é
+uma área do npcgen. O mapa usa as peças do minimapa (a geometria de `static/mapa.js`), com zoom na roda, arrasto, clique
+para o centro e alça para o tamanho. **A área é um retângulo**: o servidor sorteia dentro de `vPos ± vExts/2`
+(`npcgenerator.cpp:4348-4367`; `iType` 0 sobre o terreno, 1 caixa 3D) — o npcgen não tem polígono. Gravar o lugar põe
+`vPos_x/z`, `vExts_x/z` e a altura do chão (`altura`, B248) em `vPos_y`. Quantidade = `dwNum` do monstro nos `filhos`;
+remover tira o monstro da área e só apaga a área se ele for o único; spawner novo = clone de uma área deste monstro no
+mapa (ou da primeira área de monstro, `iNPCType` 0) com o lugar e só este monstro. Tudo pelas rotas do npcgen dos
+Editores (B243), no rascunho.
+
+### 9.7 De onde vem o item (B369)
+
+Embaixo da edição, 4 cards (só leitura, do rascunho): **Dropado de** (monstros e a chance na lista de drops),
+**Recompensa de** (missões e se é no sucesso, na falha ou numa escala), **Vendido por** (NPC → loja e página; Loja
+Gold com o arquivo e o preço da 1ª opção) e **Forjado por** (NPC → forja e página → receita, com a chance). Rota e
+regra na spec 07 §6c. Cada monstro, NPC, loja, forja e receita abre nos Editores em outra aba. Não cobre: drop pelo
+`npcgen` (os monstros só citam a própria essência), drops do GS fora do `elements` e as listas de "item especial".
+
+### 9.11 G-Shop (B385, 2026-10-25)
+
+Card "G-Shop" na Principal → `#/gshop?loja=<arquivo>`: arquivo no alto, abas à esquerda (`ArvoreDeAbas.svelte`),
+vitrine no meio (`CartaoDaOferta.svelte`), oferta à direita (`PainelDaOferta.svelte`). Lógica pura em `lib/gshop.ts`
+(filtros, ordem do jogo, preço em gold, selo, datas GMT, dias marcados, wchar) com `gshop.test.ts`. O que o layout da
+versão não tem (1.2.6: período, grupo, VIP, brinde, donos, limite) aparece desligado com a explicação. A conferência
+roda a cada mudança (`POST …/conferir`) e os erros impedem gravar; o motor recusa de novo no `PUT`. Desenho e evidência
+em §4.6; rotas na spec 07 (G-Shop).
+
+### 9.10 Refino explicado e Equipáveis ↔ Blender (B383, 2026-10-25)
+
+**Efeito do refino.** O cartão "Efeito do refino (levelup_addon)" diz o que o refino faz — "Refino: +7 de ataque
+físico no +1; em +12 soma 262" —, o nome interno, o tratador, o parâmetro, quantas peças de cada família usam o efeito
+e a tabela +1…+12. O valor de cada nível é `(int)(param × fator + 0,1)` com o fator `1; 2; 3,05; 4,3; 5,75; 7,55; 9,95;
+13; 17,05; 22,3; 29; 37,5` (`equip_item.cpp:208-223`) e **substitui** o do nível anterior (`:319, 330`) — não é "+N por
+nível" linear. O seletor lista só os efeitos de refino (tratador `refine_*` no GS), cada um descrito, com a tabela dos
+níveis e o selo "serve em armas/armaduras/acessórios" (alguma peça da família usa no rascunho; o GS não restringe a
+família, `itemdataman.cpp:205-228`). O que cada tipo soma, com a evidência: spec 07 §6c (B383). Efeito que não é de
+refino no servidor aparece em vermelho (o refino falharia com o erro 92).
+
+**Como o cliente monta cada equipamento** (evidência no fonte do cliente e no binário 1.5.5 BR):
+
+| tipo | campos | como vai no personagem |
+| :--- | :--- | :--- |
+| arma (e arma de moda, v156) | `file_model_right`, `file_model_left` | `.ecm` próprio com as peles do `.smd` (`CECModel::Load(…, LSF_UNIQUESKIN)`, `EC_Player.cpp:4547-4583`), pendurado pelo gancho `CC_weapon` (orbe: `CC_qiu`) no `HH_righthandweapon`/`HH_lefthandweapon`/`HH_qiu` do corpo (`:9930-9993`) |
+| asa (`WINGMANWING`, voo com `fly_mode` 1) | `file_model` | `.ecm` no gancho `CC_chibang` → `HH_chibang` (`:1940-1950`) |
+| espada voadora (`fly_mode` 0) / rodas de fogo (2) | `file_model` / `file_model2` | `CC_feijian` → `HH_feijian`; nas rodas, um em cada pé (`:1951-1966`) |
+| armadura e moda | `realname`, `equip_location`, `gender` (moda) | **pele** sobre o esqueleto do corpo: `Models\Players\装备\{男 ou 女}\<realname>\<grupo><realname>{一级,二级,三级}.ski` (`LoadPlayerSkin`, `:1720-1740`); grupo `男通用`/`女通用`, menos Bárbaro (`妖兽`) e Feiticeira (`妖精`) — tabela do binário (spec 07 §6c) |
+| ornamento | `file_model` (vazio nos dados) | não aparece no personagem |
+
+**Telas.** Na coluna da direita da edição:
+- **Modelo 3D no personagem** (`componentes/ModeloDoEquipavel.svelte`, quando a tabela tem modelo próprio): prévia montada
+  como o cliente (peles do `.smd`), **Exportar GLB (Blender)** com todas as animações, **Importar GLB** em três modos (só
+  o modelo → 1ª pele do `.smd`; só as animações; tudo → modelo novo com o gancho exigido, o campo passa a citá-lo e o
+  antigo sem uso sai no rascunho), **Conferir sem gravar** e o **relatório** na tela.
+- **Animações do modelo**: as ações do `.smd` (asas, montarias, armas animadas) para ver; exportar vai no GLB e "Só as
+  animações" traz de volta.
+- **Vestido no personagem** (`componentes/PeleDoEquipavel.svelte`, armadura e moda): gênero (na moda, o da peça), grupo de
+  pele, corpo de uma classe e "com o corpo"; aviso quando falta um nível da pele ou quando outros registros usam o mesmo
+  `realname`; exportar a peça com o esqueleto do corpo; importar os três níveis com os ossos conferidos em todas as
+  classes do grupo.
+- O Visual 3D ficou com o modelo "No chão" (`file_matter`).
+
+**Pesos.** Decisão (pedido do Murillo): corrige sozinho o que tem resultado igual ao do jogo e recusa o resto — regra e
+evidência na spec 07 §6c (B383) e spec 03; teste `importar::testes::pesos_corrigidos_como_o_motor_le`.
+
+**Moda (parte 4 do pedido).** O seletor só mostrava "No chão" porque a moda não tem `file_model`: o card "Vestido no
+personagem" monta a peça pelo `realname`, `gender` e o grupo da classe, no corpo masculino ou feminino de cada classe.
+
+**Nomes das animações (B384).** Pedido do Murillo: as animações do voo apareciam em chinês. A tradução é uma tabela só
+no servidor (spec 07 §6c, B384), com voo, asas e espada voadora; a tela mostra "Voando parado", "Decolando",
+"Descendo de baixa altura"… (o nome do cliente ao passar o mouse), e o GLB exportado leva "Voando parado · 飞行悬停". No
+Blender, pode-se mudar a parte em português; o que vale na volta é o nome depois de " · ".
+
+
+### 9.12 Itens e minas (B386, 2026-10-25)
+
+**Card "Itens".** As tabelas que o GS gera como item (`TABELAS_DE_ITEM`, `generate_item_temp.h:5-145`) e que não são
+Equipáveis, agrupadas em `lib/itens.ts::SUBCATEGORIAS_DE_ITENS` com o nome em português e o que o servidor faz de cada uma
+(a classe do item, `template/setclassid.cpp:23-289`, e o tratador em `cgame/gs/item/`). Cada tabela foi conferida no
+layout das duas versões; a que o v7 não tem só aparece no 1.5.5 (o teste `lib/itens.test.ts` confere contra
+`specs/elements_layouts/v156.json` e `v7.json`, e que a lista cobre exatamente `TABELAS_DE_ITEM` menos os Equipáveis).
+
+| grupo | tabelas | o que o servidor faz |
+| :--- | :--- | :--- |
+| Materiais | `MATERIAL`, `FACTION_MATERIAL` (1.5.5), `ELEMENT` | classe -1: usar não faz nada; entra em receita, desmontar, voo (元石) |
+| Poções e remédios | `MEDICINE`, `AUTOHP`, `AUTOMP`, `DOUBLE_EXP` | remédio pela categoria (1794/1802/1810/1815/2038; outra não gera item); amuleto dispara abaixo da proporção |
+| Pergaminhos | `TOWNSCROLL`, `TRANSMITSCROLL`, `REVIVESCROLL`, `UNIONSCROLL`, `FIX_POSITION_TRANSMIT` e `CONGREGATE` (1.5.5) | cidade, ponto descoberto, marca, reunir; reviver e `UNIONSCROLL` têm classe -1 no GS 1.5.5 |
+| Livros de habilidade | `SKILLTOME`, `SKILLMATTER`, `INC_SKILL_ABILITY` e `DYNSKILLEQUIP` (1.5.5) | o livro não guarda a habilidade: é o `item_exigido` dela |
+| Pedras e refino | `STONE`, `REFINE_TICKET`, `DAMAGERUNE`, `ARMORRUNE`, `SHARPENER` (1.5.5) | incrustar, talismã, runas |
+| Aparência | `DYE_TICKET`, `FACETICKET`, `FACEPILL` | tingir, cirurgia, transformação |
+| Itens de missão | `TASKMATTER`, `TASKNORMALMATTER`, `TASKDICE` | classe -1; o sorteio dá uma missão |
+| Mascote e Daimon | `PET_EGG`, `PET_FOOD`; `GOBLIN`, `GOBLIN_EXPPILL`, `MONSTER_SPIRIT` (1.5.5) | |
+| Fogos e diversos | `FIREWORKS`, `SPEAKER`, `TOSSMATTER`, `QUIVER`, `WAR_TANKCALLIN`, `GM_GENERATOR` e, no 1.5.5, `FIREWORKS2`, barraca, alvo, casamento, facção, fichas, pacote por classe | |
+| Cartas e Astrolábio (1.5.5) | `POKER_DICE`, `ASTROLABE*` | |
+| Minas (no mapa) | `MINE_ESSENCE` | não é item: o recurso do mapa que dá os materiais |
+
+**Edição (`telas/EdicaoItem.svelte`).** Principal (nome, ícone, categoria/subcategoria pelas tabelas `*_TYPE` de cada uma,
+regras do item, descrição do `item_ext_desc.txt`); boxes próprias por tipo; boxes genéricas (Comércio, Desmontar com a pedra
+elemental, Coleta, Monstros ao colher, Uso) e "Outros campos" com o resto da tabela — o que a versão não tem some.
+
+| box | regra mostrada | evidência |
+| :--- | :--- | :--- |
+| O que cura (remédio) | 1794 vida e 1802 mana no tempo: `total / tempo` por segundo (divisão inteira; menos de 1/s o GS recusa), tomar outra soma; 1810 vida e mana na hora; 1815 enfraquece, 2038 tira o veneno; recarga em ms, abaixo de 1000 ×100; família de recarga de cada uma; nível = o maior que o personagem já teve | `generate_item_temp.h:913-1000`; `item_potion.cpp:18-110`; `potion_filter.h:16-64` |
+| Como dispara (amuleto) | abaixo de `trigger_amount` × máximo repõe o que falta, gastando os pontos; recarga `cool_time` ms | `player.cpp:9105-9130`; `item_amulet.cpp`; `itemdataman.cpp:1815-1819` |
+| Incrustar (pedra) | onde serve pela máscara (`require_equip` = `combined_switch`: 1 sem arma, 2 sem armadura, 4 colar, 8 cinto; acessório só com 4 ou 8); efeito em arma/armadura/acessório com o texto do cliente; preço de incrustar, remover e trocar | `item.cpp:332-353`; `ExpTypes.h:2053-2065`; `serviceprovider.cpp:1374-1385`; `item_list.cpp:205`; `player.cpp:23879` |
+| Chances do refino (talismã) | +0…+11: sucesso, nada muda, cai um, zera — com e sem o talismã; o que passa de 100% é cortado | `equip_item.cpp:192-205, 265-273`; `player.cpp:11719-11747`; `arandomgen.h:129-139` |
+| Habilidade | nome e nível da habilidade citada (catálogo do realm) | |
+| Livro de habilidade | as habilidades (e níveis) que exigem o livro | catálogo do realm (`item_exigido`); `skill.cpp:79-84` |
+| Materiais que dá (mina) | lista editável (até 16) com chance e validade; soma tem de ser 1 ("Ajustar para somar 1"); a mina como o GS a monta ou o motivo da recusa; sorteio do material e da quantidade ao nascer; coleta | `npcgenerator.cpp:1280-1365, 5003-5016`; `matter.cpp:265-440` |
+
+**Para onde vai.** Cards "Entra nas receitas" (receita, quantidade, o que faz) e "Sai das minas" (chance, validade, aviso de
+mina recusada); cada um abre em outra aba (mina e item no Estúdio, receita nos Editores).
+
+**Onde aparece (`componentes/BoxDeRecurso.svelte`).** No Material (as minas que o dão) e na Mina: as áreas de recurso do
+npcgen de todos os mapas, com o mapa (zoom, clique no centro, alça do retângulo — `fExtX × fExtZ`, a área é centro ± metade),
+quantidade (`dwNumber`), renascer (`15 + dwRefreshTime` s, mínimo 15), os campos da área com o significado do
+`npcgenerator.cpp:3888-3932` e criar (clone de uma área de recurso do mapa), mover, redimensionar e remover pelas rotas
+`npcgen/recursos` dos Editores (B243/B247), com a altura do chão pelo `.hmap` (B248). Nenhum item nasce direto no chão pelo
+npcgen: só minas.
+
+**Modelo 3D.** Card "Modelo 3D no chão" (`file_matter`) e "Modelo 3D da mina" (`file_model`): o `ModeloDoEquipavel` com
+`como="matter"` — o cliente monta como `CECMatter` (peles do `.smd`; sem nenhuma, a `<.smd>.ski`), sem gancho; Exportar GLB,
+Importar só o modelo / só as animações / tudo (modelo novo em `models\matters\estudio`), Conferir sem gravar, relatório. Os
+outros `file_model*` da tabela (Daimon, arremessável) ficam no Visual 3D só para ver. Fogos são um `.gfx` (não modelo) e
+nada pende no personagem ao usar item.
+
+### 9.13 NPCs, Serviços e Missões (B392, aprovado e implementado em 2026-11-03)
+
+Pedido do Murillo: o NPC no Estúdio, no padrão das outras telas (busca, ficha em boxes, modelo 3D com a animação de
+ocioso, onde nasce num mapa — só ponto e rotação), com o diferencial do **editor de conversa** (textos com cor, botões)
+e dos **serviços** (lojas, forja, avaliação, chocar ovo…). **Serviços e Missões ganham botão próprio na Principal**
+(serviço servido por vários NPCs, missão que não depende de NPC) e, dentro do NPC, um atalho que abre o mesmo editor
+num painel. Página desenhada: artefato "Estúdio de NPC" (link no histórico B392).
+
+**Como o cliente monta o NPC (evidência que decide o desenho):**
+
+| fato | evidência |
+| :--- | :--- |
+| A janela do NPC é o `hello_msg` (até 256 caracteres) + uma linha por serviço ligado, **na ordem fixa do cliente** (fala, loja, compra, incrustar, retirar, habilidade, cura, teleporte, transporte, consignação, armazém, produção, decompor, avaliar, torre, restaurar atributos, mascote ×3, vínculo/destruir ×3, Daimon, gravar, atributo aleatório, força); o **texto do botão é o `Name` do serviço** | `DlgNPC.cpp:339-441` e o laço `:852-1015` |
+| `combined_services` (bits 0–31) e `combined_services2` (só v156) ligam serviços sem tabela: furar (1), clã (4), cirurgia (5), correio (6), leilão (7), **chocar ovo de mascote (9)**, **restaurar ovo (10)**, ouro (13), refino (14), tingir (15)… | `ExpTypes.h:3763-3775`; `DlgNPC.cpp:448-620` |
+| Serviço com `id_dialog` > 0 mostra antes a conversa (`TALK_PROC`); o serviço de fala é só `id_dialog` | `DlgNPC.cpp:2854-3023`; `NPC_TALK_SERVICE` = `ID, Name, id_dialog` |
+| Conversa = janelas em árvore (`id_parent`, -1 raiz) com opções de 64 unidades; opção com o bit alto = função (`SERVICE_TYPE`), senão vai para outra janela | `ExpTypes.h:3872`; `pw_data_loader::conversas` (B240); `specs/estudio/funcoes_de_conversa.json` |
+| Cor no texto: `^RRGGBB`; `^^` é o `^`; `^U`+6 sublinhado com cor, `^u`, `^o`, `^N`, `^Onnn` fonte — **os códigos ocupam as 64 unidades** da opção | `AUInterface/AUICommon.cpp:870-910` |
+| NPC parado toca `ACT_NPC_STAND`; a cada 25 s sorteia `ACT_NPC_IDLE1`/`IDLE2` e volta ao parado; `CHAT1/2/LOOP` não são tocados (−1 na tabela) | `EC_NPC.cpp:367, 1907-1922`; `EC_NPCModel.cpp:722-727, 912-916` |
+| Loja: 8 abas × 32 itens (título, requisito de contribuição/força por aba, custo por item só no v156); produção: `id_make_skill`, `produce_type`, 8 abas × 32 receitas; receita: 4 resultados com chance, 32 materiais; teleporte: 32 destinos (custo, nível) | layouts `specs/elements_layouts/v156.json` e `v7.json` |
+| Missões do NPC: `NPC_TASK_OUT_SERVICE` (dá, 256 + depósito do v156), `NPC_TASK_IN_SERVICE` (recebe, 256), `NPC_TASK_MATTER_SERVICE` (itens de missão, 144); as falas da missão são `talk_proc` do próprio `tasks.data` | layouts; `tasks_editavel.rs` (B266) |
+| Spawn de NPC: área do npcgen com `vPos` e `vDir` | `npcgen_editavel.rs:181` |
+
+**Telas propostas.** NPC com cinco abas: **Ficha** (principal, comportamento, modelo 3D com as ações Parado/Ocioso 1/
+Ocioso 2/Andar/Correr/Atacar/Morrer e o seletor da animação-base, reaproveitando o `ModeloDoMonstro`), **Onde fica**
+(mapa com ponto e seta de direção), **Conversa** (menu inicial como o jogo + fluxo das janelas + editor com cores +
+prévia navegável), **Serviços** (vagas por grupo na ordem do cliente + serviços simples) e **Missões** (dá/recebe/itens).
+Serviço compartilhado avisa "usado por N NPCs" e oferece **mudar em todos** ou **cópia só para este NPC**.
+
+**A levantar antes de cada fase:** `pedidos_de_npc` (nomes das ações de NPC no `actions_npc.txt`, como o
+`pedidos_de_monstro`); como o GS e o cliente usam o `vDir` do spawn de NPC (`npcgenerator.cpp`, info do NPC no S2C);
+arranjo visual da loja no cliente (`DlgShop`); quais serviços o nosso servidor atende (spec 05: teleporte, forja de
+NPC, decompor ainda `falta`) — a tela marca o serviço que o servidor não atende.
+
+**Fases propostas:** N1 busca + Ficha + modelo; N2 Onde fica; N3 Conversa; N4 Serviços (área + modal) com Loja,
+Avaliação, Cura, Armazém e serviços simples; N5 Produção + receitas, Teleporte, Habilidades, demais; N6 Missões (área
+própria, §4.4) com o atalho do NPC.
+
+**Implementado (B392), todas as fases N1–N6:**
+
+| peça | arquivos | nota |
+| :--- | :--- | :--- |
+| ações do NPC | `ecm::pedidos_de_npc`, `admin.rs` (`npc=true` na ficha do modelo; nomes legíveis 休闲动作/跑动/攻击/消失) | o `ModeloDoMonstro` com `npc` mostra a regra do ocioso |
+| NPC | `telas/EdicaoNpc.svelte`, `componentes/ModalBuscaDeNpc.svelte`, `lib/npc.ts` | vagas de serviço resolvidas pela tabela da vaga (o catálogo não tem `cita` nas vagas de missão do 1.2.6) |
+| Onde fica | `BoxDePontosDoNpc.svelte`, `ModalMapa` com `comDirecao` | grava `vPos`, `vDir`, `vExts` = 0; separa de área compartilhada; rastreador só no mapa 1 |
+| Conversa | `ConversasDoNpc`, `EditorDeConversa`, `EditorDeTexto`, `TextoDoJogo`, `JanelaDoNpc`, `lib/conversa.ts`, `lib/marcacao.ts` | dar conversa a quem não tem cria o serviço de fala (clone) |
+| Serviços | `PainelDeServicos`, `EditorDeServico`, `EditorDeReceita`, `CamposSimples`, `ServicosDoNpc`, `telas/Servicos.svelte`, `lib/servicos.ts`; rota `servicos/{T}` | "cópia só para este NPC" quando compartilhado |
+| Missões | `FichaDaMissao`, `MissoesDoNpc`, `SeletorDeMissao`, `telas/Missoes.svelte`, `lib/missao.ts`; rota `missoes_resumo` | diálogos de missão convertidos em operações do `tasks_editavel` (vitest) |
+
+Achados: (1) o v7 tem a vaga `id_cross_server_service` sem a tabela (a tela esconde a vaga); (2) a lista de ações do modelo
+usava o índice como chave — o ataque tem dois nomes no mesmo índice (`起`/`落`), corrigido (também nos Monstros); (3) a
+linha "demais serviços de NPC" da spec 05 estava desatualizada (corrigida).
+
+
+### 9.14 Mascotes (B394, 2026-11-03)
+
+Última área do planejamento do Estúdio. Card **Mascotes** na Principal → `ModalBuscaDeMascote` (tipo por faixa de `id_type`,
+ambiente, nível exigido/máximo ordenáveis; Novo = cópia do de menor id do tipo, "Novo mascote") → `telas/EdicaoMascote.svelte`
+(`#/mascotes/PET_ESSENCE/<i>?aba=ficha|atributos|ovo|modelo|simulador`). Significados e contas em `lib/mascote.ts`.
+
+| o quê | como aparece | evidência |
+| :--- | :--- | :--- |
+| `id_type` | cartões: Combate 8782, Montaria 8781, Companhia 8783, Invocação 28752, Planta 28913, Evolução 37698 (os três últimos só no 1.5.5) | `pet_dataman::LoadTemplate`; `pw_data_loader::pet::carregar_modelos` |
+| `inhabit_type`, `stand_mode`, `food_mask`, `plant_group`, `immune_type`, `character_combo_id` | lista, lista, botões de comida (forragem, carne, verduras, frutas, água), lista, máscara, máscara de classes | `ExpTypes.h:2983-3060` (struct `PET_ESSENCE`, comentários); o 1.2.6 só aceita ambiente 0–2 |
+| recusa ao carregar | faixa vermelha: atraso do dano fora de 2–200 tiques, intervalo ≤ 2 tiques, visão < 0,1, `hp_a` ≤ 0 (no 1.2.6 só o de combate é conferido) | `petdataman.cpp:120-133` |
+| fórmulas `hp/hp_gen/damage/attack/armor/physic_defence/magic_defence/speed_*` | aba Atributos: a, b, c, d, valor no nível e curva 1→máx.; contas em `float` (Math.fround) e `(int)` | `petdataman.h:23-76`; `ModeloDeMascote::atributos` |
+| `mp_a`, `mp_gen_a`, `attack/defence_degree_a` | "só invocação e planta", `a × (nível + 5)` | `petdataman.cpp:79-82` (`GenerateBaseProp2`) |
+| ovo | os `PET_EGG_ESSENCE` com `id_pet` = este mascote (faixa na listagem); edição do escolhido; usar outro ovo = gravar o `id_pet` dele; criar = clonar um ovo e apontar | `pet::carregar_ovos`; `hatch_pet_service_executor` (`serviceprovider.cpp:3160`) |
+| `honor_point` | lealdade com a faixa: ≤50 −40%, ≤150 −20%, ≤500 0, ≤999 +20% no dano | `pet_filter.cpp:8`; `mascote::nivel_de_lealdade` |
+| modelo | `ModeloDoMonstro` com `habitat` quando é invocado ou de ambiente 6 (o cliente pede as ações com `_地面/_水中/_空中`) | `EC_Pet.cpp:285-288`, `EC_NPCModel.cpp:588-620`; `ecm::pedidos_de_mascote` (B281) |
+
+**Simulador de combate** (`componentes/SimuladorDeCombate.svelte`) — o pedido de 2026-11-03 de ter no painel a análise que
+se fez com script de rascunho para "qual mascote aguenta o Lobo-rei de Hades (4359)" (sessão "Problemas item WB 1.2.6",
+2026-09-30). O mascote no nível e lealdade escolhidos é montado como `corpo_do_mascote` (`CreatePetBase`,
+`npcgenerator.cpp:2021-2040`: dano × lealdade com divisão inteira, graus 0, alcance + corpo, intervalo `(int)(s×20+0,1)`); o
+monstro como `MonsterEntity::do_template` (intervalo `(int)(s×20+0,5)`, dano físico uniforme e elemental `RandNormal`, sem o
+addon do `MONSTER_TYPE`, como o nosso GS). O golpe é o `combat::resolver` para NPC contra NPC: acerto
+`rate/(rate+(armor>>1))` com piso 0,05, defesa `def/(def+40×nível de quem bate−25)` com teto 0,95, imunidades por classe,
+graus, +0,5 e piso 1 — sem crítico, punição de nível nem camada (`IS_HUMANSIDE` é só jogador). A luta anda em tiques de
+50 ms: golpe a cada `intervalo`, dano chega `atraso` depois se quem bateu está vivo, regeneração `hp_gen` a cada segundo
+(`gnpc_imp::OnHeartbeat`, `npc.cpp:1946-1958`), limite de 10 min (empate). Mostra: o esperado pela média em cada sentido
+(com aviso quando um golpe só derruba de vida cheia — a média engana), 400 lutas (vitórias, duração, vida que sobra) e a luta
+de exemplo em gráfico; **"Qual mascote vai melhor contra este?"** roda 40 lutas de cada mascote de combate/evolução no mesmo
+nível (a listagem dá até 12 colunas por pedido, `estudio.rs:208`: os campos vão em 3 pedidos juntados pelo registro).
+**Não entram:** habilidades (do mascote e do monstro), os adicionais do dono (`pet_enhance`) e a perseguição/fuga.
+Invocação e planta não são simuladas (dependem dos atributos do dono, `GenerateBaseProp2`).
+
+Conferência: `lib/mascote.test.ts` (8) com os campos reais do realm_126 — dano no nível 30 = o "Atq" da janela do mascote
+no jogo (Vespão Pequeno 466, Filhote de Lobo Feroz 332, B135) — e o Lobo-rei: no nível 40 nenhum mascote vence sozinho,
+como na análise antiga (no navegador: todos caem em ~5–7 s; o Raptor de Combate é o que mais tira vida dele).
+
+Mudanças em comum: `SeletorDeEspaco` com `tabela` fixa esconde a lista de categorias; `ListaDeHabilidades` ganhou
+`deMonstro` (sem o alerta de tipo no ovo); `ModeloDoMonstro` ganhou `habitat`.

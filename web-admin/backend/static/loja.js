@@ -75,7 +75,7 @@ async function abrirOferta(indice) {
   const editavel = !!estudio.rascunho;
   const titulo = criar("div", "recursos-linha");
   titulo.append(criar("strong", "", `Oferta #${indice}: ${o.campos.szName || "(sem nome)"}`),
-    criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo do Estúdio"));
+    criar("span", "texto-suave", editavel ? ` · rascunho #${estudio.rascunho}` : " · só leitura: escolha ou crie um rascunho no topo dos Editores"));
   area.appendChild(titulo);
   if (o.item) {
     const link = criar("a", "", `Item: ${o.item.nome} (abrir a ficha)`);
@@ -118,7 +118,7 @@ async function abrirOferta(indice) {
   const botoes = criar("div", "recursos-linha");
   const botao = (texto, classe, acao) => { const b = criar("button", `botao botao-pequeno ${classe}`, texto); b.type = "button"; b.addEventListener("click", acao); botoes.appendChild(b); };
   const depois = async (msg, abrir) => {
-    alerta("ok", "Estúdio", msg, { toast: true });
+    alerta("ok", "Editores", msg, { toast: true });
     loja.aberta = abrir;
     await carregarLoja();
     if (abrir === null) area.textContent = "Escolha uma oferta.";
@@ -130,20 +130,20 @@ async function abrirOferta(indice) {
       const v = ehTexto ? campo.value : Math.trunc(Number(campo.value));
       if (v !== o.campos[nome]) campos[nome] = v;
     }
-    if (!Object.keys(campos).length) { alerta("aviso", "Estúdio", "Nada mudou.", { toast: true }); return; }
+    if (!Object.keys(campos).length) { alerta("aviso", "Editores", "Nada mudou.", { toast: true }); return; }
     try {
       const r = await api(rotaDaLoja(`/${indice}`), { method: "PUT", body: JSON.stringify({ campos }) });
       await depois("Oferta salva no rascunho." + (r.igual_ao_publicado ? " Ficou igual ao publicado: o item saiu do rascunho." : ""), indice);
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   botao("Clonar (no fim da loja)", "botao-secundario", async () => {
     try { const r = await api(rotaDaLoja(""), { method: "POST", body: JSON.stringify({ base: indice }) }); await depois(`Oferta nova #${r.resultado.indice}.`, r.resultado.indice); }
-    catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   botao("Remover", "botao-secundario texto-perigo", async () => {
     if (!confirm(`Remover a oferta #${indice}? As seguintes sobem um número (no cliente e no realm, juntos).`)) return;
     try { await api(rotaDaLoja(`/${indice}`), { method: "DELETE" }); await depois("Oferta removida no rascunho.", null); }
-    catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    catch (erro) { alerta("erro", "Editores", erro.message); }
   });
   area.appendChild(botoes);
 }
@@ -156,15 +156,15 @@ function abrirCategorias() {
   desenharListaDaLoja();
   const editavel = !!estudio.rascunho;
   area.appendChild(criar("strong", "", "Categorias da loja"));
-  if (!editavel) area.appendChild(criar("div", "texto-suave", "Só leitura: escolha ou crie um rascunho no topo do Estúdio."));
+  if (!editavel) area.appendChild(criar("div", "texto-suave", "Só leitura: escolha ou crie um rascunho no topo dos Editores."));
   const pedir = async (corpo, msg) => {
     try {
       await api(rotaDaLoja("/categorias"), { method: "POST", body: JSON.stringify(corpo) });
-      alerta("ok", "Estúdio", msg, { toast: true });
+      alerta("ok", "Editores", msg, { toast: true });
       await carregarLoja();
       abrirCategorias();
       if (typeof carregarRascunhosDoEstudio === "function") carregarRascunhosDoEstudio();
-    } catch (erro) { alerta("erro", "Estúdio", erro.message); }
+    } catch (erro) { alerta("erro", "Editores", erro.message); }
   };
   const linha = (rotulo, valor, aoSalvar) => {
     const l = criar("div", "recursos-linha");

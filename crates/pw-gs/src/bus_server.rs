@@ -909,6 +909,8 @@ impl BusServer {
                 roleid,
                 matador,
                 pos,
+                golpeava,
+                conjurava,
             } => {
                 // Morrer cancela golpe e conjuração (`world.rs`), e com eles o golpe que
                 // esperava a vez (B57).
@@ -962,6 +964,21 @@ impl BusServer {
                     if let Some(envio) = self.envio_de(roleid).await {
                         self.desmontar(roleid, m, &envio).await;
                     }
+                }
+                // B382 — `OnDeath` → `ClearSession` (`gs/player.cpp:7131`) → `TerminateSession` →
+                // `EndSession` (`actsession.h:109-115`): a sessão de golpe manda `stop_attack(_stop_flag)`
+                // com o 0 de quem não mexeu na flag (`actsession.cpp:383-391`, `actsession.h:261`), e a de
+                // habilidade `stop_skill` (`:557-570`) — **antes** do aviso de morte. Sem o
+                // `HOST_STOPATTACK` o cliente fica com `m_bMelee` ligado (só o desliga em
+                // `OnMsgHstStopAttack`, `EC_HostMsg.cpp:4076-4080`): o `WORK_DEAD` do `Killed` é adiado
+                // (`CECHPWorkMan::DelayWork` manda `CANCEL_ACTION` e espera, `EC_HPWork.cpp:361-364`), o
+                // `Revive` sai em `!m_pWorkMan->IsDead()` sem fechar a janela (`EC_HostPlayer.cpp:4107-4111`)
+                // e o personagem fica preso, mandando `CANCEL_ACTION` a cada 200 ms (WB no 1.2.6).
+                if golpeava {
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::host_stop_attack(0).data).await;
+                }
+                if conjurava {
+                    self.enviar_ao_jogador(roleid, S2CGamedataSend::self_stop_skill().data).await;
                 }
                 self.enviar_ao_jogador(
                     roleid,
@@ -5124,6 +5141,7 @@ impl BusServer {
             servico::RESTAURAR_ATRIBUTOS => self.restaurar_atributos(roleid, c, envio).await,
             servico::INCRUSTAR_PEDRA => self.incrustar_pedra(roleid, c, envio).await,
             servico::LIMPAR_PEDRAS => self.remover_pedras(roleid, c, envio).await,
+            servico::AVALIAR => self.avaliar_item(roleid, c, envio).await,
             servico::REFINAR => self.refinar(roleid, c, envio).await,
             servico::FURAR => self.furar(roleid, c, envio).await,
             servico::TRANSFERIR_REFINO => self.transferir_refino(roleid, c, envio).await,
@@ -6735,6 +6753,28 @@ impl BusServer {
             }
         }
         debug!("mundo: o monstro {id} falou ({canal:?}): {texto}");
+    }
+
+    /// B378: mensagem do sistema a todos os jogadores deste mapa (aviso de reinício do painel). É a fala `$S` do
+    /// `op_say` (`aitrigger.cpp:552-668`): `CHAT_CHANNEL_BROADCAST` (9) com `srcroleid` 0, a mesma de [`Self::monstro_falou`].
+    /// Devolve a quantos foi.
+    pub async fn avisar_sistema(&self, texto: &str) -> usize {
+        let msg: Vec<u8> = texto.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let sessoes = self.sessoes.read().await;
+        let mut n = 0;
+        for (&roleid, s) in sessoes.iter() {
+            let enviado = s.envio.try_send(BusMessage::ChatSingleCast {
+                channel: 9,
+                emotion: 0,
+                srcroleid: 0,
+                dstroleid: roleid,
+                dstlocalsid: s.localsid,
+                msg: msg.clone(),
+                data: Vec::new(),
+            });
+            n += usize::from(enviado.is_ok());
+        }
+        n
     }
 
     /// Quantos jogadores este servidor de mundo está atendendo.

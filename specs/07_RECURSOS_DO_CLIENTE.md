@@ -14,7 +14,7 @@
 | :--- | :--- |
 | crate | `crates/pw-recursos` (bin + lib) |
 | contêiner | `pw-recursos` (`docker/Dockerfile.recursos`: Rust + Python 3 + `tools/pw-pck-extract`) |
-| porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234) e `GET /saude` |
+| porta | **8100**, só leitura: `GET /versoes` (lista JSON das versões com `versao.json`), `GET /atualizacao/<versao>/<resto>` (com `Range`, `ServeFile` do tower-http), `GET /atualizacao/<versao>/objetos/<sha256>` (um arquivo pelo conteúdo, zstd — reparo e atualização, B234), `GET /painel.json` + `.sig` (URL do painel para o launcher, B391, §5) e `GET /saude` |
 | volume de dados | `data/clientes` → `/dados` (bind) |
 | chave | volume nomeado `pw_recursos_chave` → `/chave/assinatura_ed25519.key`, **montado só aqui** (o painel monta `../data` inteiro) |
 | API administrativa | **8101**, sem `ports:` (só a rede interna; o painel a chama), segredo `PW_RECURSOS_SEGREDO` (de `RECURSOS_SEGREDO` no `docker/.env`) no cabeçalho `x-recursos-segredo`; sem segredo de 16+ caracteres fica desligada. Rotas no §6 |
@@ -123,6 +123,22 @@ pelo host atual. Linhas com outro endereço (servidores de terceiros) ficam. Qua
 instalar/atualizar/adotar/reparar, antes de **Jogar** e ao salvar o servidor (em todas as versões com
 pasta). Mudou o IP: trocar o servidor de atualização no launcher basta.
 
+**Painel web pelo servidor de atualização (B391).** Botão **Criar conta / Painel** no alto da janela (ao lado de
+**Opções do jogo…**, sempre ativo, não trava durante download). O `pw-recursos` publica `GET /painel.json`
+`{"formato":1,"url":"<modelo>"}` + `GET /painel.json.sig` (Ed25519 dos bytes exatos, a mesma chave dos manifestos),
+montados ao subir de `PW_PAINEL_URL`; sem a variável (ou com modelo inválido, que vira aviso no log) as rotas dão 404.
+No compose: `PW_PAINEL_URL: ${PAINEL_URL:-http://{host}:8000/}` — a porta é a publicada pelo `pw-admin-api`.
+`{host}` é trocado **no launcher** pelo host do servidor de atualização configurado nele (`local::host_da_url`, o
+mesmo da `serverlist.txt`): `127.0.0.1` em teste local, o IP na rede, o DNS hospedado. Atrás de proxy/HTTPS,
+`PAINEL_URL` no `docker/.env` com a URL fixa (sem `{host}`). Não se usa o `Host` da requisição: assinatura sobre algo
+que o cliente manda não provaria nada. Núcleo `pw_atualizador::painel` (`validar_modelo`: só `http`/`https`, ASCII
+visível sem aspas/espaço, até 512 bytes, `{host}` uma vez e como host inteiro; `montar_url`: IPv6 entre colchetes,
+host só `[A-Za-z0-9-._:]`) e `Servidor::painel()` (404 → `None`; assinatura errada → erro). Launcher: `acoes::
+endereco_do_painel` numa thread → `ShellExecuteW("open", url)`; mensagem verde com a URL aberta, ou vermelha
+("Este servidor não informa o endereço do painel…", erro de rede, assinatura). O painel abre na tela de login com
+**Criar conta** (B387, `PAINEL_CADASTRO`). Teste: `crates/pw-recursos/tests/painel.rs` (2, sem banco: HTTP real,
+host local/DNS, outra chave recusada, sem painel = `None`) e 3 unitários em `pw-atualizador/src/painel.rs`.
+
 **Lista publicada (B281, versão 1 das duas linhas):** só o realm que existe, com o nome da tabela `realms`:
 1.5.5 = `pw-universal` (grupo, obrigatório no 1.5.5) + `Perfect World Evolved (1.5.5)<TAB>29004:127.0.0.1<TAB>2`;
 1.2.6 = `Perfect World Classic (1.2.6)<TAB>29000:127.0.0.1`. Saíram `Universal 1.5.5` (29003, realm EN apagado em
@@ -206,7 +222,7 @@ Motor `crates/pw-recursos/src/estudio.rs` sobre `pw_data_loader::elements_editav
 | rota (`/admin/{v}/estudio/…`) | faz |
 | :--- | :--- |
 | `GET tabelas?rascunho=` | tabelas do arquivo (registros, espaço de id) — do rascunho, ou do publicado |
-| `GET tabelas/{T}?busca=&pagina=&por_pagina=&rascunho=` | registros com id e `Name` (busca por id exato ou nome) |
+| `GET tabelas/{T}?busca=&pagina=&por_pagina=&rascunho=&colunas=&ordem=&faixas=` | registros com id e `Name` (busca por id exato ou nome); B376: colunas, ordem e faixas por campo sobre a tabela inteira (§6c) |
 | `GET tabelas/{T}/{i}?rascunho=` | a ficha: campos com tipo, tamanho, deslocamento e valor (`string` GBK sai legível) |
 | `PUT tabelas/{T}/{i}?rascunho=` `{campos}` | edita; recusa tipo errado, texto que não cabe, campo inexistente |
 | `POST tabelas/{T}/{i}/clonar?rascunho=` | registro novo com o próximo id do espaço |
@@ -416,6 +432,20 @@ sub?, nome?}` — `renomear` (categoria ou subcategoria, `wchar[64]`: até 63 ca
 `nova` (subcategoria no fim: nenhuma oferta muda de índice) e `remover` (só a **última** subcategoria e só se nenhuma
 oferta a usa — `main_type`/`sub_type` são índices). Painel: botão "Categorias" na vista Loja.
 
+**G-Shop no Estúdio (B385):** tela própria do Estúdio Svelte (`telas/GShop.svelte`). Rotas novas: `GET
+estudio/loja/{arquivo}/abas` (o diálogo da loja do cliente: `interfaces\qshop.xml`/`backshop.xml` no tema 0,
+`interfaces\version01\…` no tema 1, `qshop.dtf` no 1.2.6 — quantos `Btn_MainType`/`Btn_SubType` tem, o texto e as
+imagens solta/apertada de cada aba com o tamanho; `imagem_compartilhada` quando todos os botões usam o mesmo arquivo, o
+caso do 1.2.6), `POST …/abas/{aba}/imagem?tema&estado` (PNG do mesmo tamanho → TGA de 32 bits com rodapé TGA 2.0 ou DDS,
+no formato do original; item `cliente`), `POST …/{i}/imagem` (PNG 128×128 → DDS novo `surfaces\百宝阁\estudio_<sha>.dds`,
+nome pelo conteúdo, e o `icon` da oferta aponta para ele), `POST …/{i}/conferir {campos}` (a conferência sem gravar) e
+`GET estudio/imagem?caminho` (imagem de interface em PNG). A listagem ganhou 7 colunas (ícone do item, selo/VIP da 1ª
+opção com preço, brinde, opções que o GS vende, `icon`, preço mostrado) e `conferencias` por oferta. `POST loja {base,
+campos}` aplica os campos à cópia. **Conferência** (`gshop_editavel::conferir_oferta`, spec 03 §3.8): editar recusa só o
+erro **novo**; oferta sem nenhum preço é aviso ("desativada": o cliente não a mostra). **Subaba nova** recusada quando a
+aba já tem tantas quanto os botões do diálogo (8 nos dois clientes; a 9ª "Cabeça" da aba Roupas do BR não tem botão e só
+aparece no "todos", `DlgQShop.cpp:667-680, 822`). Leitura de arquivo do cliente pelo Estúdio: índice do publicado em cache com o caminho GBK, conferido pelo `versao.json` (`Governanca::versao_publicada`) — a rota das abas caiu de 16,6 s para 0,14 s no 1.5.5.
+
 **Comportamento dos monstros (S7, B258 — só leitura):** o `aipolicy.data` do realm (só do servidor; o cliente não o
 tem) pelo leitor do GS (`pw_data_loader::aipolicy`, porte de `cgame/gs/ai/policy.cpp`, interpretado no mundo desde o
 B127), em cache por versão/SHA. `GET estudio/comportamentos?busca` (linhas `[id, gatilhos, monstros]`, busca por id
@@ -498,7 +528,10 @@ triângulos, ou `erro`), e o GLB junta as peles (com as texturas de cada uma) e 
 `acoes_descartadas`; `GET estudio/modelos/glb?caminho&acao=<nome>` traz a animação dessa ação (trilhas do `.bon` v5 ou
 o `.stck`; ação inexistente ou descartada → 400). Painel: seletor de ação na ficha; o visualizador toca a animação em
 laço, com a pele deformada na CPU a cada quadro. **Diagnóstico (B277):** a lista traz também os `.ecm` (primeiro); a
-ficha do `.ecm` traz o `.smd`, as ações combinadas (com as ações-base ausentes no `.smd`) e `diagnostico_de_monstro`:
+ficha do `.ecm` traz o `.smd`, as ações combinadas (com as ações-base ausentes no `.smd`) e `diagnostico_de_monstro`
+(B392: com `npc=true`, os nomes do NPC de serviço — `ecm::pedidos_de_npc`, índices 19/17/18/20/21/22 起落/23/13→26/24/25
+da mesma tabela: parado, ocioso 1/2, andar, correr, atacar, morrer, ferido, nascer, sumir; `EC_NPC.cpp:367, 638-639,
+1160-1192, 1351-1355, 1694-1724, 1907-1922`, `EC_NPCModel.cpp:722-737, 755, 912-916`; nome legível "Ocioso 1 · 休闲动作1"):
 para cada nome pedido (tabela `configs\actions_npc.txt` **do próprio cliente da versão** + `起`/`落`), `ok`, "sem ação
 combinada no .ecm", "só existe como ação-base no .smd" (o motor 1.5.5 só toca combinadas, `EC_Model.h:577-583`),
 "ação combinada sem ação-base (não anima)" ou "ação-base ausente no .smd" (spec 03 §3.10d). Medido em 40 monstros por
@@ -839,13 +872,209 @@ ação.
   `world_targets.txt`, mapa do `instance.txt`, chegada do `world_targets.sev`, preço, nível; "ver no mapa" abre a vista
   Mapas com a camada de teleportes no destino). Listas achatadas do layout começam em 1 (v7 e v156) — o código aceita 0
   ou 1. Outra tabela → 400. "Onde nasce" já existia (B284).
+- **GLB e ficha do modelo com o rascunho (B374)** — `GET estudio/modelos/glb?caminho=&acao=&rascunho=` e a ficha do
+  `.ecm` (`modelos/ficha?rascunho=`) leem primeiro os arquivos de modelo do rascunho (.ecm, .smd, .ski, .bon, .stck e
+  texturas: `admin.rs::arquivos_de_modelo_do_rascunho` + `conteudo_de`), depois o publicado — o modelo importado de um
+  GLB (`modelos/novo`) aparece antes de publicar. O painel repassa o `rascunho` ao GLB.
+- **GLB do modelo para o Blender e de volta (B380)** —
+  - `GET estudio/modelos/glb?caminho=&todas=true&rascunho=`: malha, texturas, esqueleto e **uma animação glTF por
+    ação-base do `.smd`** (`glb::do_modelo_com_acoes`; trilhas do `.bon` v5 ou a `.stck` de cada ação; ação cuja
+    `.stck` não lê fica de fora, com aviso no log). Nome da animação legível, com o original depois de `" · "`
+    (`"Parado · 站立"`, tabela `admin.rs::TRADUCOES_DE_ACAO`, a mesma da tela; 起/落 só como sufixo; se sobra
+    ideograma, vai só o original — `落石术施放落` não vira "— golpe石术…") e o original em `extras.angelica.nome`. Sem
+    `todas`, como antes (pose parada, ou `acao=` para a prévia).
+  - Volta: `importar::nome_original` — `extras.angelica.nome`, senão o que vem depois do último `" · "`, senão o nome
+    inteiro — vale para todo importador de animação (`acoes_do_glb`: `acoes_glb`, `importar_glb`, `modelos/novo`). O
+    importador glTF do Blender não leva os `extras` da animação para a ação; a extensão PW Estúdio (1.1.1) os grava na
+    ação ao importar, e o exportador glTF do Blender devolve as propriedades da ação como `extras` (`export_extras`).
+  - `POST estudio/modelos/importar_glb?rascunho=&caminho=<.ecm>&modo=modelo|animacoes` (corpo: GLB;
+    `Estudio::importar_glb_no_modelo`): antes, `importar::conferir_esqueleto` — os ossos do GLB (`esqueleto_do_glb`) têm
+    de ser os do `.bon` do modelo, mesmo nome e mesma mãe; senão 400 com o que falta, sobra ou mudou de mãe e "importe
+    com tudo". `modelo`: a malha vira `<.ecm>.ski` (a pele que o jogo põe no NPC/monstro, B282; acrescentada se não
+    existe), texturas em `Textures\`, esqueleto e ações intactos. `animacoes`: `importar_acoes` no `.smd` do `.ecm`.
+    "Tudo" continua sendo `modelos/novo` (B298); o molde preferido (o `.ecm` atual) é lido com o rascunho (pode ser um
+    modelo importado antes). `importar_acoes` (B295) agora grava a pasta das trilhas no `.smd` v8 que a tinha vazia — no
+    v8 o motor usa a pasta do arquivo (`A3DSkinModelMan.cpp:214-224`), e a `.stck` em `tcks_<título>` não seria achada.
+    Com `.bon` v5, a ação nova é emendada no fim da trilha (as chaves antigas ficam sem uso); desde o B381 a que voltou
+    igual (`importar::acao_v5_igual`) é pulada — "igual à do cliente (não gravada)" — e, todas iguais, nada é gravado
+    (`igual_ao_publicado`): a ida e volta pelo Blender sem mexer não faz o `.bon` crescer.
+  - `POST estudio/modelos/sem_uso?rascunho= {caminho: <.ecm antigo>}` (`Estudio::remover_modelo_sem_uso`): nada sai se o
+    `.ecm` ainda é citado em algum registro do elements com o rascunho (busca dos bytes GBK do caminho, terminados em
+    zero, sem diferenciar maiúsculas — um falso "usado" só deixa arquivo a mais), é filho de outro `.ecm` (`ChildPath:`,
+    `EC_Model.cpp:152/4777`, agora em `ecm::Ecm::filhos` e no índice) ou é de um objeto dinâmico. Senão saem: o `.ecm`;
+    o `.smd` se nenhum outro `.ecm` nem registro o cita; os arquivos do `.smd` (`dependencias_do_smd`: `.bon`, peles,
+    `.stck`) e a `<.ecm>.ski` que nenhum outro `.smd` cita (o mantido conta, com o que o rascunho tem); as texturas das
+    peles que saem — `Tex_<título>\` é só da pele, `Textures\` só sai se nenhuma outra `.ski` da mesma pasta (publicada
+    ou do rascunho) a cita. A primeira chamada depois de reiniciar o `pw-recursos` monta o índice de `.ecm` (~1 min no
+    1.5.5).
+    Publicado → item `remover`; só no rascunho → sai do rascunho. Devolve `removidos` e `mantidos` (com o motivo).
+- **Trocar a animação de uma ação (B373)** — `POST estudio/modelos/base?rascunho= {caminho, acao, base}`
+  (`Estudio::trocar_base_da_acao`; painel `POST /api/realms/{r}/estudio/modelos/base`): a linha `BaseActName:` da ação
+  combinada passa a ser `base` (`pw_data_loader::ecm::trocar_base`: só com uma base; o resto do `.ecm` igual; a base tem
+  de estar na lista de ações do `.smd` citado). Item `cliente`.
+- **Colunas, ordem e faixas na listagem (B376, só leitura)** — `GET estudio/tabelas/{T}` aceita `colunas=a,b` (até 12
+  campos `int32`/`float` do layout; o que a tabela não tem é ignorado e a resposta diz em `colunas` os que valeram),
+  `ordem=campo|-campo` (também `id` e `nome`; `-` = decrescente; empate pelo índice) e `faixas=a:30:40,b::5` (mín./máx.
+  inclusivos, lado vazio = sem limite; número inválido → 400). Faixa e ordem valem sobre a tabela inteira, antes da
+  página (`total` = filtrados). Cada registro traz `campos {coluna: valor}`; coluna `id_*` (categoria/subcategoria — ids
+  do mesmo espaço da tabela, ex. `WEAPON_SUB_TYPE` no ESSENCE) traz também `nomes {coluna: Name}` e, no topo,
+  `opcoes {coluna: [{valor, nome, registros}]}` com os valores distintos da tabela inteira. `Estudio::listar` +
+  `FiltroDeListagem::da_consulta`; painel repassa em `GET /api/realms/{r}/estudio/tabelas/{T}` (cada parâmetro até 400
+  caracteres). Campos por versão (`v156.json`/`v7.json`, listas a partir de 1): WEAPON 4, ARMOR 7, DECORATION 10 e
+  FASHION 84 têm `id_major_type`, `id_sub_type`, `level`, `require_level`; FLYSWORD 23 `level`,
+  `require_player_level_min`; WINGMANWING 24 `require_player_level_min`; STONE 36 `id_sub_type`, `level`; só v156:
+  GOBLIN_EQUIP 122 `req_goblin_level`, POKER 185 `id_sub_type`, `require_level`, `rank`. Teste:
+  `tests/estudio.rs` (faixa 30–40 de `require_level` = contagem da tabela inteira, ordem crescente e decrescente através
+  das páginas, nomes e opções de `id_sub_type`, faixa mín.=máx., 400).
+- **De onde vem o item (B369, só leitura)** — `GET estudio/origens/{id}?rascunho=` (`Estudio::origens_do_item`; painel
+  `GET /api/realms/{r}/estudio/origens/{id}`; id ≤ 0 → 400), tudo do rascunho, até 300 por lista:
+  `dropado_de` (`MONSTER_ESSENCE.drop_matters_N_id` = item, com a soma dos `drop_matters_N_probability` das linhas),
+  `dropado_de_global` (B390: as tabelas do `servidor\extra_drops.sev` — o do rascunho, se tiver — com o item: cada
+  monstro delas, `chance` por morte `Σ P(k)·(1−(1−p)^k)` sem a punição de nível, `tabela_global`, `nome_da_tabela`,
+  `tipo` soma/substitui; `indice` nulo se o monstro não está no elements) e `dropado_de_global_erro` (o arquivo que o GS
+  recusaria),
+  `recompensa_de` (missões do `tasks.data` com o item num grupo do prêmio de sucesso ou de falha, e nas escalas por
+  tempo/itens do v129; `quando`, quantidade, se é sorteado), `vendido_por` (`NPC_SELL_SERVICE.pages_P_goods_G_id` →
+  páginas com título e os `NPC_ESSENCE.id_sell_service` = a loja), `loja_gold` (ofertas do `gshop.data`,
+  `gshop1.data`, `gshop2.data` que existirem, pelo `id` no byte 140), `forjado_por` (`RECIPE_ESSENCE.targets_N_id_to_make`
+  → `NPC_MAKE_SERVICE.pages_P_id_goods_G` = a receita → `NPC_ESSENCE.id_make_service` = a forja).
 - **Alinhamento aplicado (decisão do Murillo, 2026-10-23: vale o cliente nos dois)** — rascunhos **58** (1.5.5: a25, a32,
   a40, a43, a61, a70, b01, random03; só `precinct.sev`) e **59** (1.2.6: a12, a25, a27, a31; `precinct.sev` e
   `region.sev`), com zero desalinhados no rascunho. **Não publicados**: a publicação foi barrada pela proteção de deploy.
 
 Testes: `tests/estudio.rs` (regiões criar/editar/remover e publicar em par; nome do controlador; diagnóstico de
-habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6) e
+habilidade com `火球` no `.pwsk` sintético e com ambiente de mascote; as três telas no `elements` real do 1.2.6; B369:
+as origens pelo caminho inverso das telas — item da loja → loja, item da receita → receita e forja, item do drop →
+monstro; B390: o 12962 do `extra_drops.sev` real do 1.2.6 → 10 chefes da tabela 14, chance 1) e
 `aipolicy_editavel::testes_b365` (os dois realms).
+
+### Equipáveis: refino explicado, modelo ↔ Blender e peças vestidas (B383)
+
+- **Refino** — `GET estudio/refinos?rascunho=` (`Estudio::refinos`; painel `GET /api/realms/{r}/estudio/refinos`): os
+  `EQUIPMENT_ADDON` cujo tratador no GS é `refine_*` (`pw_data_loader::addons::tratador_do_id`), cada um com `param`
+  (`param1`), `soma` (o que soma, `refino::EFEITOS_DE_REFINO`), `niveis` (+1…+12 = `(int)(param × refine_factor[n] +
+  0.1)`, `refino::valor_do_refino`; o valor do nível **substitui** o anterior, `equip_item.cpp:319, 330`) e `usado_por
+  {arma, armadura, acessorio}` (quantos `levelup_addon` do rascunho o citam — o GS não restringe a família,
+  `itemdataman.cpp:205-228`). `fator` = `refine_factor[1..12]` (`equip_item.cpp:208-223`, agora em
+  `pw_data_loader::refino::FATOR_DE_REFINO`, que o GS reexporta).
+
+  | tratador | soma | evidência (`item_addon.cpp`) |
+  | :--- | :--- | :--- |
+  | `refine_damage` | ataque físico (mín. e máx. da peça) | `:1510`, `:503-522` |
+  | `refine_magic_damage` | ataque mágico **e** físico (o `UpdateItem` chama os dois) | `:1509`, `:1265-1283` |
+  | `refine_max_hp` | HP máximo | `:1508`, `:1428` |
+  | `refine_defense` | defesa física da peça | `:1507`, `:1486` |
+  | `refine_armor` | esquiva (`armor` = 闪避率加值, `equip_item.h:203`) | `:1506`, `:1482` |
+  | `refine_resistance` | as 5 resistências (`EnhanceAllResistance`, `actobject.h:1243-1250`) | `:1505`, `:609-635` |
+  | `refine_defense_resistance` | defesa do personagem e as 5 resistências | `:1511`, `:1434`, `:1300-1312` |
+
+  Ex.: param 7 → 7, 14, 21, 30, 40, 52, 69, 91, 119, 156, 203, 262.
+- **GLB do equipamento** — `GET estudio/modelos/glb?caminho=<.ecm>&como=equipamento`: as peles do `.smd` mais as
+  `AddiSkinPath` do `.ecm`, como o `CECModel::Load(…, LSF_UNIQUESKIN)` da arma/asa/voo (`EC_Player.cpp:4547-4583`) —
+  não a `<.ecm>.ski` do NPC. `peles=<a.ski>|<b.ski>` (até 16): essas peles no esqueleto do `.ecm` — a armadura/moda sobre
+  o corpo do jogador.
+- **Importar no equipamento** — `POST estudio/modelos/importar_glb?…&como=equipamento&modo=modelo`: o GLB vai para a
+  1ª pele do `.smd` (`importar_pele`); se o `.smd` tinha mais peles, saem da lista (`peles_tiradas_do_smd`; o GLB
+  exportado traz as malhas de todas); `.ecm` com `AddiSkinPath` é recusado ("tudo"). `validar=true` (qualquer modo):
+  roda a importação e devolve `{validacao: true, resultado: {malhas, vertices, ossos, ganchos, relatorio}}` (ou as
+  ações) **sem gravar**.
+- **Modelo novo** — `POST estudio/modelos/novo?…&ganchos=CC_weapon,CC_qiu&validar=`: o esqueleto do GLB tem de ter um
+  dos ganchos (arma `CC_weapon`/`CC_qiu`, `EC_Player.cpp:9972-9993`; asa `CC_chibang`, voo e rodas `CC_feijian`,
+  `:1940-1966`), senão 400 com o que criar no Blender; `validar` só o relatório.
+- **Pele de armadura/moda** — o cliente veste `Models\Players\装备\{男|女}\<realname>\<grupo><realname>{一级,二级,三级}.ski`
+  (`LoadPlayerSkin`, `EC_Player.cpp:1720-1740`: falta um nível → a peça não aparece) sobre o esqueleto de
+  `Models\Players\形象\<classe>\躯干\<classe>.ecm`. O grupo sai da tabela do **binário** (`elementclient.exe` 1.5.5 BR:
+  função 0x4e1ff0, ponteiros 0xdd83f0, chamada pelo `ChangeArmor` em 0x4e28f7 com `realname` em +0x4c e
+  `equip_location` 1–8 em +0x16c): `男通用`/`女通用` para todas as classes, menos `妖兽` (Bárbaro) e `妖精` (Feiticeira).
+  O fonte (`EC_Player.cpp:282-313`) diz "Evolved\" — vale o binário ("Models\"); a tabela por classe do binário
+  (0xdd8450) é só a roupa padrão. 1.2.6: as mesmas strings (0x4b104c-0x4b10b8), código não rastreado.
+  `Estudio::GRUPOS_DE_PELE`, `CORPOS`.
+  - `GET estudio/equipamentos/pele?realname=&genero=&rascunho=` → `{grupos: [{grupo, arquivos: [{caminho, existe}],
+    corpos: [{classe, nome, ecm}]}], usado_por: [{tabela, indice, id, nome}]}` (armaduras e modas com o mesmo
+    `realname`: trocar a pele muda todas).
+  - `POST estudio/equipamentos/pele?rascunho=&realname=&genero=&grupo=&classe=&validar=` (corpo: GLB, até 64 MB):
+    `ski_do_glb` contra o esqueleto do corpo de referência (`classe` ou o 1º do grupo); os ossos da pele têm de existir
+    no esqueleto de **todas** as classes do grupo (senão 400 com a classe e o osso); grava a mesma pele nos três níveis
+    e as texturas em `<pasta>\Textures\`.
+- **Nomes das animações (B384)** — uma tabela só, `admin.rs::TRADUCOES_DE_ACAO` (compostos antes dos simples): o GLB
+  exportado nomeia cada animação "legível · original" e a ficha do `.ecm` manda `nomes_legiveis {original: legível}`
+  (bases, combinadas e pedidos do cliente), que as telas do Monstro e do Equipável mostram. B384 acrescentou voo, asas e
+  espada voadora (medidos em 130 modelos de voo/asa/arma das duas versões: 低空下降/地空下降, 高空下降, 飞行悬停, 飞行前进,
+  飞行落地, 飞行下降, 翅膀收起, 飞剑…, 展开, 收起, 起飞, 滑翔, 前进, 悬停, 落地, 静止); o prefixo do modelo ("天鹅之翼_")
+  sai do legível; 起/落 só viram "— início/— golpe" do ataque quando o fim não é um termo da tabela (收起, 落地). A volta é
+  a de sempre (`importar::nome_original`): o nome do cliente depois de " · ". B386 acrescentou o item caído (`掉落保护` no chão, `_水中` na água, `_空中` no ar —
+  o `CECMatter` escolhe pelo ambiente, `EC_Matter.cpp:300-311`; em 1.006 dos 1.681 modelos de chão e de mina das duas versões),
+  `刀光` (614) e termos soltos de modelos de personagem usados como item; um termo da tabela com `_` não é prefixo de modelo. Medido no publicado: as animações de
+  天鹅之翼 e 机械翼 exportadas e importadas de volta deram "igual à do cliente (não gravada)" em todas.
+- **Pesos da pele (todo importador: `ski_do_glb`)** — decisão com evidência do motor:
+  - corrigido sozinho, porque o resultado é o que o jogo faria: peso zero antes de um não nulo (o motor para no 1º
+    zero, `A3DSkinMesh.cpp:1040-1041`) → os não nulos vão para a frente; soma ≠ 1 → normalizada (só o 4º peso é
+    implícito, `1 − soma`, e só com os 3 primeiros não nulos, `:1053-1066`); mais de 4 influências (`JOINTS_0` +
+    `JOINTS_1`; o `A3DBVERTEX3` tem 4, `A3DVertex.h:184-191`) → as 4 maiores; vértice sem peso → a vaga do esqueleto;
+    osso do glTF que o `.bon` não tem → os pesos vão para o ancestral mais próximo que existe (o `BindSkeleton` recusaria
+    a pele inteira, `A3DSkin.cpp:851-856`, e no jogo o osso extra não se move: andaria preso ao ancestral); pose de
+    repouso do glTF diferente da do `.bon` (o motor usa a do `.bon`, `A3DSkinModel.cpp:1341`) → cada vértice é reposto
+    (`v' = Σ wᵢ · (repouso do .bon)ᵢ · IBMᵢ · v`);
+  - recusado: osso sem ancestral no esqueleto, mais de 255 ossos na pele (índice de 1 byte), osso que falta no corpo de
+    outra classe do grupo;
+  - sem limite de ossos por malha: o motor divide a malha sozinho pelas constantes do D3D9
+    (`A3DSkinMesh::CreateVertexShaderSubMeshes`, `:500-640`).
+  - Tudo vai para o `relatorio` (texto em português, com o que fazer no Blender).
+
+### Itens e minas (B386)
+
+- **Para onde o item vai** — `GET estudio/usos/{id}?rascunho=` (`Estudio::usos_do_item`; painel `GET /api/realms/{r}/estudio/usos/{id}`):
+  `ingrediente_de` (receitas cujo `materials_N_id` é o item, com a soma das `materials_N_num` e os alvos `targets_N_id_to_make`),
+  `minas` (registros de `MINE_ESSENCE` com o item em `materials_N_id` e chance > 0: `chance` = soma das linhas, `vida` = validade em
+  segundos, `valida`/`motivo` pela montagem do GS) e `habilidades` (as do catálogo do realm cujo `item_exigido` por nível é o item:
+  `{id, nome, niveis}` — o livro é gasto ao aprender, `skill.cpp:79-84`). Até 300 por lista.
+- **A mina como o GS a monta** — `GET estudio/minas/{indice}?rascunho=` (`Estudio::mina_do_gs`): `pw_data_loader::minas::montar` (o
+  `mine_info` de `npcgenerator.cpp:1280-1365`), com nomes e ícones de materiais, ferramenta e monstros ao colher; recusada →
+  `{valida: false, motivo}` com a linha do original (quantidade sem missão `:1297-1299`, tempos `:1299-1303`, chances que não somam 1
+  `:1323-1327`, missão pela metade `:1328-1332`, sucesso ≤ 0 `:1353-1357`, tipo fora de 0–1 `:1359-1363`). A mina recusada não entra no
+  `npc_stubs_manager` e a área de recurso que a cita não a faz nascer (`:3913-3917`). `carregar` (o GS) usa a mesma montagem.
+- **Área de recurso do npcgen** (as rotas de área do B243 com tipo `recursos`): retângulo `vPos ± fExtX/2, fExtZ/2` (`npcgenerator.cpp:3893`),
+  `bAutoRevive` (`:3904`), `iMaxNum` (`:3905`), `idCtrl` (`:3930`); por mina: `idTemplate`, `dwNumber` (`:3919`), renascer = `15 +
+  dwRefreshTime` s, nunca menos de 15 (`BASE_REBORN_TIME`, `config.h:106`; `:3920-3922`), `fHeiOff` (`:3923`). `iResType`, `bInitGen`,
+  `bValidOnce` e `dwGenID` o GS 1.5.5 não lê nas áreas de recurso. Ao nascer, a mina sorteia **um** material pelas chances e a quantidade
+  (`num1`, ou `num2` com `probability2`; `npcgenerator.cpp:5003-5016`); a coleta confere ferramenta, nível e lotação e dá certo com
+  `material_gain_ratio` (`matter.cpp:265-440`). Nenhum item nasce no chão sem mina pelo npcgen: as áreas são de criatura, de recurso
+  (mina) ou objeto dinâmico (`npcgenerator.cpp:3700`, `:3888`, `:3937`); item no chão vem de drop. `FIREWORKS2.id_mine` o GS não lê.
+- **GLB do item no chão e da mina** — `como=matter` em `estudio/modelos/glb` e em `estudio/modelos/importar_glb`: o
+  `CECMatter::LoadMatterModel` (`EC_Matter.cpp:71-107`) carrega o `.ecm` com o `CECModel::Load` comum — as peles do `.smd` e, se o modelo
+  ficou sem pele, a `<.smd>.ski` (`:96-103`); as `AddiSkinPath` só entram no editor (`#ifdef GFX_EDITOR`, `EC_Model.cpp:678-689`). O
+  modelo é o `file_matter` do item (`EC_Matter.cpp:353-602`) ou o `file_model` da mina (`:511-516`). Importar "só o modelo": a 1ª pele do
+  `.smd` (as outras saem da lista, como no equipamento) ou, sem pele no `.smd`, a `<.smd>.ski`. Nada disso pende no personagem: os fogos
+  tocam o `.gfx` `file_fw` na frente dele (`EC_Player.cpp:9022-9024`) e o `TOSSMATTER.file_model` o cliente não carrega.
+
+### NPCs, serviços e missões (B392)
+
+Duas rotas novas, só leitura, para o Estúdio (painel: `GET /api/realms/{r}/estudio/servicos/{T}` e `…/missoes_resumo`):
+
+- `GET estudio/servicos/{T}?busca&uso&pagina&por_pagina` (`Estudio::servicos`): só tabelas `NPC_*_SERVICE` (outra → 400).
+  Cada registro com `npcs` (quantos `NPC_ESSENCE` o citam em algum `id_*_service` — é o que monta a janela do NPC,
+  `DlgNPC.cpp:339-441`), até 5 `nomes_dos_npcs` e `resumo` {`itens` (ids não nulos das listas que citam outro espaço:
+  item vendido, receita, pedra…), `abas` (títulos não vazios), `destinos` (`targets_K_idTarget`), `lista` (`id_tasks_K`,
+  `id_skills_K`, `tasks_K_id_task`)}. A busca acha pelo id, pelo nome ou pelo **nome do que o serviço lista** (marca
+  `achado_na_lista`). `uso` = `em_uso` | `sem_uso`.
+- `GET estudio/missoes_resumo?ids=a,b&npc=N` (`Estudio::missoes_resumo`): nome, tipo, níveis, mãe, filhas e os NPCs de
+  entrega/prêmio de até 600 missões (inexistente → `ausente`); com `npc`, as missões do tasks.data cujo
+  `npc_que_entrega`/`npc_que_premia` é ele (até 300 cada).
+
+Medido nos layouts: o `NPC_ESSENCE` do v7 tem `id_cross_server_service`, mas o v7 não tem a tabela
+`NPC_CROSS_SERVER_SERVICE` (teste `npc.test.ts`). No 1.2.6 o catálogo de referências (`specs/estudio/referencias.json`)
+não resolve as vagas `id_task_*_service` do NPC (sem `cita`): a tela acha o serviço pelo id na tabela da vaga.
+
+**Receita mostrada pelo produto (B393).** O cliente desenha a receita com o ícone, o nome e a descrição do item de
+`targets[0].id_to_make` (`CECIvtrRecipe`, `EC_IvtrMaterial.cpp:165,200-218`; sem produto, `Unknown.dds`). Por isso a
+`referencia` de um campo que cita `RECIPE_ESSENCE`, a ficha de uma receita, a lista de `RECIPE_ESSENCE` e a busca no
+espaço RECIPE trazem `produto` {`id`, `nome`, `icone`} (`estudio::produto_da_receita`); a busca no espaço RECIPE acha
+também pelo nome do produto. A grade da forja mostra o ícone do produto, com a dica do item ao passar o mouse.
+
+**Tela (B393).** Aba Serviços do NPC: no alto, os serviços que ele tem (vagas ligadas e bits simples ligados) em
+cartões do mesmo tamanho; embaixo, "Vincular" por categoria, em caixas de altura fixa com rolagem. Visualizador 3D
+(`lib/glb.ts`): botão direito, do meio ou Shift + arrastar sobe e desce o ponto que a câmera olha; duplo clique
+recentra.
 
 ## 7. Testes
 
@@ -870,7 +1099,7 @@ Destinos (B252): `.txt` gerado do `.sev` do 1.2.6; remover destino usado → 400
 posição a 3 casas) → publicados, ids alinhados nos dois. `world_targets::testes_do_txt` (os `.txt` reais; empate 0,0625).
 Alinhar (B253): `precinct.clt` com um distrito a menos enviado ao rascunho → `alinhamento` acusa → `alinhar` refaz só o
 `precinct.sev` e o par volta a ser equivalente; de novo, nada a fazer. `clt::testes_do_servidor` (os 200 pares reais;
-falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (668 ofertas, ≥ 90% com o item no
+falha se passar dos 14 diferentes conhecidos). Loja (B254): a real do 1.2.6 (670 ofertas desde a publicação de 01/11 pelo G-Shop — B393; eram 668, ≥ 90% com o item no
 `elements`) — preço e nome editados, clone e remoção, publicada: cliente e realm com o mesmo arquivo, carimbo igual, o
 `GShopData` do GS lê o preço novo. `gshop_editavel::testes` (os 4 arquivos dos realms idênticos). Missões (B255): o
 `tasks.data` real do 1.2.6 — 7.994 missões, 2.819 de topo, a 1173 com o NPC 3517 nomeado; id inexistente → 400. Editar

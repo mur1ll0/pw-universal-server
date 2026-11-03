@@ -1882,6 +1882,50 @@ impl TasksData {
     pub fn get_task(&self, task_id: u32) -> Option<&TaskTemplate> {
         self.tasks.get(&task_id)
     }
+
+    /// O **teto da barra de chi** que um personagem tem ao chegar ao cultivo `cultivo` pelo
+    /// caminho das missões, para quem define o cultivo sem passar por elas (o painel).
+    ///
+    /// No original o cultivo e o teto são dois prêmios independentes da mesma missão:
+    /// `m_ulNewPeriod` → `SetCurPeriod` e `m_ulFuryULimit` → `SetFuryUpperLimit` → `SetMaxAP`
+    /// (`gs/task/TaskProcess.cpp:1284,1293`, `gs/task/taskman.cpp:251-254,499-502`). Nada
+    /// liga um ao outro fora da missão, então o valor sai do `tasks.data`: o maior
+    /// `m_ulFuryULimit` entre as missões que concedem um cultivo de ordem ≤ a de `cultivo`,
+    /// contando em cada uma a cadeia de pais — no 1.5.5 o teto 99 vem da 32394, mãe da 32416
+    /// que dá o cultivo 1; no 1.2.6 a 915 dá os dois. Nos dois realms: 1-2 → 99, 3-5 → 199,
+    /// 6-8 → 299, 20-22 e 30-32 → 399. Cultivo fora da progressão → 0.
+    pub fn teto_de_chi_do_cultivo(&self, cultivo: u32) -> u32 {
+        let Some(alvo) = ordem_do_cultivo(cultivo) else { return 0 };
+        let mut teto = 0;
+        for m in self.tasks.values() {
+            let dado = m.rewards.novo_cultivo;
+            if dado == 0 || ordem_do_cultivo(dado).map_or(true, |o| o > alvo) {
+                continue;
+            }
+            let mut atual = Some(m);
+            let mut passos = 0;
+            while let Some(t) = atual {
+                teto = teto.max(t.rewards.teto_de_chi);
+                passos += 1;
+                atual = if passos < 64 { t.parent.and_then(|p| self.tasks.get(&p)) } else { None };
+            }
+        }
+        teto
+    }
+}
+
+/// A ordem do nível de cultivo (`_basic.sec_level`) na progressão: 0-8, depois o primeiro
+/// passo das duas linhas (20 Iluminado / 30 Demoníaco), depois 21/31 e 22/32. A ordem é a
+/// das próprias missões que os concedem — 2153 (cultivo 8, nível 79) → 2804/2818 (20/30,
+/// nível 89) → 3227/3204 (21/31, nível 99) → 3273/3244 (22/32, nível 109) no `tasks.data`
+/// 1.2.6; `player.cpp:20781-20784` troca 22↔32 entre as linhas.
+pub fn ordem_do_cultivo(cultivo: u32) -> Option<u32> {
+    match cultivo {
+        0..=8 => Some(cultivo),
+        20..=22 => Some(9 + cultivo - 20),
+        30..=32 => Some(9 + cultivo - 30),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
